@@ -1,0 +1,77 @@
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { badRequest, forbidden, notFound, parseBody, requireAuth } from "@/lib/api";
+import { overrideSchema } from "@/lib/validation";
+import { audit } from "@/lib/audit";
+import { notifyAttendance } from "@/lib/realtime";
+import { getEventTimeWindow } from "@/lib/event-time";
+
+// POST /api/attendance/override
+export async function POST(req: NextRequest) {
+  const res = await requireAuth("ORGANIZER");
+  if ("error" in res) return res.error;
+  const { account } = res;
+
+  const body = await parseBody(req);
+  const parsed = overrideSchema.safeParse(body);
+  if (!parsed.success) return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
+  const { eventId, studentId, reason } = parsed.data;
+
+  const event = await db.event.findUnique({ where: { id: eventId } });
+  if (!event) return notFound("Event not found");
+  if (account.role !== "ADMIN" && event.ownerId !== account.id) {
+    return forbidden("You can only add overrides for your own events");
+  }
+
+  const student = await db.authorizedStudent.findUnique({ where: { studentId } });
+  if (!student) return badRequest("This student is not on the approved list", "NOT_WHITELISTED");
+
+  // Verify the student is eligible for this event (matches target program/section)
+  if (event.targetProgram && student.program !== event.targetProgram) {
+    return forbidden("This student is not eligible for this event");
+  }
+  if (event.targetSection && student.section !== event.targetSection) {
+    return forbidden("This student is not eligible for this event");
+  }
+
+  // ---- Anti-cheating: same time window as scanning ----
+  // Uses the shared helper — respects explicit checkInOpensAt/checkInClosesAt.
+  const window = getEventTimeWindow(event);
+  if (window.isUpcoming) {
+    return forbidden("This event hasn't opened for check-in yet.");
+  }
+  if (window.isEnded) {
+    return forbidden("This event's check-in window has closed.");
+  }
+
+  let studentAccount = await db.account.findUnique({ where: { studentId } });
+  if (!studentAccount) {
+    return badRequest("This student has not created an account yet.", "NO_ACCOUNT");
+  }
+
+  const result = await db.$transaction(async (tx) => {
+    const override = await tx.attendanceOverride.create({
+      data: { eventId, adminId: account.id, studentId, reason },
+    });
+    const attendance = await tx.eventAttendance.upsert({
+      where: { eventId_accountId: { eventId, accountId: studentAccount!.id } },
+      update: {},
+      create: { eventId, accountId: studentAccount!.id, source: "override" },
+    });
+    return { override, attendance };
+  });
+
+  notifyAttendance(eventId, {
+    id: result.attendance.id, accountId: studentAccount.id,
+    fullName: studentAccount.fullName, studentId: studentAccount.studentId,
+    program: studentAccount.program, section: studentAccount.section,
+    scannedAt: result.attendance.scannedAt.toISOString(), source: "override",
+  }).catch(() => {});
+
+  await audit({
+    actorId: account.id, action: "attendance.override", targetType: "EventAttendance",
+    targetId: result.attendance.id, metadata: { eventId, studentId, reason }, req,
+  });
+
+  return NextResponse.json(result, { status: 201 });
+}

@@ -1,0 +1,87 @@
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { updateAccountSchema } from "@/lib/validation";
+import { badRequest, forbidden, notFound, parseBody, requireAuth } from "@/lib/api";
+import { audit } from "@/lib/audit";
+
+type Ctx = { params: Promise<{ id: string }> };
+
+// PATCH /api/accounts/[id] (ADMIN)
+export async function PATCH(req: NextRequest, { params }: Ctx) {
+  const res = await requireAuth("ADMIN");
+  if ("error" in res) return res.error;
+  const { account: admin } = res;
+  const { id } = await params;
+
+  const body = await parseBody(req);
+  const parsed = updateAccountSchema.safeParse(body);
+  if (!parsed.success) return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
+
+  const target = await db.account.findUnique({ where: { id } });
+  if (!target) return notFound("Account not found");
+
+  if (admin.id === id) {
+    if (parsed.data.role && parsed.data.role !== admin.role) {
+      return forbidden("You cannot change your own role");
+    }
+    if (parsed.data.status && parsed.data.status !== "ACTIVE") {
+      return forbidden("You cannot suspend your own account");
+    }
+  }
+
+  // ---- Last-admin guard: prevent demoting/suspending the last ADMIN ----
+  if (
+    target.role === "ADMIN" &&
+    ((parsed.data.role && parsed.data.role !== "ADMIN") ||
+     (parsed.data.status && parsed.data.status !== "ACTIVE"))
+  ) {
+    const adminCount = await db.account.count({
+      where: { role: "ADMIN", status: "ACTIVE" },
+    });
+    if (adminCount <= 1) {
+      return forbidden("Cannot demote or suspend the last administrator account.");
+    }
+  }
+
+  // Check for email conflict if email is being changed
+  if (parsed.data.email && parsed.data.email !== target.email) {
+    const emailExists = await db.account.findUnique({ where: { email: parsed.data.email } });
+    if (emailExists) {
+      return badRequest("This email is already in use.", "EMAIL_TAKEN");
+    }
+  }
+
+  const updated = await db.account.update({
+    where: { id },
+    data: {
+      ...(parsed.data.role ? { role: parsed.data.role } : {}),
+      ...(parsed.data.status ? { status: parsed.data.status } : {}),
+      ...(parsed.data.fullName ? { fullName: parsed.data.fullName } : {}),
+      ...(parsed.data.email ? { email: parsed.data.email } : {}),
+      ...(parsed.data.program !== undefined ? { program: parsed.data.program } : {}),
+      ...(parsed.data.section !== undefined ? { section: parsed.data.section } : {}),
+      ...(parsed.data.year !== undefined ? { year: parsed.data.year } : {}),
+      ...(parsed.data.organizationName !== undefined ? { organizationName: parsed.data.organizationName } : {}),
+    },
+    select: {
+      id: true, email: true, fullName: true, role: true, status: true,
+      studentId: true, program: true, section: true, year: true,
+      organizationName: true, lastLoginAt: true, createdAt: true,
+    },
+  });
+
+  // If role or status changed, revoke all sessions for that account
+  if (parsed.data.role || parsed.data.status) {
+    await db.refreshToken.updateMany({
+      where: { accountId: id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  }
+
+  await audit({
+    actorId: admin.id, action: "account.update", targetType: "Account",
+    targetId: id, metadata: parsed.data, req,
+  });
+
+  return NextResponse.json(updated);
+}

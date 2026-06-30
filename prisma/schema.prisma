@@ -1,0 +1,337 @@
+// ====================================================================
+// Nexus Gate — Production Schema (v7 — strict RLS-ready, optimized indexes)
+// ====================================================================
+// Indexing strategy:
+//   - Composite indexes on the most common query patterns
+//   - Covering indexes for list + count queries (status + program + section)
+//   - Partial-style filtering via leading columns (status first, then scope)
+// ====================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "sqlite"
+  url       = env("DATABASE_URL")
+}
+
+// ====================================================================
+// 1. ACCOUNTS
+// ====================================================================
+
+model Account {
+  id              String        @id @default(cuid())
+  email           String        @unique
+  passwordHash    String        @default("")
+  fullName        String
+  role            String        @default("USER")
+  status          String        @default("PENDING_VERIFICATION")
+  studentId       Int?          @unique
+  program         String?
+  section         String?
+  authProvider    String?
+  providerAccountId String?
+  year            Int?
+  organizationName String?
+  courseModifiedAt DateTime?
+  lastProfileUpdateAt DateTime?
+  lastPasswordChangeAt DateTime?
+  notificationEndpoint String?
+  notificationKeys     String?
+  passkeyCredential    String?
+  notificationEnabled  Boolean  @default(false)
+  lastLoginAt     DateTime?
+  failedLoginAttempts Int       @default(0)
+  lockedUntil     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  eventsOwned       Event[]
+  attendances       EventAttendance[]
+  overridesMade     AttendanceOverride[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  verificationTokens VerificationToken[]
+  refreshTokens     RefreshToken[]
+  deviceKeys        DeviceKey[]
+
+  // ---- High-quality indexes ----
+  // Role + status: admin dashboard lists accounts by role/status frequently
+  @@index([role, status])
+  // Program + section: event eligibility checks filter by program/section
+  @@index([program, section])
+  // Notification push lookups
+  @@index([notificationEnabled])
+  // Login security: locked account sweep + brute-force detection
+  @@index([lockedUntil])
+  // Soft activity sort
+  @@index([lastLoginAt])
+}
+
+// ====================================================================
+// 2. AUTHORIZED STUDENTS — optional admin whitelist (not a gate)
+// ====================================================================
+
+model AuthorizedStudent {
+  studentId   Int      @id
+  email       String   @unique
+  fullName    String
+  program     String
+  section     String
+  activated   Boolean  @default(false)
+  overrides   AttendanceOverride[]
+
+  // Composite: whitelist listing filtered by program+section, then activation
+  @@index([program, section, activated])
+  // Activation sweep (admin dashboard "pending activation" view)
+  @@index([activated])
+}
+
+// ====================================================================
+// 3. VERIFICATION TOKENS
+// ====================================================================
+
+model VerificationToken {
+  id        String   @id @default(cuid())
+  accountId String
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  codeHash  String
+  purpose   String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+  attempts  Int      @default(0)
+
+  // Composite: "find an unused, non-expired token for this account+purpose"
+  @@index([accountId, purpose, usedAt])
+  // Cron sweep: delete expired tokens
+  @@index([expiresAt])
+}
+
+// ====================================================================
+// 4. REFRESH TOKENS
+// ====================================================================
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  accountId String
+  account   Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  // Composite: "find active tokens for an account" (revokedAt IS NULL)
+  @@index([accountId, revokedAt])
+  // Cron sweep: delete expired tokens
+  @@index([expiresAt])
+}
+
+// ====================================================================
+// 5. EVENTS
+// ====================================================================
+
+model Event {
+  id            Int       @id @default(autoincrement())
+  title         String
+  description   String?
+  eventSecret   String    @default(cuid())
+  ownerId       String
+  owner         Account   @relation(fields: [ownerId], references: [id])
+  scope         String    @default("academic")
+  targetProgram String?
+  targetSection String?
+  scheduledAt   DateTime
+  endsAt        DateTime?
+  checkInOpensAt   DateTime?
+  checkInClosesAt  DateTime?
+  timeOutOpensAt   DateTime?
+  timeOutClosesAt  DateTime?
+  enableTimeOut    Boolean   @default(false)
+  delegatable      Boolean   @default(true)
+  // Admin-controlled flag: when true, allows OTHER organizers to project
+  // this event's QR code IF they share the same organizationName tag as
+  // the event owner, OR if the event is open-to-all.
+  delegationEnabled Boolean  @default(false)
+  status        String    @default("active")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  attendances EventAttendance[]
+  overrides   AttendanceOverride[]
+
+  // ---- High-quality indexes ----
+  // The MAIN eligibility query: WHERE status='active' AND (
+  //   (targetProgram IS NULL AND targetSection IS NULL) OR
+  //   (targetProgram = ? AND targetSection = ?)
+  // ) ORDER BY scheduledAt DESC
+  // This composite index covers the most common listing path.
+  @@index([status, scheduledAt])
+  // Organizer dashboard: list my events
+  @@index([ownerId, status])
+  // Strict eligibility: filter by exact program+section match
+  @@index([targetProgram, targetSection, status])
+  // Cron reminders: upcoming events by scheduled time
+  @@index([scheduledAt, status])
+}
+
+// ====================================================================
+// 6. EVENT ATTENDANCE
+// --------------------------------------------------------------------
+// Certificate fields (v8 — Tier 1 + Tier 2 anti-cheating):
+//   certificateNonce     — one-time-use nonce from the scan certificate
+//                          (unique constraint = atomic duplicate rejection)
+//   certificateSubFrames — JSON array of captured sub-frame indices
+//                          (proves multi-frame liveness, anti-screenshot)
+//   deviceFingerprint    — SHA-256 hash of the device's public key
+//                          (identifies which device made the scan)
+//   scannedAtClient      — client-reported scan timestamp (ms precision)
+//                          (decouples token validity from sync time)
+// ====================================================================
+
+model EventAttendance {
+  id             Int      @id @default(autoincrement())
+  eventId        Int
+  event          Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  accountId      String
+  account        Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  scannedAt      DateTime @default(now())
+  timeOutAt      DateTime?
+  source         String   @default("qr")
+  idempotencyKey String?  @unique
+  tokenBlock     Int?
+
+  // ---- Certificate fields (v8 anti-cheating) ----
+  certificateNonce     String?  @unique
+  certificateSubFrames String?  // JSON array, e.g. "[0,1,2]"
+  deviceFingerprint    String?
+  scannedAtClient      DateTime? // client-reported scan time (for offline sync)
+
+  // Unique constraint: one check-in per (event, account) pair — atomic.
+  // This is the CORE of the one-attempt policy: after the first successful
+  // scan, the unique constraint rejects all subsequent attempts.
+  @@unique([eventId, accountId])
+  // Composite: "list this student's attendance history, newest first"
+  @@index([accountId, scannedAt])
+  // Composite: "count attendance for an event" (dashboard stats)
+  @@index([eventId, scannedAt])
+  // Cron sweep / analytics by scan time
+  @@index([scannedAt])
+  // Device audit: "list all scans from this device"
+  @@index([deviceFingerprint])
+}
+
+// ====================================================================
+// 7. ATTENDANCE OVERRIDES
+// ====================================================================
+
+model AttendanceOverride {
+  id          Int      @id @default(autoincrement())
+  eventId     Int
+  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  adminId     String
+  admin       Account  @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  studentId   Int
+  student     AuthorizedStudent @relation(fields: [studentId], references: [studentId])
+  reason      String
+  createdAt   DateTime @default(now())
+
+  // Composite: list overrides for an event (newest first)
+  @@index([eventId, createdAt])
+  // Admin audit: list overrides made by an admin
+  @@index([adminId, createdAt])
+  // IDEMPOTENCY: prevents duplicate override records on retry
+  @@unique([eventId, studentId])
+}
+
+// ====================================================================
+// 8. NOTIFICATIONS
+// ====================================================================
+
+model Notification {
+  id          Int      @id @default(autoincrement())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  title       String
+  body        String
+  type        String   @default("info")
+  readAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  // Composite: "list this account's notifications, newest first" — the
+  // single most common notification query
+  @@index([accountId, createdAt])
+  // Composite: "count UNREAD notifications for this account" — used by
+  // the notification bell badge on every page load
+  @@index([accountId, readAt])
+  // Cron sweep: delete old read notifications
+  @@index([readAt, createdAt])
+}
+
+// ====================================================================
+// 9. AUDIT LOG
+// ====================================================================
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  actorId    String?
+  actor      Account? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  targetType String?
+  targetId   String?
+  metadata   String?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  // Composite: "list this actor's actions, newest first" (user activity)
+  @@index([actorId, createdAt])
+  // Composite: "filter audit log by action type, newest first" (admin view)
+  @@index([action, createdAt])
+  // Composite: "view audit history for this target entity, newest first"
+  @@index([targetType, targetId, createdAt])
+  // Cron sweep: delete old audit logs
+  @@index([createdAt])
+}
+
+// ====================================================================
+// 10. DEVICE KEYS (v8 — Tier 1 anti-cheating)
+// --------------------------------------------------------------------
+// Each registered device has an Ed25519 keypair. The PRIVATE key lives
+// only on the device (IndexedDB). The PUBLIC key is registered here.
+// Scan certificates are signed by the device's private key and verified
+// against the public key stored here.
+//
+// A fingerprint (SHA-256 of the public key) is used for fast lookups
+// and is also stored on each EventAttendance record for audit trails.
+// ====================================================================
+
+model DeviceKey {
+  id           String    @id @default(cuid())
+  accountId    String
+  account      Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  publicKeyJwk String    // Ed25519 public key as JSON Web Key (JSON string)
+  fingerprint  String    @unique // SHA-256 hash of the public key (hex)
+  label        String?   // optional device name (e.g. "iPhone 14")
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
+  revokedAt    DateTime?
+
+  // Composite: "list this account's registered devices"
+  @@index([accountId, revokedAt])
+  // Lookup by fingerprint (used during certificate verification)
+  // fingerprint is already @unique so no separate index needed
+}
+
+// ====================================================================
+// 11. SETTINGS
+// ====================================================================
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}

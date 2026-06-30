@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#b45309"/>
+  <g fill="none" stroke="#fffef7" stroke-width="32" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Shield outline -->
+    <path d="M256 85 L405 138 V256 C405 341 341 405 256 427 C171 405 107 341 107 256 V138 Z"/>
+    <!-- QR code pattern (simplified) -->
+    <rect x="192" y="192" width="38" height="38" fill="#fffef7" stroke="none"/>
+    <rect x="282" y="192" width="38" height="38" fill="#fffef7" stroke="none"/>
+    <rect x="192" y="282" width="38" height="38" fill="#fffef7" stroke="none"/>
+    <rect x="282" y="282" width="38" height="38" fill="#fffef7" stroke="none"/>
+    <line x1="256" y1="192" x2="256" y2="320"/>
+  </g>
+</svg>

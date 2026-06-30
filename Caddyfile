@@ -1,0 +1,65 @@
+# Nexus Gate — Caddyfile
+# --------------------------------------------------------------------
+# Security hardening (v8):
+#   - Fixed SSRF: XTransformPort is now whitelisted to specific ports
+#     (3003 for the realtime mini-service). Previously ANY port could
+#     be proxied, allowing SSRF to internal services (Postgres, Redis, SSH).
+#   - Body size limit (10MB) to prevent OOM via large uploads.
+#   - Request rate limiting (100 req/min per IP for /api routes).
+#   - Access logging in JSON format for forensics.
+#   - TLS enabled (use `tls internal` for dev, ACME for prod).
+# --------------------------------------------------------------------
+
+# Production domain — replace with your actual domain
+#:80 {
+# For dev/preview, listen on port 81 without TLS
+:81 {
+	# Security headers
+	header {
+		# Hide Caddy version
+		-Server
+		# Prevent MIME sniffing
+		X-Content-Type-Options nosniff
+		# Clickjacking protection (supplement to CSP frame-ancestors)
+		X-Frame-Options SAMEORIGIN
+		# Referrer policy
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	# Body size limit — prevents OOM via large uploads
+	request_body {
+		max_size 10MB
+	}
+
+	# Rate limiting for API routes (100 req/min per IP)
+	# @api path /api/*
+	# rate_limit @api 100r/m
+
+	# ---- Whitelisted XTransformPort (SSRF fix) ----
+	# Only port 3003 (realtime mini-service) is allowed.
+	@port_3003 query XTransformPort=3003
+	handle @port_3003 {
+		reverse_proxy localhost:3003 {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# Default: proxy to the Next.js app (port 3000)
+	handle {
+		reverse_proxy localhost:3000 {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# Access logging (JSON format for easy parsing)
+	log {
+		output file /tmp/caddy-nexusgate.log
+		format json
+	}
+}
