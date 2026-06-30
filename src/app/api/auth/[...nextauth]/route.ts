@@ -47,7 +47,9 @@ export const authOptions: NextAuthOptions = {
               data: {
                 authProvider: account?.provider ?? "google",
                 providerAccountId: account?.providerAccountId ?? null,
-                ...(existing.status === "PENDING_VERIFICATION" ? { status: "ACTIVE" } : {}),
+                ...(existing.status === "PENDING_VERIFICATION"
+                  ? { status: "ACTIVE" }
+                  : {}),
               },
             });
           }
@@ -55,7 +57,9 @@ export const authOptions: NextAuthOptions = {
         }
 
         // No existing account - check whitelist
-        const student = await db.authorizedStudent.findUnique({ where: { email } });
+        const student = await db.authorizedStudent.findUnique({
+          where: { email },
+        });
 
         if (student) {
           // Whitelisted - create account with student info
@@ -97,6 +101,15 @@ export const authOptions: NextAuthOptions = {
         return true;
       } catch (error) {
         console.error("[nextauth] signIn callback error:", error);
+        // If it's a unique constraint violation, the account was already
+        // created (possibly by a concurrent request). Try to find it.
+        if (
+          error instanceof Error &&
+          error.message.includes("Unique constraint")
+        ) {
+          const retry = await db.account.findUnique({ where: { email } });
+          if (retry && retry.status !== "SUSPENDED") return true;
+        }
         return false;
       }
     },
