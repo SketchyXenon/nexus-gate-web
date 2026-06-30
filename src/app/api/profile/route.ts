@@ -7,6 +7,7 @@ import {
   isYearSectionConsistent,
   YEAR_SECTION_MISMATCH_MESSAGE,
 } from "@/lib/section-validation";
+import { isCooldownExpired, daysUntilCooldownExpires } from "@/lib/cooldown";
 
 // ====================================================================
 // GET /api/profile — returns the current user's full profile
@@ -49,7 +50,9 @@ export async function GET(_req: NextRequest) {
 
   // ---- Password change cooldown (30 days) ----
   const canChangePassword = isCooldownExpired(profile.lastPasswordChangeAt);
-  const daysUntilPasswordChange = daysUntilCooldownExpires(profile.lastPasswordChangeAt);
+  const daysUntilPasswordChange = daysUntilCooldownExpires(
+    profile.lastPasswordChangeAt,
+  );
 
   return NextResponse.json({
     ...profile,
@@ -83,7 +86,9 @@ export async function PATCH(req: NextRequest) {
 
   // Admins cannot edit their own profile via this endpoint
   if (account.role === "ADMIN") {
-    return forbidden("Administrators manage their accounts through the admin panel.");
+    return forbidden(
+      "Administrators manage their accounts through the admin panel.",
+    );
   }
 
   // ---- Fetch the FULL current record for accurate change detection ----
@@ -127,7 +132,7 @@ export async function PATCH(req: NextRequest) {
       if (!isYearSectionConsistent(effectiveYear, effectiveSection)) {
         return badRequest(
           YEAR_SECTION_MISMATCH_MESSAGE(effectiveYear, effectiveSection),
-          "YEAR_SECTION_MISMATCH"
+          "YEAR_SECTION_MISMATCH",
         );
       }
     }
@@ -146,7 +151,8 @@ export async function PATCH(req: NextRequest) {
     // only sends fields that changed, so `program`/`year`/`section` may
     // be undefined here. We compare the effective value (submitted or
     // current) against the current value.
-    const effectiveProgram = program !== undefined ? (program || null) : current.program;
+    const effectiveProgram =
+      program !== undefined ? program || null : current.program;
     const effectiveSection = section !== undefined ? section : current.section;
     const effectiveYear = year !== undefined ? year : current.year;
     if (effectiveProgram !== current.program) changes.push("program");
@@ -163,7 +169,7 @@ export async function PATCH(req: NextRequest) {
   if (changes.length === 0) {
     return badRequest(
       "No changes detected. Modify at least one field before saving.",
-      "NO_CHANGES"
+      "NO_CHANGES",
     );
   }
 
@@ -174,7 +180,7 @@ export async function PATCH(req: NextRequest) {
   if (!isCooldownExpired(current.lastProfileUpdateAt)) {
     const daysLeft = daysUntilCooldownExpires(current.lastProfileUpdateAt);
     return forbidden(
-      `You can update your profile again in ${daysLeft} day${daysLeft === 1 ? "" : "s"}.`
+      `You can update your profile again in ${daysLeft} day${daysLeft === 1 ? "" : "s"}.`,
     );
   }
 
@@ -190,11 +196,12 @@ export async function PATCH(req: NextRequest) {
     if (section !== undefined) updateData.section = section;
 
     // Course (program) can only be changed once
-    const effectiveProgram = program !== undefined ? (program || null) : current.program;
+    const effectiveProgram =
+      program !== undefined ? program || null : current.program;
     if (effectiveProgram !== current.program) {
       if (current.courseModifiedAt) {
         return forbidden(
-          "You can only change your course once. Please contact an administrator if you need to change it again."
+          "You can only change your course once. Please contact an administrator if you need to change it again.",
         );
       }
       if (effectiveProgram !== null) {
@@ -209,14 +216,24 @@ export async function PATCH(req: NextRequest) {
     where: { id: account.id },
     data: updateData,
     select: {
-      id: true, fullName: true, role: true, program: true, section: true,
-      year: true, courseModifiedAt: true, lastProfileUpdateAt: true,
+      id: true,
+      fullName: true,
+      role: true,
+      program: true,
+      section: true,
+      year: true,
+      courseModifiedAt: true,
+      lastProfileUpdateAt: true,
     },
   });
 
   await audit({
-    actorId: account.id, action: "profile.update", targetType: "Account",
-    targetId: account.id, metadata: { fullName, role: account.role, changes }, req,
+    actorId: account.id,
+    action: "profile.update",
+    targetType: "Account",
+    targetId: account.id,
+    metadata: { fullName, role: account.role, changes },
+    req,
   });
 
   return NextResponse.json({
