@@ -51,6 +51,17 @@ export async function POST(req: NextRequest) {
         password,
       });
     if (authError || !authData.user) {
+      // Check if the account exists in the DB but has no Supabase Auth link.
+      // This happens for pre-migration accounts that haven't been linked yet.
+      const dbAccount = await db.account.findUnique({ where: { email } });
+      if (dbAccount && !dbAccount.supabaseAuthUid) {
+        console.warn(
+          `[login] ${email} exists in accounts but has no supabaseAuthUid - needs migration`,
+        );
+        return unauthorized(
+          "Your account needs to be migrated. Use 'Forgot password' to set a new password, or contact your administrator.",
+        );
+      }
       return unauthorized(
         "Incorrect email or password. Check your details and try again.",
       );
