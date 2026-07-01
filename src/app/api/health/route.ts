@@ -3,9 +3,17 @@ import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
+// GET /api/health
+// Diagnoses DB connectivity AND query execution. The raw `SELECT 1` tests
+// basic connectivity, while `db.setting.count()` runs a real model query
+// (which uses prepared statements) — this catches the Supabase pooler
+// (Supavisor/PgBouncer) prepared-statement conflict (PostgreSQL 42P05)
+// that a raw query would miss.
 export async function GET() {
   const timestamp = new Date().toISOString();
   const checks: Record<string, string> = {};
+
+  // ---- 1. Connectivity test (raw query) ----
   try {
     await Promise.race([
       db.$queryRaw`SELECT 1`,
@@ -13,15 +21,9 @@ export async function GET() {
         setTimeout(() => reject(new Error("DB timeout")), 3000),
       ),
     ]);
-    checks.database = "ok";
+    checks.connectivity = "ok";
   } catch (e) {
-    checks.database = "down";
-    // Classify the error so the operator knows WHERE to look:
-    //   - auth failure  → DATABASE_URL password is wrong (or has unencoded
-    //                     special chars) — fix the env var on Vercel.
-    //   - unreachable   → wrong host/port, or network/firewall issue.
-    //   - timeout       → DB is overloaded or the connection string points
-    //                     to the wrong place.
+    checks.connectivity = "down";
     const errName = e instanceof Error ? e.name : "Unknown";
     const errMsg = e instanceof Error ? e.message : "DB failed";
     let hint = "Check DATABASE_URL and database server status.";
@@ -31,7 +33,7 @@ export async function GET() {
         errMsg.includes("credentials")
       ) {
         hint =
-          "DB authentication failed — DATABASE_URL password is wrong or contains special characters that need URL-encoding (e.g. @ → %40, : → %3A, / → %2F, # → %23).";
+          "DB authentication failed — DATABASE_URL password is wrong or contains special characters that need URL-encoding (e.g. @ -> %40, : -> %3A, / -> %2F, # -> %23).";
       } else if (errMsg.includes("timed out") || errMsg.includes("timeout")) {
         hint =
           "DB connection timed out — check that the DATABASE_URL host/port is reachable from Vercel.";
@@ -45,7 +47,7 @@ export async function GET() {
         status: "degraded",
         service: "nexus-gate",
         version: "3.0.0",
-        database: checks.database,
+        database: "down",
         errorType: errName,
         hint,
         checks,
@@ -54,6 +56,43 @@ export async function GET() {
       { status: 503 },
     );
   }
+
+  // ---- 2. Model query test (uses prepared statements) ----
+  // This catches the PgBouncer/Supavisor pooler conflict (42P05) that
+  // a raw SELECT 1 would miss. If this fails with "prepared statement
+  // already exists", the operator needs to add ?pgbouncer=true to
+  // DATABASE_URL on Vercel.
+  try {
+    await db.setting.count();
+    checks.query = "ok";
+  } catch (e) {
+    checks.query = "down";
+    const errName = e instanceof Error ? e.name : "Unknown";
+    const errMsg = e instanceof Error ? e.message : "Query failed";
+    let hint = "DB query failed unexpectedly.";
+    if (
+      errMsg.includes("42P05") ||
+      (errMsg.includes("prepared statement") &&
+        errMsg.includes("already exists"))
+    ) {
+      hint =
+        "PgBouncer/Supavisor pooler conflict detected. Add ?pgbouncer=true&connection_limit=1 to your DATABASE_URL on Vercel (Settings -> Environment Variables -> DATABASE_URL). This tells Prisma to use simple queries instead of prepared statements, which are incompatible with Supabase's transaction-mode connection pooler.";
+    }
+    return NextResponse.json(
+      {
+        status: "degraded",
+        service: "nexus-gate",
+        version: "3.0.0",
+        database: "pooler_conflict",
+        errorType: errName,
+        hint,
+        checks,
+        timestamp,
+      },
+      { status: 503 },
+    );
+  }
+
   return NextResponse.json({
     status: "ok",
     service: "nexus-gate",

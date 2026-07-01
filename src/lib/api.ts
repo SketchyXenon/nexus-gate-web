@@ -69,27 +69,49 @@ export function tooManyRequests(retryAfterMs: number) {
 }
 
 // ---- Database unavailability detection ----
-// PrismaClientInitializationError is thrown when Prisma can't connect to
-// the database — wrong credentials (P1000), unreachable server (P1001),
-// connection timeout (P1002), TLS errors, etc. These are INFRASTRUCTURE
-// problems, not code bugs, so they should surface as 503 Service
-// Unavailable (not 500 Internal Server Error).
+// PrismaClientInitializationError → can't connect to the DB (wrong creds,
+//   unreachable, TLS) — infrastructure issue.
+// PrismaClientRustPanicError → Prisma engine crashed — infrastructure.
+// PrismaClientUnknownRequestError → query execution failed. When the
+//   message contains "42P05" / "prepared statement ... already exists",
+//   it's the Supabase pooler (Supavisor/PgBouncer transaction mode)
+//   conflicting with Prisma's prepared statements — infrastructure, NOT
+//   a code bug. The fix is adding ?pgbouncer=true to DATABASE_URL.
+// All of these should surface as 503, not 500.
 export function isDbUnavailableError(e: unknown): boolean {
   if (e instanceof Error) {
     return (
       e.name === "PrismaClientInitializationError" ||
-      e.name === "PrismaClientRustPanicError"
+      e.name === "PrismaClientRustPanicError" ||
+      e.name === "PrismaClientUnknownRequestError"
     );
   }
   return false;
 }
 
-// Returns a 503 for DB connection failures. Keeps the raw error out of
-// the response body (security) but logs it server-side for debugging.
+// Returns a 503 for DB connection/pooler failures. Detects the specific
+// 42P05 "prepared statement already exists" error and returns a precise
+// hint telling the operator to add ?pgbouncer=true to DATABASE_URL.
 export function dbUnavailable(e?: unknown) {
-  if (e instanceof Error) {
-    console.error("[db] connection/initialization error:", e.name, e.message);
+  const errName = e instanceof Error ? e.name : "Unknown";
+  const errMsg = e instanceof Error ? e.message : "";
+  console.error("[db] error:", errName, errMsg);
+
+  // Detect PgBouncer/Supavisor prepared-statement conflict (PostgreSQL 42P05)
+  if (
+    errMsg.includes("42P05") ||
+    (errMsg.includes("prepared statement") && errMsg.includes("already exists"))
+  ) {
+    return NextResponse.json(
+      {
+        error: "Database pooler conflict.",
+        code: "DB_POOLER_CONFLICT",
+        hint: "Add ?pgbouncer=true&connection_limit=1 to DATABASE_URL on Vercel. This disables Prisma prepared statements, which are incompatible with Supabase's transaction-mode connection pooler.",
+      },
+      { status: 503 },
+    );
   }
+
   return NextResponse.json(
     {
       error: "Service temporarily unavailable. Please try again in a moment.",
