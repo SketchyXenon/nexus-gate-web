@@ -54,6 +54,7 @@ model Account {
   notificationEndpoint String?
   notificationKeys     String?
   passkeyCredential    String?
+  supabaseAuthUid      String?  @unique
   notificationEnabled  Boolean  @default(false)
   lastLoginAt     DateTime?
   failedLoginAttempts Int       @default(0)

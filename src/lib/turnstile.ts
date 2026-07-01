@@ -35,37 +35,32 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getClientIp } from "@/lib/api";
 
-const SITEVERIFY_URL =
-  "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
 // Cloudflare siteverify error codes that indicate the TOKEN was invalid.
 // These are CLIENT/ATTACKER problems → fail-closed (block).
 const TOKEN_INVALID_CODES = new Set([
-  "missing-input-response", // No token — client bypassed the widget
-  "invalid-input-response", // Token invalid/expired/already-used
-  "timeout-or-duplicate", // Token already validated or expired
+  "missing-input-response",   // No token — client bypassed the widget
+  "invalid-input-response",   // Token invalid/expired/already-used
+  "timeout-or-duplicate",     // Token already validated or expired
 ]);
 
 // Codes that indicate a SERVER/CONFIG problem → fail-open (allow + log).
 const INFRA_ERROR_CODES = new Set([
-  "missing-input-secret", // Server misconfiguration
-  "invalid-input-secret", // Server misconfiguration
-  "bad-request", // Malformed request (our fault)
-  "internal-error", // Cloudflare internal error — retry
+  "missing-input-secret",     // Server misconfiguration
+  "invalid-input-secret",     // Server misconfiguration
+  "bad-request",              // Malformed request (our fault)
+  "internal-error",           // Cloudflare internal error — retry
 ]);
 
 // Human-readable reasons for server-side logging (never sent to client).
 const ERROR_REASONS: Record<string, string> = {
-  "missing-input-secret":
-    "The secret key was not passed (server misconfiguration).",
+  "missing-input-secret": "The secret key was not passed (server misconfiguration).",
   "invalid-input-secret": "The secret key was invalid or malformed.",
-  "missing-input-response":
-    "The Turnstile token was not passed (client bypassed the widget).",
-  "invalid-input-response":
-    "The Turnstile token was invalid, expired, or already used.",
+  "missing-input-response": "The Turnstile token was not passed (client bypassed the widget).",
+  "invalid-input-response": "The Turnstile token was invalid, expired, or already used.",
   "bad-request": "The request was rejected because it was malformed.",
-  "timeout-or-duplicate":
-    "The token was already validated or has expired (token is single-use, 300s TTL).",
+  "timeout-or-duplicate": "The token was already validated or has expired (token is single-use, 300s TTL).",
   "internal-error": "Cloudflare internal error — retry.",
 };
 
@@ -107,16 +102,14 @@ function recordInfraFailure() {
     circuitTrippedUntil = Date.now() + CIRCUIT_COOLDOWN_MS;
     console.error(
       `[turnstile] circuit breaker OPEN — Cloudflare siteverify failed ${circuitFailures}x consecutively. ` +
-        `Failing open for ${CIRCUIT_COOLDOWN_MS / 1000}s. Bots could bypass verification during this window.`,
+        `Failing open for ${CIRCUIT_COOLDOWN_MS / 1000}s. Bots could bypass verification during this window.`
     );
   }
 }
 
 function recordSuccess() {
   if (circuitFailures > 0 || circuitTrippedUntil > 0) {
-    console.log(
-      "[turnstile] circuit breaker CLOSED — Cloudflare siteverify recovered.",
-    );
+    console.log("[turnstile] circuit breaker CLOSED — Cloudflare siteverify recovered.");
   }
   circuitFailures = 0;
   circuitTrippedUntil = 0;
@@ -132,7 +125,7 @@ type VerifyOutcome =
 // (fail-open). This is the key to surviving Cloudflare outages.
 async function verifyWithCloudflare(
   token: string,
-  remoteIp?: string,
+  remoteIp?: string
 ): Promise<VerifyOutcome> {
   // Circuit breaker: if Cloudflare has been failing repeatedly, skip the
   // call entirely and fail-open immediately (don't make the user wait 5s).
@@ -156,11 +149,7 @@ async function verifyWithCloudflare(
     // HTTP 5xx from Cloudflare = infrastructure problem → fail-open.
     if (!res.ok) {
       recordInfraFailure();
-      return {
-        ok: false,
-        kind: "infra_error",
-        reason: `siteverify HTTP ${res.status}`,
-      };
+      return { ok: false, kind: "infra_error", reason: `siteverify HTTP ${res.status}` };
     }
 
     const data = (await res.json()) as SiteverifyResponse;
@@ -183,11 +172,7 @@ async function verifyWithCloudflare(
       // Token error (or unknown error) → fail-closed. A real user would
       // get a valid token; an attacker sending a bad token gets blocked.
       const reason = codes.map((c) => ERROR_REASONS[c] || c).join("; ");
-      return {
-        ok: false,
-        kind: "invalid_token",
-        reason: reason || "verification failed",
-      };
+      return { ok: false, kind: "invalid_token", reason: reason || "verification failed" };
     }
 
     recordSuccess();
@@ -196,11 +181,7 @@ async function verifyWithCloudflare(
     // Network error / timeout = Cloudflare unreachable → fail-open.
     recordInfraFailure();
     const msg = e instanceof Error ? e.message : "fetch failed";
-    return {
-      ok: false,
-      kind: "infra_error",
-      reason: `siteverify error: ${msg}`,
-    };
+    return { ok: false, kind: "infra_error", reason: `siteverify error: ${msg}` };
   }
 }
 
@@ -219,7 +200,7 @@ async function verifyWithCloudflare(
 //   if (turnstileError) return turnstileError;
 export async function requireTurnstile(
   req: NextRequest,
-  body: { cfToken?: string } | null,
+  body: { cfToken?: string } | null
 ): Promise<NextResponse | null> {
   // Graceful degradation: if no secret is configured, skip verification.
   if (!isTurnstileEnabled()) {
@@ -233,12 +214,8 @@ export async function requireTurnstile(
   // (A real user whose widget failed to load gets a clear message to refresh.)
   if (!token || typeof token !== "string" || token.length < 10) {
     return NextResponse.json(
-      {
-        error:
-          "Bot verification is required. Please refresh the page and try again.",
-        code: "TURNSTILE_REQUIRED",
-      },
-      { status: 403 },
+      { error: "Bot verification is required. Please refresh the page and try again.", code: "TURNSTILE_REQUIRED" },
+      { status: 403 }
     );
   }
 
@@ -255,22 +232,16 @@ export async function requireTurnstile(
     // bcrypt still provide baseline protection.
     console.warn(
       `[turnstile] FAIL-OPEN (Cloudflare unreachable): ${outcome.reason}. ` +
-        `Request allowed — rate limiter + bcrypt still active.`,
+        `Request allowed — rate limiter + bcrypt still active.`
     );
     return null;
   }
 
   // invalid_token → fail-closed. Log the real reason, return a generic
   // message to the client (no info leak).
-  console.warn(
-    "[turnstile] verification failed (token invalid):",
-    outcome.reason,
-  );
+  console.warn("[turnstile] verification failed (token invalid):", outcome.reason);
   return NextResponse.json(
-    {
-      error: "Bot verification failed. Please refresh the page and try again.",
-      code: "TURNSTILE_FAILED",
-    },
-    { status: 403 },
+    { error: "Bot verification failed. Please refresh the page and try again.", code: "TURNSTILE_FAILED" },
+    { status: 403 }
   );
 }

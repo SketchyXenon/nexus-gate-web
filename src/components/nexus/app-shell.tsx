@@ -86,7 +86,15 @@ export function AppShell({ user }: { user: Account }) {
   const activeView: ViewId = allowedNav.some((n) => n.id === view) ? view : "dashboard";
 
   function handleLogout() {
-    logout.mutate(undefined, { onSuccess: () => toast({ title: "Signed out" }) });
+    logout.mutate(undefined, {
+      onSuccess: () => {
+        toast({ title: "Signed out" });
+        // Force a full page reload to clear all in-memory state and ensure
+        // the login screen shows. Without this, React Query cache clearing
+        // may not fully reset the NextAuth session on Google OAuth users.
+        setTimeout(() => window.location.href = "/", 500);
+      },
+    });
   }
 
   return (

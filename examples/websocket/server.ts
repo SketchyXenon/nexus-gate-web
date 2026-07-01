@@ -6,7 +6,7 @@ import { Server } from 'socket.io'
 //   ALLOWED_ORIGINS="https://nexus-gate.vercel.app,http://localhost:3000"
 const ALLOWED_ORIGINS: string[] = (
   process.env.ALLOWED_ORIGINS ||
-  'https://nexus-gate-web.vercel.app,http://localhost:3000'
+  'https://nexus-gate.vercel.app,http://localhost:3000'
 )
   .split(',')
   .map((s) => s.trim())

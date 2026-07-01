@@ -15,8 +15,8 @@ services:
   - type: web
     name: nexus-gate
     runtime: node
-    plan: free # upgrade to "starter" ($7/mo) for always-on + no spin-down
-    region: singapore # pick the region closest to your Supabase region
+    plan: free                 # upgrade to "starter" ($7/mo) for always-on + no spin-down
+    region: singapore          # pick the region closest to your Supabase region
     branch: main
     rootDir: .
 
@@ -67,19 +67,17 @@ services:
       - key: DATABASE_URL
         sync: false
 
-      # --- Auth secrets (REQUIRED — generate with `openssl rand -base64 32`) ---
-      # These are just random strings (base64 is only for safe copy-paste).
-      # You do NOT need to base64-encode them further — paste the output
-      # directly. Generate THREE DIFFERENT values (don't reuse one).
-      #
-      # NEXTAUTH_SECRET → NextAuth.js (Google OAuth + sessions)
-      # AUTH_SECRET     → custom JWT access tokens (src/lib/auth.ts) — MUST be ≥32 chars
-      # REFRESH_SECRET  → refresh token signing (src/lib/auth.ts) — MUST be ≥32 chars
-      - key: NEXTAUTH_SECRET
+      # --- Supabase Auth (REQUIRED — get from Supabase dashboard) ---
+      # NEXT_PUBLIC_SUPABASE_URL: your Supabase project URL
+      #   (e.g. https://xxxxx.supabase.co)
+      # NEXT_PUBLIC_SUPABASE_ANON_KEY: the anon/public key (safe for browser)
+      # SUPABASE_SERVICE_ROLE_KEY: the service role key (server-only, bypasses RLS)
+      # Get all three from: Supabase Dashboard → Settings → API
+      - key: NEXT_PUBLIC_SUPABASE_URL
         sync: false
-      - key: AUTH_SECRET
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
         sync: false
-      - key: REFRESH_SECRET
+      - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
 
       # --- Email (optional — leave unset to skip sending emails) ---

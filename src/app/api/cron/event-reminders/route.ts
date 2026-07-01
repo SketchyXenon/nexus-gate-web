@@ -1,39 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { timingSafeCompareHex } from "@/lib/timing-safe";
 
 // ====================================================================
 // /api/cron/event-reminders
 // --------------------------------------------------------------------
-// Called by Vercel Cron (daily at 8 AM — see vercel.json) OR manually.
+// Called by Vercel Cron (daily at 8 AM) or manually.
 // Finds events starting within the next 30 minutes and creates
 // notification records for eligible students who haven't been notified.
 //
-// IMPORTANT — Vercel Cron uses GET, not POST:
-//   Vercel Cron jobs make a GET request to the configured path. They
-//   CANNOT send custom headers (like Authorization: Bearer). So this
-//   route accepts BOTH GET (for Vercel Cron) and POST (for manual
-//   curl invocation), and accepts the secret via EITHER:
-//     - Authorization: Bearer <secret> header (manual curl)
-//     - ?secret=<secret> query param (Vercel Cron)
-//
-// Security: protected by CRON_SECRET env var. If unset → 503 (fail-closed).
+// Auth: Vercel Cron auto-sends "Authorization: Bearer $CRON_SECRET"
+// when the env var is set. This route checks that header with a
+// constant-time comparison to prevent timing attacks. If CRON_SECRET
+// is unset, the route returns 503 (fail-closed).
 // ====================================================================
 
-// Shared auth check — accepts secret from header OR query param.
 function checkCronAuth(req: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) return false;
-
-  // 1. Authorization: Bearer <secret> header (manual curl)
   const authHeader = req.headers.get("authorization");
-  if (authHeader === `Bearer ${cronSecret}`) return true;
-
-  // 2. ?secret=<secret> query param (Vercel Cron can't send headers)
-  const url = new URL(req.url);
-  const querySecret = url.searchParams.get("secret");
-  if (querySecret && querySecret === cronSecret) return true;
-
-  return false;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return false;
+  return timingSafeCompareHex(authHeader.slice(7), cronSecret);
 }
 
 async function runEventReminders() {
@@ -93,7 +80,7 @@ async function runEventReminders() {
 
       if (!existing) {
         const minutesUntil = Math.round(
-          (event.scheduledAt.getTime() - now.getTime()) / (60 * 1000),
+          (event.scheduledAt.getTime() - now.getTime()) / (60 * 1000)
         );
 
         await db.notification.create({
@@ -109,23 +96,14 @@ async function runEventReminders() {
     }
   }
 
-  return {
-    checkedEvents: upcomingEvents.length,
-    notificationsCreated,
-    timestamp: now.toISOString(),
-  };
+  return { checkedEvents: upcomingEvents.length, notificationsCreated, timestamp: now.toISOString() };
 }
 
 // GET — for Vercel Cron (which can't send POST or custom headers)
 export async function GET(req: NextRequest) {
   if (!process.env.CRON_SECRET) {
-    console.error(
-      "[cron/event-reminders] CRON_SECRET is not set — refusing to execute.",
-    );
-    return NextResponse.json(
-      { error: "Service misconfigured" },
-      { status: 503 },
-    );
+    console.error("[cron/event-reminders] CRON_SECRET is not set — refusing to execute.");
+    return NextResponse.json({ error: "Service misconfigured" }, { status: 503 });
   }
   if (!checkCronAuth(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -137,13 +115,8 @@ export async function GET(req: NextRequest) {
 // POST — for manual invocation (curl with Authorization header)
 export async function POST(req: NextRequest) {
   if (!process.env.CRON_SECRET) {
-    console.error(
-      "[cron/event-reminders] CRON_SECRET is not set — refusing to execute.",
-    );
-    return NextResponse.json(
-      { error: "Service misconfigured" },
-      { status: 503 },
-    );
+    console.error("[cron/event-reminders] CRON_SECRET is not set — refusing to execute.");
+    return NextResponse.json({ error: "Service misconfigured" }, { status: 503 });
   }
   if (!checkCronAuth(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

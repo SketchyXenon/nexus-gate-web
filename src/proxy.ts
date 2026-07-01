@@ -1,12 +1,37 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { createServerClient } from "@supabase/ssr";
 
-// ====================================================================
-// Nexus Gate — Security Headers Middleware (OWASP)
-// Sets CSP, X-Frame-Options, X-Content-Type-Options, HSTS, and more.
-// ====================================================================
-
-export function proxy(request: NextRequest) {
+// Nexus Gate - Middleware: Supabase session refresh + security headers.
+export async function proxy(request: NextRequest) {
   const response = NextResponse.next();
+
+  // Refresh the Supabase Auth session on every request.
+  // Wrapped in a timeout so an unreachable Supabase doesn't block all requests.
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (supabaseUrl && supabaseKey) {
+    try {
+      const supabase = createServerClient(supabaseUrl, supabaseKey, {
+        cookies: {
+          getAll() {
+            return request.cookies.getAll();
+          },
+          setAll(cookiesToSet) {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              request.cookies.set(name, value);
+              response.cookies.set(name, value, options);
+            });
+          },
+        },
+      });
+      await Promise.race([
+        supabase.auth.getSession(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),
+      ]);
+    } catch {
+      // Supabase unreachable — skip session refresh, let the request proceed.
+    }
+  }
 
   // ---- CSRF Defense-in-Depth: Origin/Referer check for mutations ----
   // SameSite=Lax cookies are the primary CSRF defense. This Origin/Referer

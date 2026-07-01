@@ -49,19 +49,19 @@ export function InfoModals() {
     <AnimatePresence>
       {open && (
         <Dialog open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
-          <DialogContent className="max-w-2xl max-h-[85vh] p-0 overflow-hidden">
+          <DialogContent className="max-w-2xl max-h-[85vh] p-0 overflow-hidden sm:rounded-xl rounded-lg">
             {/* Header band */}
-            <div className="bg-primary/5 border-b border-border/40 px-6 py-5">
+            <div className="bg-primary/5 border-b border-border/40 px-4 sm:px-6 py-4 sm:py-5">
               <DialogHeader>
                 <div className="flex items-center gap-3 mb-1">
-                  <div className="grid place-items-center h-10 w-10 rounded-lg bg-primary/15 text-primary">
-                    {open === "terms" && <FileText className="h-5 w-5" />}
-                    {open === "privacy" && <Lock className="h-5 w-5" />}
-                    {open === "faq" && <HelpCircle className="h-5 w-5" />}
-                    {open === "bug" && <Bug className="h-5 w-5" />}
+                  <div className="grid place-items-center h-9 w-9 sm:h-10 sm:w-10 rounded-lg bg-primary/15 text-primary shrink-0">
+                    {open === "terms" && <FileText className="h-4 w-4 sm:h-5 sm:w-5" />}
+                    {open === "privacy" && <Lock className="h-4 w-4 sm:h-5 sm:w-5" />}
+                    {open === "faq" && <HelpCircle className="h-4 w-4 sm:h-5 sm:w-5" />}
+                    {open === "bug" && <Bug className="h-4 w-4 sm:h-5 sm:w-5" />}
                   </div>
-                  <div>
-                    <DialogTitle className="font-heading text-xl">
+                  <div className="min-w-0">
+                    <DialogTitle className="font-heading text-lg sm:text-xl">
                       {open === "terms" && "Terms of Use"}
                       {open === "privacy" && "Privacy Policy"}
                       {open === "faq" && "Frequently Asked Questions"}
@@ -79,8 +79,8 @@ export function InfoModals() {
             </div>
 
             {/* Content */}
-            <ScrollArea className="max-h-[65vh]">
-              <div className="px-6 py-5">
+            <ScrollArea className="max-h-[60vh] sm:max-h-[65vh]">
+              <div className="px-4 sm:px-6 py-4 sm:py-5">
                 {open === "terms" && <TermsContent />}
                 {open === "privacy" && <PrivacyContent />}
                 {open === "faq" && <FaqContent />}
@@ -89,11 +89,11 @@ export function InfoModals() {
             </ScrollArea>
 
             {/* Footer */}
-            <div className="border-t border-border/40 px-6 py-3 bg-muted/30 flex items-center justify-between">
+            <div className="border-t border-border/40 px-4 sm:px-6 py-3 bg-muted/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <p className="text-[11px] text-muted-foreground">
-                Questions? Visit the College of Technology office.
+                Questions? Contact your administrator.
               </p>
-              <Badge variant="outline" className="text-[10px] gap-1">
+              <Badge variant="outline" className="text-[10px] gap-1 self-start sm:self-auto">
                 <ShieldCheck className="h-3 w-3" /> Nexus Gate
               </Badge>
             </div>
@@ -141,7 +141,7 @@ function TermsContent() {
       </PolicySection>
 
       <PolicySection icon={<Mail className="h-4 w-4" />} title="Contact">
-        For questions about these terms, contact the your administrator.
+        For questions about these terms, contact your administrator.
       </PolicySection>
     </div>
   );

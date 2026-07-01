@@ -476,6 +476,6 @@ const FAQS = [
   },
   {
     q: "Who do I contact for help?",
-    a: "Contact the College of Technology office at CTU Danao Campus for any issues with your account or attendance records.",
+    a: "Contact your administrator for any issues with your account or attendance records.",
   },
 ];

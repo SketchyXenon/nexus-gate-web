@@ -35,7 +35,7 @@ export const strongPasswordSchema = passwordSchema.refine(
   (pw) => scorePassword(pw).passes,
   {
     message: `Password is not strong enough. Use 8+ characters with uppercase, lowercase, a number, and a special character (or 12+ characters).`,
-  },
+  }
 );
 
 export const studentIdSchema = z
@@ -81,10 +81,7 @@ export const sectionSchema = z
   .string()
   .trim()
   .max(10, "Section is too long")
-  .regex(
-    /^\d+-[A-Za-z]+$/,
-    "Section must be in the format '<year>-<letter>' (e.g. '2-A', '3-B')",
-  )
+  .regex(/^\d+-[A-Za-z]+$/, "Section must be in the format '<year>-<letter>' (e.g. '2-A', '3-B')")
   .optional()
   .nullable()
   .or(z.literal("").transform(() => null));
@@ -119,7 +116,7 @@ export const forgotPasswordSchema = z.object({
 });
 
 export const resetPasswordSchema = z.object({
-  token: z.string().min(1, "Reset token is required").max(255),
+  token: z.string().optional(),
   password: passwordSchema,
 });
 
@@ -129,15 +126,7 @@ export const whitelistRowSchema = z.object({
   email: emailSchema,
   fullName: z.string().trim().min(2).max(255),
   program: z.string().trim().min(1).max(50),
-  section: z
-    .string()
-    .trim()
-    .min(1)
-    .max(10)
-    .regex(
-      /^\d+-[A-Za-z]+$/,
-      "Section must be in the format '<year>-<letter>' (e.g. '2-A', '3-B')",
-    ),
+  section: z.string().trim().min(1).max(10).regex(/^\d+-[A-Za-z]+$/, "Section must be in the format '<year>-<letter>' (e.g. '2-A', '3-B')"),
 });
 
 export const importWhitelistSchema = z.object({
@@ -165,25 +154,23 @@ const eventBaseSchema = z.object({
   delegationEnabled: z.boolean().optional(),
 });
 
-export const createEventSchema = eventBaseSchema
-  .refine(
-    (data) => {
-      if (data.checkInOpensAt && data.checkInClosesAt) {
-        return new Date(data.checkInOpensAt) < new Date(data.checkInClosesAt);
-      }
-      return true;
-    },
-    { message: "Check-in open time must be before close time" },
-  )
-  .refine(
-    (data) => {
-      if (data.endsAt) {
-        return new Date(data.endsAt) > new Date(data.scheduledAt);
-      }
-      return true;
-    },
-    { message: "End time must be after the scheduled time" },
-  );
+export const createEventSchema = eventBaseSchema.refine(
+  (data) => {
+    if (data.checkInOpensAt && data.checkInClosesAt) {
+      return new Date(data.checkInOpensAt) < new Date(data.checkInClosesAt);
+    }
+    return true;
+  },
+  { message: "Check-in open time must be before close time" }
+).refine(
+  (data) => {
+    if (data.endsAt) {
+      return new Date(data.endsAt) > new Date(data.scheduledAt);
+    }
+    return true;
+  },
+  { message: "End time must be after the scheduled time" }
+);
 
 export const updateEventSchema = eventBaseSchema.partial();
 
@@ -200,15 +187,12 @@ export const scanCertificateSchema = z.object({
     nonce: z.string().min(16).max(128),
     deviceFingerprint: z.string().min(32).max(128),
     // Each sub-frame must include its client-observed HMAC (64 hex chars)
-    subFrames: z
-      .array(
-        z.object({
-          subFrame: z.number().int().min(0).max(29),
-          hmac: z.string().length(64),
-        }),
-      )
-      .min(3)
-      .max(30),
+    subFrames: z.array(
+      z.object({
+        subFrame: z.number().int().min(0).max(29),
+        hmac: z.string().length(64),
+      })
+    ).min(3).max(30),
   }),
   canonical: z.string().min(1),
   signature: z.string().min(1),
@@ -235,13 +219,7 @@ export const updateAccountSchema = z.object({
   fullName: fullNameSchema.optional(),
   email: emailSchema.optional(),
   program: z.string().trim().max(50).optional().nullable(),
-  section: z
-    .string()
-    .trim()
-    .max(10)
-    .regex(/^\d+-[A-Za-z]+$/, "Section must be '<year>-<letter>' (e.g. '2-A')")
-    .optional()
-    .nullable(),
+  section: z.string().trim().max(10).regex(/^\d+-[A-Za-z]+$/, "Section must be '<year>-<letter>' (e.g. '2-A')").optional().nullable(),
   year: z.number().int().min(1).max(6).optional().nullable(),
   organizationName: z.string().trim().max(255).optional().nullable(),
 });
@@ -253,13 +231,7 @@ export const adminCreateAccountSchema = z.object({
   fullName: fullNameSchema,
   role: z.enum(["ADMIN", "ORGANIZER"]),
   program: z.string().trim().max(50).optional().nullable(),
-  section: z
-    .string()
-    .trim()
-    .max(10)
-    .regex(/^\d+-[A-Za-z]+$/, "Section must be '<year>-<letter>' (e.g. '2-A')")
-    .optional()
-    .nullable(),
+  section: z.string().trim().max(10).regex(/^\d+-[A-Za-z]+$/, "Section must be '<year>-<letter>' (e.g. '2-A')").optional().nullable(),
   organizationName: z.string().trim().max(255).optional().nullable(),
   status: z.enum(["ACTIVE", "SUSPENDED"]).default("ACTIVE"),
 });
@@ -281,12 +253,7 @@ export const updateProfileSchema = z.object({
     })
     .optional(),
   year: z.number().int().min(1).max(6).optional(),
-  section: z
-    .string()
-    .trim()
-    .max(10)
-    .regex(/^\d+-[A-Za-z]+$/, "Section must be '<year>-<letter>' (e.g. '2-A')")
-    .optional(),
+  section: z.string().trim().max(10).regex(/^\d+-[A-Za-z]+$/, "Section must be '<year>-<letter>' (e.g. '2-A')").optional(),
 });
 
 // Change password (self-service)

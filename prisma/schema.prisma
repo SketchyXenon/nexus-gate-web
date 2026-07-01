@@ -49,6 +49,7 @@ model Account {
   notificationEndpoint String?  @map("notification_endpoint")
   notificationKeys     String?  @map("notification_keys")
   passkeyCredential    String?  @map("passkey_credential")
+  supabaseAuthUid      String?  @unique @map("supabase_auth_uid")
   notificationEnabled  Boolean  @default(false) @map("notification_enabled")
   lastLoginAt     DateTime?     @map("last_login_at")
   failedLoginAttempts Int       @default(0) @map("failed_login_attempts")

@@ -1,14 +1,15 @@
 import { NextRequest } from "next/server";
-import { clearSessionCookies } from "@/lib/session";
-import { requireAuth } from "@/lib/api";
+import { db } from "@/lib/db";
 import { audit } from "@/lib/audit";
+import { getCurrentAccountSupabase } from "@/lib/supabase-session";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
 
 // POST /api/auth/logout
+// Signs out of Supabase Auth (clears the single session cookie).
 export async function POST(req: NextRequest) {
-  const res = await requireAuth();
-  // Logout should work even if the session is expired — don't return early on error.
-  const account = "account" in res ? res.account : null;
-  await clearSessionCookies();
+  const account = await getCurrentAccountSupabase().catch(() => null);
+  const supabase = await createSupabaseServerClient();
+  await supabase.auth.signOut();
   if (account) {
     await audit({
       actorId: account.id,
@@ -16,7 +17,7 @@ export async function POST(req: NextRequest) {
       targetType: "Account",
       targetId: account.id,
       req,
-    });
+    }).catch(() => {});
   }
   return Response.json({ ok: true });
 }

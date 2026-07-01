@@ -35,9 +35,7 @@ export async function POST(req: NextRequest) {
   const body = await parseBody(req);
   const parsed = subscriptionSchema.safeParse(body);
   if (!parsed.success) {
-    return badRequest(
-      parsed.error.issues[0]?.message ?? "Invalid subscription",
-    );
+    return badRequest(parsed.error.issues[0]?.message ?? "Invalid subscription");
   }
 
   // "in-app" is a sentinel for in-app notifications (no Web Push
@@ -54,7 +52,7 @@ export async function POST(req: NextRequest) {
     if (!urlCheck.ok) {
       return badRequest(
         `Invalid push endpoint: ${urlCheck.reason}. The endpoint must be a valid HTTPS push service URL.`,
-        "INVALID_ENDPOINT",
+        "INVALID_ENDPOINT"
       );
     }
   }

@@ -40,15 +40,12 @@ export default function Page() {
       <div className="min-h-screen flex items-center justify-center p-6 bg-background">
         <div className="max-w-md w-full text-center space-y-6">
           <div className="mx-auto w-16 h-16 rounded-full bg-amber-500/15 grid place-items-center">
-            <span className="text-3xl">🔧</span>
+            <span className="text-3xl">!</span>
           </div>
           <div className="space-y-2">
-            <h1 className="font-heading text-2xl font-bold">
-              Under Maintenance
-            </h1>
+            <h1 className="font-heading text-2xl font-bold">Under Maintenance</h1>
             <p className="text-sm text-muted-foreground">
-              Nexus Gate is currently undergoing maintenance. Please check back
-              later.
+              Nexus Gate is currently undergoing maintenance. Please check back later.
             </p>
           </div>
           <button

@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bell, Check, BellOff, Loader2, Clock } from "lucide-react";
+import { Bell, BellOff, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -109,7 +109,7 @@ export function NotificationBell() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.15 }}
-            className="absolute right-0 top-full mt-2 w-80 max-w-[90vw] z-50"
+            className="absolute right-0 top-full mt-2 w-[calc(100vw-2rem)] sm:w-80 max-w-[22rem] z-50"
           >
             <div className="rounded-xl border bg-card shadow-2xl overflow-hidden">
               {/* Header */}
