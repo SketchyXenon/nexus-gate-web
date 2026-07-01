@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3000",
+    "dev": "prisma generate --schema=prisma/schema.sqlite.prisma && next dev -p 3000",
     "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
     "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",
@@ -12,7 +12,9 @@
     "bootstrap:admin": "bun run scripts/bootstrap-admin.ts",
     "seed:events": "bun run scripts/seed-events.ts",
     "db:push": "prisma db push",
+    "db:push:sqlite": "prisma db push --schema=prisma/schema.sqlite.prisma",
     "db:generate": "prisma generate",
+    "db:generate:sqlite": "prisma generate --schema=prisma/schema.sqlite.prisma",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset"
   },
