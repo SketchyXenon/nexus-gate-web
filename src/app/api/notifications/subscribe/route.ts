@@ -35,16 +35,28 @@ export async function POST(req: NextRequest) {
   const body = await parseBody(req);
   const parsed = subscriptionSchema.safeParse(body);
   if (!parsed.success) {
-    return badRequest(parsed.error.issues[0]?.message ?? "Invalid subscription");
+    return badRequest(
+      parsed.error.issues[0]?.message ?? "Invalid subscription",
+    );
   }
 
-  // SSRF defense: validate the push endpoint URL
-  const urlCheck = validatePushEndpoint(parsed.data.endpoint);
-  if (!urlCheck.ok) {
-    return badRequest(
-      `Invalid push endpoint: ${urlCheck.reason}. The endpoint must be a valid HTTPS push service URL.`,
-      "INVALID_ENDPOINT"
-    );
+  // "in-app" is a sentinel for in-app notifications (no Web Push
+  // subscription). The client sends this when the user enables
+  // notifications but the browser hasn't registered a real push
+  // subscription (e.g. no VAPID keys configured, or the user only wants
+  // in-app bell notifications). Skip the URL validation for this sentinel.
+  const isInAppSentinel = parsed.data.endpoint === "in-app";
+
+  // SSRF defense: validate the push endpoint URL — but only for real
+  // Web Push endpoints (not the "in-app" sentinel).
+  if (!isInAppSentinel) {
+    const urlCheck = validatePushEndpoint(parsed.data.endpoint);
+    if (!urlCheck.ok) {
+      return badRequest(
+        `Invalid push endpoint: ${urlCheck.reason}. The endpoint must be a valid HTTPS push service URL.`,
+        "INVALID_ENDPOINT",
+      );
+    }
   }
 
   await db.account.update({
