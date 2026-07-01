@@ -9,37 +9,56 @@ import bcrypt from "bcryptjs";
 import { createHmac, createHash, randomBytes, timingSafeEqual } from "crypto";
 
 // ---- JWT secrets ----
-// In production, these MUST be set via env vars. If they're missing,
-// the app throws on startup (fail-closed). In development, we allow
-// a fallback for convenience.
+// In production, these MUST be set via env vars. Validation is LAZY —
+// it runs the first time a token is signed/verified (at request time),
+// NOT at module load. This is critical because `next build` imports
+// every route module to collect page data, and that import must not
+// throw even if the secrets aren't set in the build environment. The
+// real fail-closed check happens on the first runtime crypto operation.
 //
 // IMPORTANT: The production check only runs on the SERVER (Node.js runtime),
-// NOT in the browser. Environment variables are not available in the browser,
-// so the check would always fail client-side. We guard with typeof window
-// to skip the check during client-side evaluation.
+// NOT in the browser. We guard with typeof window to skip client-side.
 const ACCESS_SECRET_RAW = process.env.AUTH_SECRET;
 const REFRESH_SECRET_RAW = process.env.REFRESH_SECRET;
 
-if (
-  process.env.NODE_ENV === "production" &&
-  typeof window === "undefined" // Server-only check
-) {
-  if (!ACCESS_SECRET_RAW || ACCESS_SECRET_RAW.length < 32) {
-    throw new Error("FATAL: AUTH_SECRET env var must be set to a random string of at least 32 characters in production.");
+const DEV_ACCESS_FALLBACK = "dev-only-access-secret-not-for-production-32b!";
+const DEV_REFRESH_FALLBACK = "dev-only-refresh-secret-not-for-prod-32b!";
+
+function ensureSecret(name: string, value: string | undefined): string {
+  if (
+    process.env.NODE_ENV === "production" &&
+    typeof window === "undefined" // Server-only
+  ) {
+    if (!value || value.length < 32) {
+      throw new Error(
+        `FATAL: ${name} env var must be set to a random string of at least 32 characters in production.`,
+      );
+    }
   }
-  if (!REFRESH_SECRET_RAW || REFRESH_SECRET_RAW.length < 32) {
-    throw new Error("FATAL: REFRESH_SECRET env var must be set to a random string of at least 32 characters in production.");
-  }
+  return (
+    value ||
+    (name === "AUTH_SECRET" ? DEV_ACCESS_FALLBACK : DEV_REFRESH_FALLBACK)
+  );
 }
 
-const ACCESS_SECRET = new TextEncoder().encode(
-  ACCESS_SECRET_RAW || "dev-only-access-secret-not-for-production-32b!"
-);
-const REFRESH_SECRET = new TextEncoder().encode(
-  REFRESH_SECRET_RAW || "dev-only-refresh-secret-not-for-prod-32b!"
-);
-// String version for use with Node's createHmac (which expects string keys)
-const REFRESH_SECRET_STR = REFRESH_SECRET_RAW || "dev-only-refresh-secret-not-for-prod-32b!";
+// Lazy-initialized secret bytes — only validated/encoded when first used.
+let _accessSecret: Uint8Array | null = null;
+function getAccessSecret(): Uint8Array {
+  if (!_accessSecret) {
+    _accessSecret = new TextEncoder().encode(
+      ensureSecret("AUTH_SECRET", ACCESS_SECRET_RAW),
+    );
+  }
+  return _accessSecret;
+}
+
+let _refreshSecretStr: string | null = null;
+function getRefreshSecretStr(): string {
+  if (_refreshSecretStr === null) {
+    _refreshSecretStr = ensureSecret("REFRESH_SECRET", REFRESH_SECRET_RAW);
+  }
+  return _refreshSecretStr;
+}
 
 const ACCESS_TOKEN_TTL = "15m"; // 15 minutes
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -67,14 +86,14 @@ export async function hashPassword(password: string): Promise<string> {
 
 export async function verifyPassword(
   password: string,
-  hash: string
+  hash: string,
 ): Promise<boolean> {
   return bcrypt.compare(password, hash);
 }
 
 // ---- Access token (JWT) ----
 export async function signAccessToken(
-  payload: Omit<AccessTokenPayload, "type">
+  payload: Omit<AccessTokenPayload, "type">,
 ): Promise<string> {
   return new SignJWT({ ...payload, type: "access" })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
@@ -82,14 +101,14 @@ export async function signAccessToken(
     .setExpirationTime(ACCESS_TOKEN_TTL)
     .setIssuer("nexus-gate")
     .setAudience("nexus-gate-client")
-    .sign(ACCESS_SECRET);
+    .sign(getAccessSecret());
 }
 
 export async function verifyAccessToken(
-  token: string
+  token: string,
 ): Promise<AccessTokenPayload | null> {
   try {
-    const { payload } = await jwtVerify(token, ACCESS_SECRET, {
+    const { payload } = await jwtVerify(token, getAccessSecret(), {
       issuer: "nexus-gate",
       audience: "nexus-gate-client",
     });
@@ -116,7 +135,7 @@ export function generateRefreshToken(): string {
 }
 
 export function hashToken(token: string): string {
-  return hmacSha256(REFRESH_SECRET_STR, token);
+  return hmacSha256(getRefreshSecretStr(), token);
 }
 
 export function verifyToken(token: string, hash: string): boolean {
