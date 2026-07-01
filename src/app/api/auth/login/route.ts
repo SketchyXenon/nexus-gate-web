@@ -12,6 +12,7 @@ import {
   isDbUnavailableError,
 } from "@/lib/api";
 import { audit } from "@/lib/audit";
+import { requireTurnstile } from "@/lib/turnstile";
 
 // POST /api/auth/login
 // Wrapped in a top-level try/catch so that DB infrastructure errors
@@ -29,6 +30,14 @@ export async function POST(req: NextRequest) {
       return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
     }
     const { email, password } = parsed.data;
+
+    // ---- Cloudflare Turnstile server-side verification ----
+    // This is the REAL anti-bot boundary. The client-side gate is just
+    // UX friction; this call verifies the token with Cloudflare and
+    // rejects the request if it's missing/invalid. Skipped automatically
+    // if TURNSTILE_SECRET_KEY is not set (dev/local).
+    const turnstileError = await requireTurnstile(req, body);
+    if (turnstileError) return turnstileError;
 
     const account = await db.account.findUnique({ where: { email } });
     if (!account) {

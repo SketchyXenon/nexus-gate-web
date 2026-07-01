@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import { sendWelcomeEmail, isEmailConfigured } from "@/lib/email";
+import { requireTurnstile } from "@/lib/turnstile";
 
 // ====================================================================
 // POST /api/auth/register
@@ -36,126 +37,157 @@ import { sendWelcomeEmail, isEmailConfigured } from "@/lib/email";
 
 export async function POST(req: NextRequest) {
   try {
-  // ---- Standard rate limit (3/min) ----
-  const rl = await checkRateLimit(req, "register");
-  if (rl) return rl;
+    // ---- Standard rate limit (3/min) ----
+    const rl = await checkRateLimit(req, "register");
+    if (rl) return rl;
 
-  // ---- Strict IP limit: max 2 registrations per hour ----
-  // Use the "register" preset (3/min) + a separate strict key with "otp" preset (3/min)
-  // The combination effectively limits to 2-3 per minute, which is strict enough.
-  // For a true 2/hour limit, we'd need a custom preset — but the in-memory
-  // rate limiter doesn't support custom presets inline. The existing "register"
-  // preset (3/min) + the standard check above is sufficient.
-  // In production with Upstash Redis, this is handled by the sliding window.
+    // ---- Strict IP limit: max 2 registrations per hour ----
+    // Use the "register" preset (3/min) + a separate strict key with "otp" preset (3/min)
+    // The combination effectively limits to 2-3 per minute, which is strict enough.
+    // For a true 2/hour limit, we'd need a custom preset — but the in-memory
+    // rate limiter doesn't support custom presets inline. The existing "register"
+    // preset (3/min) + the standard check above is sufficient.
+    // In production with Upstash Redis, this is handled by the sliding window.
 
-  const body = await parseBody(req);
-  const parsed = registerSchema.safeParse(body);
-  if (!parsed.success) {
-    return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
-  }
-  const { email, password, fullName, studentId, program, section } = parsed.data;
+    const body = await parseBody(req);
+    const parsed = registerSchema.safeParse(body);
+    if (!parsed.success) {
+      return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
+    }
+    const { email, password, fullName, studentId, program, section } =
+      parsed.data;
 
-  // ---- Uniqueness checks — GENERIC error (no enumeration) ----
-  // Check BOTH email and studentId. If either exists, return the SAME
-  // generic message. This prevents attackers from probing which
-  // emails/studentIds are registered.
-  const existingEmail = await db.account.findUnique({ where: { email } });
-  const existingStudentId = await db.account.findUnique({ where: { studentId } });
+    // ---- Cloudflare Turnstile server-side verification ----
+    // The REAL anti-bot boundary. Rejects direct POSTs from bots that
+    // bypass the client widget. Skipped if TURNSTILE_SECRET_KEY is unset.
+    const turnstileError = await requireTurnstile(req, body);
+    if (turnstileError) return turnstileError;
 
-  if (existingEmail || existingStudentId) {
-    // Log the attempt for audit (helps detect brute-force probing)
-    await audit({
-      actorId: null,
-      action: "auth.register_duplicate_attempt",
-      targetType: "Account",
-      metadata: { email, studentId, reason: existingEmail ? "email_exists" : "studentId_exists" },
-      req,
-    }).catch(() => {});
-    // Generic error — same message regardless of which field is taken
-    // Hint: "email or student ID" tells the user WHAT to check without
-    // revealing WHICH one is the problem (prevents enumeration).
-    return badRequest(
-      "This email or student ID is already in use. Try signing in instead, or contact your administrator if you believe this is an error.",
-      "REGISTRATION_FAILED"
-    );
-  }
-
-  // ---- Check if student is on the whitelist (optional) ----
-  const whitelisted = await db.authorizedStudent.findUnique({
-    where: { studentId },
-  });
-  const isWhitelisted = !!whitelisted;
-
-  // ---- Create account as PENDING_VERIFICATION ----
-  // The user MUST sign in to activate their account. There is no OTP
-  // step — the successful login itself proves they saved their
-  // credentials correctly, and the login route flips the status to ACTIVE.
-  const passwordHash = await hashPassword(password);
-  let account;
-  try {
-    account = await db.account.create({
-      data: {
-        email,
-        passwordHash,
-        fullName,
-        role: "USER",
-        status: "PENDING_VERIFICATION",
-        studentId,
-        program: program || (whitelisted?.program ?? null),
-        section: section || (whitelisted?.section ?? null),
-      },
+    // ---- Uniqueness checks — GENERIC error (no enumeration) ----
+    // Check BOTH email and studentId. If either exists, return the SAME
+    // generic message. This prevents attackers from probing which
+    // emails/studentIds are registered.
+    const existingEmail = await db.account.findUnique({ where: { email } });
+    const existingStudentId = await db.account.findUnique({
+      where: { studentId },
     });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (msg.includes("Unique constraint") || msg.includes("unique")) {
+
+    if (existingEmail || existingStudentId) {
+      // Log the attempt for audit (helps detect brute-force probing)
+      await audit({
+        actorId: null,
+        action: "auth.register_duplicate_attempt",
+        targetType: "Account",
+        metadata: {
+          email,
+          studentId,
+          reason: existingEmail ? "email_exists" : "studentId_exists",
+        },
+        req,
+      }).catch(() => {});
+      // Generic error — same message regardless of which field is taken
+      // Hint: "email or student ID" tells the user WHAT to check without
+      // revealing WHICH one is the problem (prevents enumeration).
       return badRequest(
-        "Unable to create an account with the provided information. Please check your details or contact your administrator.",
-        "REGISTRATION_FAILED"
+        "This email or student ID is already in use. Try signing in instead, or contact your administrator if you believe this is an error.",
+        "REGISTRATION_FAILED",
       );
     }
-    throw e;
-  }
 
-  // ---- Sync to authorized_students ----
-  try {
-    await db.authorizedStudent.upsert({
+    // ---- Check if student is on the whitelist (optional) ----
+    const whitelisted = await db.authorizedStudent.findUnique({
       where: { studentId },
-      update: { email, fullName, program: program || whitelisted?.program || "", section: section || whitelisted?.section || "", activated: false },
-      create: { studentId, email, fullName, program: program || "", section: section || "", activated: false },
     });
-  } catch {
-    // Non-critical
-  }
+    const isWhitelisted = !!whitelisted;
 
-  // ---- Send welcome email (non-blocking) ----
-  if (isEmailConfigured()) {
-    sendWelcomeEmail(email, fullName).catch(() => {});
-  }
+    // ---- Create account as PENDING_VERIFICATION ----
+    // The user MUST sign in to activate their account. There is no OTP
+    // step — the successful login itself proves they saved their
+    // credentials correctly, and the login route flips the status to ACTIVE.
+    const passwordHash = await hashPassword(password);
+    let account;
+    try {
+      account = await db.account.create({
+        data: {
+          email,
+          passwordHash,
+          fullName,
+          role: "USER",
+          status: "PENDING_VERIFICATION",
+          studentId,
+          program: program || (whitelisted?.program ?? null),
+          section: section || (whitelisted?.section ?? null),
+        },
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("Unique constraint") || msg.includes("unique")) {
+        return badRequest(
+          "Unable to create an account with the provided information. Please check your details or contact your administrator.",
+          "REGISTRATION_FAILED",
+        );
+      }
+      throw e;
+    }
 
-  await audit({
-    actorId: account.id,
-    action: "auth.register",
-    targetType: "Account",
-    targetId: account.id,
-    metadata: { email, studentId, whitelisted: isWhitelisted, status: "PENDING_VERIFICATION" },
-    req,
-  });
+    // ---- Sync to authorized_students ----
+    try {
+      await db.authorizedStudent.upsert({
+        where: { studentId },
+        update: {
+          email,
+          fullName,
+          program: program || whitelisted?.program || "",
+          section: section || whitelisted?.section || "",
+          activated: false,
+        },
+        create: {
+          studentId,
+          email,
+          fullName,
+          program: program || "",
+          section: section || "",
+          activated: false,
+        },
+      });
+    } catch {
+      // Non-critical
+    }
 
-  // ---- Single unified success message ----
-  // No OTP step — the user must sign in to activate their account.
-  const message = isWhitelisted
-    ? "Account created! Your student ID was found on the approved list. Sign in to activate your account."
-    : "Account created! Sign in to activate your account.";
+    // ---- Send welcome email (non-blocking) ----
+    if (isEmailConfigured()) {
+      sendWelcomeEmail(email, fullName).catch(() => {});
+    }
 
-  return NextResponse.json(
-    {
-      ok: true,
-      message,
-      email: account.email,
-      whitelisted: isWhitelisted,
-    },
-    { status: 201 }
-  );
+    await audit({
+      actorId: account.id,
+      action: "auth.register",
+      targetType: "Account",
+      targetId: account.id,
+      metadata: {
+        email,
+        studentId,
+        whitelisted: isWhitelisted,
+        status: "PENDING_VERIFICATION",
+      },
+      req,
+    });
+
+    // ---- Single unified success message ----
+    // No OTP step — the user must sign in to activate their account.
+    const message = isWhitelisted
+      ? "Account created! Your student ID was found on the approved list. Sign in to activate your account."
+      : "Account created! Sign in to activate your account.";
+
+    return NextResponse.json(
+      {
+        ok: true,
+        message,
+        email: account.email,
+        whitelisted: isWhitelisted,
+      },
+      { status: 201 },
+    );
   } catch (e) {
     if (isDbUnavailableError(e)) return dbUnavailable(e);
     throw e;

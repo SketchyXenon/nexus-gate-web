@@ -122,7 +122,10 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
       // Retry the original request with the new cookie
       const retryRes = await fetch(url, {
         ...init,
-        headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+        headers: {
+          "Content-Type": "application/json",
+          ...(init?.headers || {}),
+        },
         credentials: "include",
       });
       if (retryRes.ok) {
@@ -141,7 +144,9 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
       if (body) {
         msg = (body.error as string) || (body.message as string) || msg;
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     const err = new Error(msg) as Error & {
       status?: number;
       code?: string;
@@ -168,7 +173,9 @@ export const useMe = () =>
         return await api<Account>("/api/auth/me");
       } catch {
         // Fall back to NextAuth (Google OAuth) session.
-        const res = await fetch("/api/auth/session", { credentials: "include" });
+        const res = await fetch("/api/auth/session", {
+          credentials: "include",
+        });
         const session = await res.json();
         if (session?.user?.id) {
           return session.user as Account;
@@ -183,8 +190,11 @@ export const useMe = () =>
 export const useLogin = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { email: string; password: string }) =>
-      api<Account>("/api/auth/login", { method: "POST", body: JSON.stringify(vars) }),
+    mutationFn: (vars: { email: string; password: string; cfToken?: string }) =>
+      api<Account>("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["me"] }),
   });
 };
@@ -198,9 +208,17 @@ export const useRegister = () =>
       studentId: number;
       program?: string;
       section?: string;
+      cfToken?: string;
     }) =>
-      api<{ ok: boolean; email: string; devOtp?: string; message: string; whitelisted?: boolean }>("/api/auth/register", {
-        method: "POST", body: JSON.stringify(vars),
+      api<{
+        ok: boolean;
+        email: string;
+        devOtp?: string;
+        message: string;
+        whitelisted?: boolean;
+      }>("/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify(vars),
       }),
   });
 
@@ -225,14 +243,25 @@ export const useResetPassword = () =>
 export const useLogout = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
-    onSuccess: () => { qc.setQueryData(["me"], null); qc.clear(); },
+    mutationFn: () =>
+      api<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
+    onSuccess: () => {
+      qc.setQueryData(["me"], null);
+      qc.clear();
+    },
   });
 };
 
 // ---------------- Whitelist ----------------
 export type WhitelistSort = "name" | "studentId" | "program";
-export const useWhitelist = (params?: { page?: number; pageSize?: number; program?: string; section?: string; q?: string; sort?: WhitelistSort }) => {
+export const useWhitelist = (params?: {
+  page?: number;
+  pageSize?: number;
+  program?: string;
+  section?: string;
+  q?: string;
+  sort?: WhitelistSort;
+}) => {
   const sp = new URLSearchParams();
   if (params?.page) sp.set("page", String(params.page));
   if (params?.pageSize) sp.set("pageSize", String(params.pageSize));
@@ -242,15 +271,35 @@ export const useWhitelist = (params?: { page?: number; pageSize?: number; progra
   if (params?.sort) sp.set("sort", params.sort);
   return useQuery({
     queryKey: ["whitelist", params],
-    queryFn: () => api<{ students: AuthorizedStudent[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>(`/api/whitelist?${sp}`),
+    queryFn: () =>
+      api<{
+        students: AuthorizedStudent[];
+        pagination: {
+          page: number;
+          pageSize: number;
+          total: number;
+          totalPages: number;
+        };
+      }>(`/api/whitelist?${sp}`),
   });
 };
 
 export const useImportWhitelist = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (students: Array<{ studentId: number; email: string; fullName: string; program: string; section: string }>) =>
-      api<{ inserted: number; skipped: number; total: number }>("/api/whitelist", { method: "POST", body: JSON.stringify({ students }) }),
+    mutationFn: (
+      students: Array<{
+        studentId: number;
+        email: string;
+        fullName: string;
+        program: string;
+        section: string;
+      }>,
+    ) =>
+      api<{ inserted: number; skipped: number; total: number }>(
+        "/api/whitelist",
+        { method: "POST", body: JSON.stringify({ students }) },
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["whitelist"] }),
   });
 };
@@ -258,7 +307,8 @@ export const useImportWhitelist = () => {
 export const useDeleteWhitelist = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (studentId: number) => api<{ ok: boolean }>(`/api/whitelist/${studentId}`, { method: "DELETE" }),
+    mutationFn: (studentId: number) =>
+      api<{ ok: boolean }>(`/api/whitelist/${studentId}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["whitelist"] }),
   });
 };
@@ -302,8 +352,20 @@ export const useEvents = (params?: EventsListParams) => {
 export const useEventSecret = (id: number | null) =>
   useQuery({
     queryKey: ["event-secret", id],
-    queryFn: () => api<{ id: number; title: string; eventSecret: string; scheduledAt: string; targetProgram: string | null; targetSection: string | null; scope: string; isDelegated: boolean; delegatable: boolean }>(`/api/events/${id}/secret`),
-    enabled: id != null, staleTime: 5 * 60_000,
+    queryFn: () =>
+      api<{
+        id: number;
+        title: string;
+        eventSecret: string;
+        scheduledAt: string;
+        targetProgram: string | null;
+        targetSection: string | null;
+        scope: string;
+        isDelegated: boolean;
+        delegatable: boolean;
+      }>(`/api/events/${id}/secret`),
+    enabled: id != null,
+    staleTime: 5 * 60_000,
   });
 
 export const useCreateEvent = () => {
@@ -323,10 +385,16 @@ export const useCreateEvent = () => {
       timeOutClosesAt?: string;
       enableTimeOut?: boolean;
       delegatable?: boolean;
-  delegationEnabled?: boolean;
+      delegationEnabled?: boolean;
     }) =>
-      api<EventItem>("/api/events", { method: "POST", body: JSON.stringify(vars) }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["events"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); },
+      api<EventItem>("/api/events", {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["events"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
   });
 };
 
@@ -336,9 +404,12 @@ export const useDeleteEvent = () => {
     mutationFn: (vars: { id: number; hard?: boolean }) =>
       api<{ ok: boolean; deleted?: boolean }>(
         `/api/events/${vars.id}${vars.hard ? "?hard=true" : ""}`,
-        { method: "DELETE" }
+        { method: "DELETE" },
       ),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["events"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["events"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
   });
 };
 
@@ -357,8 +428,15 @@ export const useEventsHistory = (scope?: string) => {
 export const useEventAttendance = (eventId: number | null) =>
   useQuery({
     queryKey: ["attendance", eventId],
-    queryFn: () => api<{ event: EventItem; presentCount: number; eligibleCount: number; attendances: AttendanceRow[] }>(`/api/events/${eventId}/attendance`),
-    enabled: eventId != null, refetchInterval: eventId != null ? 4000 : false,
+    queryFn: () =>
+      api<{
+        event: EventItem;
+        presentCount: number;
+        eligibleCount: number;
+        attendances: AttendanceRow[];
+      }>(`/api/events/${eventId}/attendance`),
+    enabled: eventId != null,
+    refetchInterval: eventId != null ? 4000 : false,
   });
 
 export interface EventDetails {
@@ -374,9 +452,20 @@ export interface EventDetails {
   enableTimeOut: boolean;
   status: string;
   attendanceCount: number;
-  myAttendance: { id: number; scannedAt: string; timeOutAt: string | null; source: string } | null;
+  myAttendance: {
+    id: number;
+    scannedAt: string;
+    timeOutAt: string | null;
+    source: string;
+  } | null;
   windows: {
-    checkIn: { opensAt: string; closesAt: string; isLive: boolean; isUpcoming: boolean; isEnded: boolean };
+    checkIn: {
+      opensAt: string;
+      closesAt: string;
+      isLive: boolean;
+      isUpcoming: boolean;
+      isEnded: boolean;
+    };
     timeOut: { opensAt: string; closesAt: string; isLive: boolean } | null;
   };
 }
@@ -417,9 +506,20 @@ export async function submitScanCertificate(signed: {
 export const useCreateOverride = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { eventId: number; studentId: number; reason?: string }) =>
-      api<{ ok: boolean }>("/api/attendance/override", { method: "POST", body: JSON.stringify(vars) }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["attendance"] }); qc.invalidateQueries({ queryKey: ["overrides"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); },
+    mutationFn: (vars: {
+      eventId: number;
+      studentId: number;
+      reason?: string;
+    }) =>
+      api<{ ok: boolean }>("/api/attendance/override", {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["attendance"] });
+      qc.invalidateQueries({ queryKey: ["overrides"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
   });
 };
 
@@ -453,7 +553,7 @@ export interface OverrideListParams {
   eventId?: number;
   q?: string;
   from?: string; // ISO date string
-  to?: string;   // ISO date string
+  to?: string; // ISO date string
 }
 
 export const useOverrides = (params?: OverrideListParams) => {
@@ -469,21 +569,39 @@ export const useOverrides = (params?: OverrideListParams) => {
     queryFn: () =>
       api<{
         overrides: OverrideRow[];
-        pagination: { page: number; pageSize: number; total: number; totalPages: number };
+        pagination: {
+          page: number;
+          pageSize: number;
+          total: number;
+          totalPages: number;
+        };
       }>(`/api/attendance/overrides?${sp}`),
     staleTime: 5_000,
   });
 };
 
 // ---------------- Accounts ----------------
-export const useAccounts = (params?: { role?: string; q?: string; page?: number }) => {
+export const useAccounts = (params?: {
+  role?: string;
+  q?: string;
+  page?: number;
+}) => {
   const sp = new URLSearchParams();
   if (params?.role) sp.set("role", params.role);
   if (params?.q) sp.set("q", params.q);
   if (params?.page) sp.set("page", String(params.page));
   return useQuery({
     queryKey: ["accounts", params],
-    queryFn: () => api<{ accounts: Account[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>(`/api/accounts?${sp}`),
+    queryFn: () =>
+      api<{
+        accounts: Account[];
+        pagination: {
+          page: number;
+          pageSize: number;
+          total: number;
+          totalPages: number;
+        };
+      }>(`/api/accounts?${sp}`),
   });
 };
 
@@ -510,7 +628,8 @@ export const useUpdateAccount = () => {
       if (vars.program !== undefined) body.program = vars.program;
       if (vars.section !== undefined) body.section = vars.section;
       if (vars.year !== undefined) body.year = vars.year;
-      if (vars.organizationName !== undefined) body.organizationName = vars.organizationName;
+      if (vars.organizationName !== undefined)
+        body.organizationName = vars.organizationName;
       return api<Account>(`/api/accounts/${vars.id}`, {
         method: "PATCH",
         body: JSON.stringify(body),
@@ -524,15 +643,34 @@ export const useUpdateAccount = () => {
 export const useDashboard = () =>
   useQuery({
     queryKey: ["dashboard"],
-    queryFn: () => api<{
-      user: Account;
-      stats: { totalStudents?: number; totalEvents?: number; totalScans?: number; totalOverrides?: number; totalAttended?: number; eligibleEvents?: number };
-      recentEvents?: Array<EventItem & { presentCount: number; owner: string }>;
-      attendances?: Array<AttendanceRow & { event: { id: number; title: string; scheduledAt: string; scope: string } }>;
-      programCounts?: Record<string, number>;
-      sectionCounts?: Record<string, number>;
-      needsProfile?: boolean;
-    }>("/api/dashboard"),
+    queryFn: () =>
+      api<{
+        user: Account;
+        stats: {
+          totalStudents?: number;
+          totalEvents?: number;
+          totalScans?: number;
+          totalOverrides?: number;
+          totalAttended?: number;
+          eligibleEvents?: number;
+        };
+        recentEvents?: Array<
+          EventItem & { presentCount: number; owner: string }
+        >;
+        attendances?: Array<
+          AttendanceRow & {
+            event: {
+              id: number;
+              title: string;
+              scheduledAt: string;
+              scope: string;
+            };
+          }
+        >;
+        programCounts?: Record<string, number>;
+        sectionCounts?: Record<string, number>;
+        needsProfile?: boolean;
+      }>("/api/dashboard"),
     staleTime: 10_000,
   });
 
@@ -543,10 +681,26 @@ export const useAuditLogs = (params?: { page?: number; action?: string }) => {
   if (params?.action) sp.set("action", params.action);
   return useQuery({
     queryKey: ["audit-logs", params],
-    queryFn: () => api<{
-      logs: Array<{ id: number; actorId: string | null; action: string; targetType: string | null; targetId: string | null; metadata: string | null; ipAddress: string | null; createdAt: string; actor?: { fullName: string; email: string } | null }>;
-      pagination: { page: number; pageSize: number; total: number; totalPages: number };
-    }>(`/api/audit-logs?${sp}`),
+    queryFn: () =>
+      api<{
+        logs: Array<{
+          id: number;
+          actorId: string | null;
+          action: string;
+          targetType: string | null;
+          targetId: string | null;
+          metadata: string | null;
+          ipAddress: string | null;
+          createdAt: string;
+          actor?: { fullName: string; email: string } | null;
+        }>;
+        pagination: {
+          page: number;
+          pageSize: number;
+          total: number;
+          totalPages: number;
+        };
+      }>(`/api/audit-logs?${sp}`),
   });
 };
 
@@ -555,11 +709,18 @@ export const useAdminCreateAccount = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: {
-      email: string; password: string; fullName: string;
+      email: string;
+      password: string;
+      fullName: string;
       role: "ADMIN" | "ORGANIZER";
-      program?: string; section?: string;
+      program?: string;
+      section?: string;
       organizationName?: string;
-    }) => api<Account>("/api/accounts/create", { method: "POST", body: JSON.stringify(vars) }),
+    }) =>
+      api<Account>("/api/accounts/create", {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
   });
 };
@@ -568,7 +729,10 @@ export const useAdminCreateAccount = () => {
 export const useDeleteAccount = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api<{ ok: boolean; deleted: boolean }>(`/api/accounts/${id}/delete`, { method: "DELETE" }),
+    mutationFn: (id: string) =>
+      api<{ ok: boolean; deleted: boolean }>(`/api/accounts/${id}/delete`, {
+        method: "DELETE",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
   });
 };
@@ -583,8 +747,16 @@ export const useProfile = () =>
 export const useUpdateProfile = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { fullName: string; program?: string; year?: number; section?: string }) =>
-      api<Profile>("/api/profile", { method: "PATCH", body: JSON.stringify(vars) }),
+    mutationFn: (vars: {
+      fullName: string;
+      program?: string;
+      year?: number;
+      section?: string;
+    }) =>
+      api<Profile>("/api/profile", {
+        method: "PATCH",
+        body: JSON.stringify(vars),
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["profile"] });
       qc.invalidateQueries({ queryKey: ["me"] });
@@ -595,7 +767,10 @@ export const useUpdateProfile = () => {
 export const useChangePassword = () =>
   useMutation({
     mutationFn: (vars: { currentPassword: string; newPassword: string }) =>
-      api<{ ok: boolean; message: string }>("/api/profile/password", { method: "POST", body: JSON.stringify(vars) }),
+      api<{ ok: boolean; message: string }>("/api/profile/password", {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
   });
 
 // ---------------- Notifications ----------------
@@ -613,7 +788,7 @@ export const useNotifications = (unreadOnly?: boolean) =>
     queryKey: ["notifications", unreadOnly],
     queryFn: () =>
       api<{ notifications: NotificationItem[]; unreadCount: number }>(
-        `/api/notifications${unreadOnly ? "?unread=true" : ""}`
+        `/api/notifications${unreadOnly ? "?unread=true" : ""}`,
       ),
     refetchInterval: 30_000, // poll every 30 seconds
   });
@@ -635,22 +810,36 @@ export const useMarkNotificationsRead = () => {
 export const useNotificationStatus = () =>
   useQuery({
     queryKey: ["notification-status"],
-    queryFn: () => api<{ enabled: boolean; hasSubscription: boolean }>("/api/notifications/status"),
+    queryFn: () =>
+      api<{ enabled: boolean; hasSubscription: boolean }>(
+        "/api/notifications/status",
+      ),
   });
 
 export const useSubscribeNotifications = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
-      api<{ ok: boolean }>("/api/notifications/subscribe", { method: "POST", body: JSON.stringify(vars) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["notification-status"] }),
+    mutationFn: (vars: {
+      endpoint: string;
+      keys: { p256dh: string; auth: string };
+    }) =>
+      api<{ ok: boolean }>("/api/notifications/subscribe", {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["notification-status"] }),
   });
 };
 
 export const useUnsubscribeNotifications = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api<{ ok: boolean }>("/api/notifications/subscribe", { method: "DELETE" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["notification-status"] }),
+    mutationFn: () =>
+      api<{ ok: boolean }>("/api/notifications/subscribe", {
+        method: "DELETE",
+      }),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["notification-status"] }),
   });
 };
