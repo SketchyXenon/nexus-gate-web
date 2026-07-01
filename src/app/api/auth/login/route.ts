@@ -8,6 +8,8 @@ import {
   checkRateLimit,
   parseBody,
   unauthorized,
+  dbUnavailable,
+  isDbUnavailableError,
 } from "@/lib/api";
 import { audit } from "@/lib/audit";
 
@@ -23,13 +25,24 @@ export async function POST(req: NextRequest) {
   }
   const { email, password } = parsed.data;
 
-  const account = await db.account.findUnique({ where: { email } });
+  let account;
+  try {
+    account = await db.account.findUnique({ where: { email } });
+  } catch (e) {
+    if (isDbUnavailableError(e)) return dbUnavailable(e);
+    throw e;
+  }
   if (!account) {
     // ---- Fake hash: run a bcrypt compare to equalize timing ----
     // Without this, non-existent emails respond faster than existing ones
     // (no bcrypt work), enabling timing-based user enumeration.
-    await verifyPassword(password, "$2a$12$wQ8N9rF7pV3sH2kL5jY1beZMxG4tC8oN0vD6fB1eA3yI9mK7pL2qC");
-    return unauthorized("Incorrect email or password. Check your details and try again.");
+    await verifyPassword(
+      password,
+      "$2a$12$wQ8N9rF7pV3sH2kL5jY1beZMxG4tC8oN0vD6fB1eA3yI9mK7pL2qC",
+    );
+    return unauthorized(
+      "Incorrect email or password. Check your details and try again.",
+    );
   }
 
   if (account.lockedUntil && account.lockedUntil > new Date()) {
@@ -40,7 +53,7 @@ export async function POST(req: NextRequest) {
         code: "LOCKED",
         retryAfterMs: retryMs,
       },
-      { status: 423 }
+      { status: 423 },
     );
   }
 
@@ -52,7 +65,9 @@ export async function POST(req: NextRequest) {
       where: { id: account.id },
       data: {
         failedLoginAttempts: attempts,
-        lockedUntil: shouldLock ? new Date(Date.now() + LOGIN_SECURITY.lockoutMs) : null,
+        lockedUntil: shouldLock
+          ? new Date(Date.now() + LOGIN_SECURITY.lockoutMs)
+          : null,
       },
     });
     await audit({
@@ -75,10 +90,12 @@ export async function POST(req: NextRequest) {
           code: "LOCKED",
           retryAfterMs: retryMs,
         },
-        { status: 423 }
+        { status: 423 },
       );
     }
-    return unauthorized("Incorrect email or password. Check your details and try again.");
+    return unauthorized(
+      "Incorrect email or password. Check your details and try again.",
+    );
   }
 
   // ---- Activate PENDING_VERIFICATION accounts on successful login ----
@@ -109,8 +126,12 @@ export async function POST(req: NextRequest) {
 
   if (account.status === "SUSPENDED") {
     return NextResponse.json(
-      { error: "Your account has been suspended. Please contact an administrator.", code: "SUSPENDED" },
-      { status: 403 }
+      {
+        error:
+          "Your account has been suspended. Please contact an administrator.",
+        code: "SUSPENDED",
+      },
+      { status: 403 },
     );
   }
 

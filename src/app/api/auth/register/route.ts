@@ -7,6 +7,8 @@ import {
   checkRateLimit,
   parseBody,
   getClientIp,
+  dbUnavailable,
+  isDbUnavailableError,
 } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import { sendWelcomeEmail, isEmailConfigured } from "@/lib/email";
@@ -50,14 +52,21 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
   }
-  const { email, password, fullName, studentId, program, section } = parsed.data;
+  const { email, password, fullName, studentId, program, section } =
+    parsed.data;
 
   // ---- Uniqueness checks — GENERIC error (no enumeration) ----
   // Check BOTH email and studentId. If either exists, return the SAME
   // generic message. This prevents attackers from probing which
   // emails/studentIds are registered.
-  const existingEmail = await db.account.findUnique({ where: { email } });
-  const existingStudentId = await db.account.findUnique({ where: { studentId } });
+  let existingEmail, existingStudentId;
+  try {
+    existingEmail = await db.account.findUnique({ where: { email } });
+    existingStudentId = await db.account.findUnique({ where: { studentId } });
+  } catch (e) {
+    if (isDbUnavailableError(e)) return dbUnavailable(e);
+    throw e;
+  }
 
   if (existingEmail || existingStudentId) {
     // Log the attempt for audit (helps detect brute-force probing)
@@ -65,7 +74,11 @@ export async function POST(req: NextRequest) {
       actorId: null,
       action: "auth.register_duplicate_attempt",
       targetType: "Account",
-      metadata: { email, studentId, reason: existingEmail ? "email_exists" : "studentId_exists" },
+      metadata: {
+        email,
+        studentId,
+        reason: existingEmail ? "email_exists" : "studentId_exists",
+      },
       req,
     }).catch(() => {});
     // Generic error — same message regardless of which field is taken
@@ -73,7 +86,7 @@ export async function POST(req: NextRequest) {
     // revealing WHICH one is the problem (prevents enumeration).
     return badRequest(
       "This email or student ID is already in use. Try signing in instead, or contact your administrator if you believe this is an error.",
-      "REGISTRATION_FAILED"
+      "REGISTRATION_FAILED",
     );
   }
 
@@ -107,7 +120,7 @@ export async function POST(req: NextRequest) {
     if (msg.includes("Unique constraint") || msg.includes("unique")) {
       return badRequest(
         "Unable to create an account with the provided information. Please check your details or contact your administrator.",
-        "REGISTRATION_FAILED"
+        "REGISTRATION_FAILED",
       );
     }
     throw e;
@@ -117,8 +130,21 @@ export async function POST(req: NextRequest) {
   try {
     await db.authorizedStudent.upsert({
       where: { studentId },
-      update: { email, fullName, program: program || whitelisted?.program || "", section: section || whitelisted?.section || "", activated: false },
-      create: { studentId, email, fullName, program: program || "", section: section || "", activated: false },
+      update: {
+        email,
+        fullName,
+        program: program || whitelisted?.program || "",
+        section: section || whitelisted?.section || "",
+        activated: false,
+      },
+      create: {
+        studentId,
+        email,
+        fullName,
+        program: program || "",
+        section: section || "",
+        activated: false,
+      },
     });
   } catch {
     // Non-critical
@@ -134,7 +160,12 @@ export async function POST(req: NextRequest) {
     action: "auth.register",
     targetType: "Account",
     targetId: account.id,
-    metadata: { email, studentId, whitelisted: isWhitelisted, status: "PENDING_VERIFICATION" },
+    metadata: {
+      email,
+      studentId,
+      whitelisted: isWhitelisted,
+      status: "PENDING_VERIFICATION",
+    },
     req,
   });
 
@@ -151,6 +182,6 @@ export async function POST(req: NextRequest) {
       email: account.email,
       whitelisted: isWhitelisted,
     },
-    { status: 201 }
+    { status: 201 },
   );
 }
