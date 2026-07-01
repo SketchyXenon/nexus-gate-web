@@ -10,13 +10,26 @@ import {
 } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import { requireTurnstile } from "@/lib/turnstile";
-import { createSupabaseServerClient } from "@/lib/supabase-server";
+import {
+  createSupabaseServerClient,
+  isSupabaseConfigured,
+} from "@/lib/supabase-server";
 
 // POST /api/auth/register
 // Creates a Supabase Auth user + a linked accounts row (PENDING_VERIFICATION).
 // The user must sign in to activate (login flips status to ACTIVE).
 export async function POST(req: NextRequest) {
   try {
+    if (!isSupabaseConfigured()) {
+      return NextResponse.json(
+        {
+          error:
+            "Authentication is not configured. Contact your administrator.",
+          code: "AUTH_NOT_CONFIGURED",
+        },
+        { status: 503 },
+      );
+    }
     const rl = await checkRateLimit(req, "register");
     if (rl) return rl;
 

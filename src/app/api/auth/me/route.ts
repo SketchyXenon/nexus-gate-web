@@ -32,6 +32,10 @@ export async function GET() {
       lastLoginAt: true,
     },
   });
-  if (!account) return NextResponse.json({ error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401 });
+  if (!account)
+    return NextResponse.json(
+      { error: "Unauthorized", code: "UNAUTHORIZED" },
+      { status: 401 },
+    );
   return NextResponse.json(account);
 }

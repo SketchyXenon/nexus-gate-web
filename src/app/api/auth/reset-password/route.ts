@@ -3,13 +3,25 @@ import { resetPasswordSchema } from "@/lib/validation";
 import { badRequest, checkRateLimit, getClientIp, parseBody } from "@/lib/api";
 import { rateLimit } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
-import { createSupabaseServerClient } from "@/lib/supabase-server";
+import {
+  createSupabaseServerClient,
+  isSupabaseConfigured,
+} from "@/lib/supabase-server";
 import { getCurrentAccountSupabase } from "@/lib/supabase-session";
 
 // POST /api/auth/reset-password
 // Sets a new password via Supabase Auth. Requires an active recovery
 // session (established client-side when the user clicks the email link).
 export async function POST(req: NextRequest) {
+  if (!isSupabaseConfigured()) {
+    return NextResponse.json(
+      {
+        error: "Authentication is not configured. Contact your administrator.",
+        code: "AUTH_NOT_CONFIGURED",
+      },
+      { status: 503 },
+    );
+  }
   const rl = await checkRateLimit(req, "otp");
   if (rl) return rl;
 
