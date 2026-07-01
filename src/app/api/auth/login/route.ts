@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     const rl = await checkRateLimit(req, "login");
     if (rl) return rl;
 
-    const body = await parseBody(req);
+    const body = await parseBody<{ cfToken?: string }>(req);
     const parsed = loginSchema.safeParse(body);
     if (!parsed.success) {
       return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
@@ -32,17 +32,22 @@ export async function POST(req: NextRequest) {
 
     // Sign in via Supabase Auth (sets the session cookie).
     const supabase = await createSupabaseServerClient();
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const { data: authData, error: authError } =
+      await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
     if (authError || !authData.user) {
-      return unauthorized("Incorrect email or password. Check your details and try again.");
+      return unauthorized(
+        "Incorrect email or password. Check your details and try again.",
+      );
     }
     const authUid = authData.user.id;
 
     // Load the linked accounts row.
-    const account = await db.account.findFirst({ where: { supabaseAuthUid: authUid } });
+    const account = await db.account.findFirst({
+      where: { supabaseAuthUid: authUid },
+    });
     if (!account) {
       // Auth user exists but no accounts row - sign them out (inconsistent state).
       await supabase.auth.signOut();
@@ -54,8 +59,12 @@ export async function POST(req: NextRequest) {
       const retryMs = account.lockedUntil.getTime() - Date.now();
       await supabase.auth.signOut();
       return NextResponse.json(
-        { error: `Too many failed attempts. Please try again in ${Math.ceil(retryMs / 1000)} seconds.`, code: "LOCKED", retryAfterMs: retryMs },
-        { status: 423 }
+        {
+          error: `Too many failed attempts. Please try again in ${Math.ceil(retryMs / 1000)} seconds.`,
+          code: "LOCKED",
+          retryAfterMs: retryMs,
+        },
+        { status: 423 },
       );
     }
 
@@ -63,32 +72,59 @@ export async function POST(req: NextRequest) {
     if (account.status === "PENDING_VERIFICATION") {
       await db.account.update({
         where: { id: account.id },
-        data: { status: "ACTIVE", failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() },
+        data: {
+          status: "ACTIVE",
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+          lastLoginAt: new Date(),
+        },
       });
       (account as { status: string }).status = "ACTIVE";
-      await audit({ actorId: account.id, action: "auth.account_activated", targetType: "Account", targetId: account.id, req });
+      await audit({
+        actorId: account.id,
+        action: "auth.account_activated",
+        targetType: "Account",
+        targetId: account.id,
+        req,
+      });
     }
 
     if (account.status === "SUSPENDED") {
       await supabase.auth.signOut();
       return NextResponse.json(
-        { error: "Your account has been suspended. Please contact an administrator.", code: "SUSPENDED" },
-        { status: 403 }
+        {
+          error:
+            "Your account has been suspended. Please contact an administrator.",
+          code: "SUSPENDED",
+        },
+        { status: 403 },
       );
     }
 
     // Anti-account-sharing: revoke previous refresh tokens (legacy field).
-    await db.refreshToken.updateMany({
-      where: { accountId: account.id, revokedAt: null },
-      data: { revokedAt: new Date() },
-    }).catch(() => {});
+    await db.refreshToken
+      .updateMany({
+        where: { accountId: account.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      })
+      .catch(() => {});
 
     await db.account.update({
       where: { id: account.id },
-      data: { failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() },
+      data: {
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+        lastLoginAt: new Date(),
+      },
     });
 
-    await audit({ actorId: account.id, action: "auth.login", targetType: "Account", targetId: account.id, req });
+    await audit({
+      actorId: account.id,
+      action: "auth.login",
+      targetType: "Account",
+      targetId: account.id,
+      req,
+    });
 
     return NextResponse.json({
       id: account.id,

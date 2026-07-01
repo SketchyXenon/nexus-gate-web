@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resetPasswordSchema } from "@/lib/validation";
-import { badRequest, checkRateLimit, getClientIp } from "@/lib/api";
+import { badRequest, checkRateLimit, getClientIp, parseBody } from "@/lib/api";
 import { rateLimit } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
@@ -17,28 +17,41 @@ export async function POST(req: NextRequest) {
   const ipResult = await rateLimit(`resetpw-strict:ip:${ip}`, "otp");
   if (!ipResult.allowed) {
     return NextResponse.json(
-      { error: "Too many password reset attempts from this network. Please try again later.", code: "IP_RATE_LIMITED" },
-      { status: 429 }
+      {
+        error:
+          "Too many password reset attempts from this network. Please try again later.",
+        code: "IP_RATE_LIMITED",
+      },
+      { status: 429 },
     );
   }
 
   const body = await parseBody(req);
   const parsed = resetPasswordSchema.safeParse(body);
   if (!parsed.success) {
-    return badRequest(parsed.error.issues[0]?.message ?? "Invalid input", "INVALID_TOKEN");
+    return badRequest(
+      parsed.error.issues[0]?.message ?? "Invalid input",
+      "INVALID_TOKEN",
+    );
   }
   const { password } = parsed.data;
 
   // The recovery session must be active (user clicked the email link).
   const account = await getCurrentAccountSupabase();
   if (!account) {
-    return badRequest("This reset link is invalid or has expired. Please request a new one.", "INVALID_TOKEN");
+    return badRequest(
+      "This reset link is invalid or has expired. Please request a new one.",
+      "INVALID_TOKEN",
+    );
   }
 
   const supabase = await createSupabaseServerClient();
   const { error } = await supabase.auth.updateUser({ password });
   if (error) {
-    return badRequest("Unable to reset password. Please request a new reset link.", "INVALID_TOKEN");
+    return badRequest(
+      "Unable to reset password. Please request a new reset link.",
+      "INVALID_TOKEN",
+    );
   }
 
   await audit({
@@ -49,5 +62,9 @@ export async function POST(req: NextRequest) {
     req,
   }).catch(() => {});
 
-  return NextResponse.json({ ok: true, message: "Your password has been reset. You can now sign in with your new password." });
+  return NextResponse.json({
+    ok: true,
+    message:
+      "Your password has been reset. You can now sign in with your new password.",
+  });
 }

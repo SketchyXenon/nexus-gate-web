@@ -20,34 +20,43 @@ export async function POST(req: NextRequest) {
     const rl = await checkRateLimit(req, "register");
     if (rl) return rl;
 
-    const body = await parseBody(req);
+    const body = await parseBody<{ cfToken?: string }>(req);
     const parsed = registerSchema.safeParse(body);
     if (!parsed.success) {
       return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
     }
-    const { email, password, fullName, studentId, program, section } = parsed.data;
+    const { email, password, fullName, studentId, program, section } =
+      parsed.data;
 
     const turnstileError = await requireTurnstile(req, body);
     if (turnstileError) return turnstileError;
 
     // Uniqueness checks - generic error (no enumeration).
     const existingEmail = await db.account.findUnique({ where: { email } });
-    const existingStudentId = await db.account.findUnique({ where: { studentId } });
+    const existingStudentId = await db.account.findUnique({
+      where: { studentId },
+    });
     if (existingEmail || existingStudentId) {
       await audit({
         actorId: null,
         action: "auth.register_duplicate_attempt",
         targetType: "Account",
-        metadata: { email, studentId, reason: existingEmail ? "email_exists" : "studentId_exists" },
+        metadata: {
+          email,
+          studentId,
+          reason: existingEmail ? "email_exists" : "studentId_exists",
+        },
         req,
       }).catch(() => {});
       return badRequest(
         "This email or student ID is already in use. Try signing in instead, or contact your administrator if you believe this is an error.",
-        "REGISTRATION_FAILED"
+        "REGISTRATION_FAILED",
       );
     }
 
-    const whitelisted = await db.authorizedStudent.findUnique({ where: { studentId } });
+    const whitelisted = await db.authorizedStudent.findUnique({
+      where: { studentId },
+    });
     const isWhitelisted = !!whitelisted;
 
     // 1. Create the Supabase Auth user (identity layer).
@@ -60,13 +69,19 @@ export async function POST(req: NextRequest) {
     if (authError || !authData.user) {
       // Map Supabase errors to generic messages (no enumeration).
       const msg = authError?.message ?? "Registration failed";
-      if (msg.toLowerCase().includes("already registered") || msg.toLowerCase().includes("user already")) {
+      if (
+        msg.toLowerCase().includes("already registered") ||
+        msg.toLowerCase().includes("user already")
+      ) {
         return badRequest(
           "This email or student ID is already in use. Try signing in instead.",
-          "REGISTRATION_FAILED"
+          "REGISTRATION_FAILED",
         );
       }
-      return badRequest("Unable to create account. Please try again.", "REGISTRATION_FAILED");
+      return badRequest(
+        "Unable to create account. Please try again.",
+        "REGISTRATION_FAILED",
+      );
     }
     const authUid = authData.user.id;
 
@@ -87,14 +102,14 @@ export async function POST(req: NextRequest) {
         },
       });
     } catch (e) {
-      // Roll back the Supabase user if the accounts row fails (unique constraint, etc).
-      const admin = createSupabaseServerClient();
+      // Roll back the Supabase user if the accounts row fails.
+      const admin = await createSupabaseServerClient();
       await admin.auth.admin.deleteUser(authUid).catch(() => {});
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("Unique constraint") || msg.includes("unique")) {
         return badRequest(
           "Unable to create an account with the provided information. Please check your details or contact your administrator.",
-          "REGISTRATION_FAILED"
+          "REGISTRATION_FAILED",
         );
       }
       throw e;
@@ -104,8 +119,21 @@ export async function POST(req: NextRequest) {
     try {
       await db.authorizedStudent.upsert({
         where: { studentId },
-        update: { email, fullName, program: program || whitelisted?.program || "", section: section || whitelisted?.section || "", activated: false },
-        create: { studentId, email, fullName, program: program || "", section: section || "", activated: false },
+        update: {
+          email,
+          fullName,
+          program: program || whitelisted?.program || "",
+          section: section || whitelisted?.section || "",
+          activated: false,
+        },
+        create: {
+          studentId,
+          email,
+          fullName,
+          program: program || "",
+          section: section || "",
+          activated: false,
+        },
       });
     } catch {
       // Non-critical.
@@ -116,7 +144,12 @@ export async function POST(req: NextRequest) {
       action: "auth.register",
       targetType: "Account",
       targetId: account.id,
-      metadata: { email, studentId, whitelisted: isWhitelisted, status: "PENDING_VERIFICATION" },
+      metadata: {
+        email,
+        studentId,
+        whitelisted: isWhitelisted,
+        status: "PENDING_VERIFICATION",
+      },
       req,
     });
 
@@ -126,7 +159,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(
       { ok: true, message, email: account.email, whitelisted: isWhitelisted },
-      { status: 201 }
+      { status: 201 },
     );
   } catch (e) {
     if (isDbUnavailableError(e)) return dbUnavailable(e);
