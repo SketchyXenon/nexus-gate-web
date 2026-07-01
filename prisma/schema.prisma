@@ -6,14 +6,23 @@
 //   - Covering indexes for list + count queries (status + program + section)
 //   - Partial-style filtering via leading columns (status first, then scope)
 // ====================================================================
+//
+// IMPORTANT — Provider is PostgreSQL.
+// The app deploys to Vercel (serverless) and uses Supabase (PostgreSQL 15+).
+// SQLite CANNOT be used on Vercel serverless (ephemeral, read-only FS), so
+// the provider MUST be "postgresql" in production. The Supabase schema is
+// created by the SQL migrations in /supabase/migrations (snake_case table
+// and column names). The @map / @@map directives below bridge Prisma's
+// camelCase field names to those snake_case database identifiers.
+// ====================================================================
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider  = "sqlite"
-  url       = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // ====================================================================
@@ -23,29 +32,29 @@ datasource db {
 model Account {
   id              String        @id @default(cuid())
   email           String        @unique
-  passwordHash    String        @default("")
-  fullName        String
+  passwordHash    String        @default("") @map("password_hash")
+  fullName        String        @map("full_name")
   role            String        @default("USER")
   status          String        @default("PENDING_VERIFICATION")
-  studentId       Int?          @unique
+  studentId       Int?          @unique @map("student_id")
   program         String?
   section         String?
-  authProvider    String?
-  providerAccountId String?
+  authProvider    String?       @map("auth_provider")
+  providerAccountId String?     @map("provider_account_id")
   year            Int?
-  organizationName String?
-  courseModifiedAt DateTime?
-  lastProfileUpdateAt DateTime?
-  lastPasswordChangeAt DateTime?
-  notificationEndpoint String?
-  notificationKeys     String?
-  passkeyCredential    String?
-  notificationEnabled  Boolean  @default(false)
-  lastLoginAt     DateTime?
-  failedLoginAttempts Int       @default(0)
-  lockedUntil     DateTime?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  organizationName String?      @map("organization_name")
+  courseModifiedAt DateTime?    @map("course_modified_at")
+  lastProfileUpdateAt DateTime? @map("last_profile_update_at")
+  lastPasswordChangeAt DateTime? @map("last_password_change_at")
+  notificationEndpoint String?  @map("notification_endpoint")
+  notificationKeys     String?  @map("notification_keys")
+  passkeyCredential    String?  @map("passkey_credential")
+  notificationEnabled  Boolean  @default(false) @map("notification_enabled")
+  lastLoginAt     DateTime?     @map("last_login_at")
+  failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
+  lockedUntil     DateTime?     @map("locked_until")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
 
   eventsOwned       Event[]
   attendances       EventAttendance[]
@@ -67,6 +76,8 @@ model Account {
   @@index([lockedUntil])
   // Soft activity sort
   @@index([lastLoginAt])
+
+  @@map("accounts")
 }
 
 // ====================================================================
@@ -74,9 +85,9 @@ model Account {
 // ====================================================================
 
 model AuthorizedStudent {
-  studentId   Int      @id
+  studentId   Int      @id @map("student_id")
   email       String   @unique
-  fullName    String
+  fullName    String   @map("full_name")
   program     String
   section     String
   activated   Boolean  @default(false)
@@ -86,6 +97,8 @@ model AuthorizedStudent {
   @@index([program, section, activated])
   // Activation sweep (admin dashboard "pending activation" view)
   @@index([activated])
+
+  @@map("authorized_students")
 }
 
 // ====================================================================
@@ -94,19 +107,21 @@ model AuthorizedStudent {
 
 model VerificationToken {
   id        String   @id @default(cuid())
-  accountId String
+  accountId String   @map("account_id")
   account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  codeHash  String
+  codeHash  String   @map("code_hash")
   purpose   String
-  expiresAt DateTime
-  usedAt    DateTime?
-  createdAt DateTime @default(now())
+  expiresAt DateTime @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime @default(now()) @map("created_at")
   attempts  Int      @default(0)
 
   // Composite: "find an unused, non-expired token for this account+purpose"
   @@index([accountId, purpose, usedAt])
   // Cron sweep: delete expired tokens
   @@index([expiresAt])
+
+  @@map("verification_tokens")
 }
 
 // ====================================================================
@@ -115,17 +130,19 @@ model VerificationToken {
 
 model RefreshToken {
   id        String    @id @default(cuid())
-  accountId String
+  accountId String    @map("account_id")
   account   Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  tokenHash String    @unique
-  expiresAt DateTime
-  revokedAt DateTime?
-  createdAt DateTime  @default(now())
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
 
   // Composite: "find active tokens for an account" (revokedAt IS NULL)
   @@index([accountId, revokedAt])
   // Cron sweep: delete expired tokens
   @@index([expiresAt])
+
+  @@map("refresh_tokens")
 }
 
 // ====================================================================
@@ -136,27 +153,27 @@ model Event {
   id            Int       @id @default(autoincrement())
   title         String
   description   String?
-  eventSecret   String    @default(cuid())
-  ownerId       String
+  eventSecret   String    @default(cuid()) @map("event_secret")
+  ownerId       String    @map("owner_id")
   owner         Account   @relation(fields: [ownerId], references: [id])
   scope         String    @default("academic")
-  targetProgram String?
-  targetSection String?
-  scheduledAt   DateTime
-  endsAt        DateTime?
-  checkInOpensAt   DateTime?
-  checkInClosesAt  DateTime?
-  timeOutOpensAt   DateTime?
-  timeOutClosesAt  DateTime?
-  enableTimeOut    Boolean   @default(false)
+  targetProgram String?   @map("target_program")
+  targetSection String?   @map("target_section")
+  scheduledAt   DateTime  @map("scheduled_at")
+  endsAt        DateTime? @map("ends_at")
+  checkInOpensAt   DateTime? @map("check_in_opens_at")
+  checkInClosesAt  DateTime? @map("check_in_closes_at")
+  timeOutOpensAt   DateTime? @map("time_out_opens_at")
+  timeOutClosesAt  DateTime? @map("time_out_closes_at")
+  enableTimeOut    Boolean   @default(false) @map("enable_time_out")
   delegatable      Boolean   @default(true)
   // Admin-controlled flag: when true, allows OTHER organizers to project
   // this event's QR code IF they share the same organizationName tag as
   // the event owner, OR if the event is open-to-all.
-  delegationEnabled Boolean  @default(false)
+  delegationEnabled Boolean  @default(false) @map("delegation_enabled")
   status        String    @default("active")
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
 
   attendances EventAttendance[]
   overrides   AttendanceOverride[]
@@ -174,6 +191,8 @@ model Event {
   @@index([targetProgram, targetSection, status])
   // Cron reminders: upcoming events by scheduled time
   @@index([scheduledAt, status])
+
+  @@map("events")
 }
 
 // ====================================================================
@@ -192,21 +211,21 @@ model Event {
 
 model EventAttendance {
   id             Int      @id @default(autoincrement())
-  eventId        Int
+  eventId        Int      @map("event_id")
   event          Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  accountId      String
+  accountId      String   @map("account_id")
   account        Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  scannedAt      DateTime @default(now())
-  timeOutAt      DateTime?
+  scannedAt      DateTime @default(now()) @map("scanned_at")
+  timeOutAt      DateTime? @map("time_out_at")
   source         String   @default("qr")
-  idempotencyKey String?  @unique
-  tokenBlock     Int?
+  idempotencyKey String?  @unique @map("idempotency_key")
+  tokenBlock     Int?     @map("token_block")
 
   // ---- Certificate fields (v8 anti-cheating) ----
-  certificateNonce     String?  @unique
-  certificateSubFrames String?  // JSON array, e.g. "[0,1,2]"
-  deviceFingerprint    String?
-  scannedAtClient      DateTime? // client-reported scan time (for offline sync)
+  certificateNonce     String?  @unique @map("certificate_nonce")
+  certificateSubFrames String?  @map("certificate_sub_frames") // JSON array, e.g. "[0,1,2]"
+  deviceFingerprint    String?  @map("device_fingerprint")
+  scannedAtClient      DateTime? @map("scanned_at_client") // client-reported scan time (for offline sync)
 
   // Unique constraint: one check-in per (event, account) pair — atomic.
   // This is the CORE of the one-attempt policy: after the first successful
@@ -220,6 +239,8 @@ model EventAttendance {
   @@index([scannedAt])
   // Device audit: "list all scans from this device"
   @@index([deviceFingerprint])
+
+  @@map("event_attendance")
 }
 
 // ====================================================================
@@ -228,14 +249,14 @@ model EventAttendance {
 
 model AttendanceOverride {
   id          Int      @id @default(autoincrement())
-  eventId     Int
+  eventId     Int      @map("event_id")
   event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  adminId     String
+  adminId     String   @map("admin_id")
   admin       Account  @relation(fields: [adminId], references: [id], onDelete: Cascade)
-  studentId   Int
+  studentId   Int      @map("student_id")
   student     AuthorizedStudent @relation(fields: [studentId], references: [studentId])
   reason      String
-  createdAt   DateTime @default(now())
+  createdAt   DateTime @default(now()) @map("created_at")
 
   // Composite: list overrides for an event (newest first)
   @@index([eventId, createdAt])
@@ -243,6 +264,8 @@ model AttendanceOverride {
   @@index([adminId, createdAt])
   // IDEMPOTENCY: prevents duplicate override records on retry
   @@unique([eventId, studentId])
+
+  @@map("attendance_overrides")
 }
 
 // ====================================================================
@@ -251,13 +274,13 @@ model AttendanceOverride {
 
 model Notification {
   id          Int      @id @default(autoincrement())
-  accountId   String
+  accountId   String   @map("account_id")
   account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
   title       String
   body        String
   type        String   @default("info")
-  readAt      DateTime?
-  createdAt   DateTime @default(now())
+  readAt      DateTime? @map("read_at")
+  createdAt   DateTime @default(now()) @map("created_at")
 
   // Composite: "list this account's notifications, newest first" — the
   // single most common notification query
@@ -267,6 +290,8 @@ model Notification {
   @@index([accountId, readAt])
   // Cron sweep: delete old read notifications
   @@index([readAt, createdAt])
+
+  @@map("notifications")
 }
 
 // ====================================================================
@@ -275,15 +300,15 @@ model Notification {
 
 model AuditLog {
   id         Int      @id @default(autoincrement())
-  actorId    String?
+  actorId    String?  @map("actor_id")
   actor      Account? @relation(fields: [actorId], references: [id], onDelete: SetNull)
   action     String
-  targetType String?
-  targetId   String?
+  targetType String?  @map("target_type")
+  targetId   String?  @map("target_id")
   metadata   String?
-  ipAddress  String?
-  userAgent  String?
-  createdAt  DateTime @default(now())
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+  createdAt  DateTime @default(now()) @map("created_at")
 
   // Composite: "list this actor's actions, newest first" (user activity)
   @@index([actorId, createdAt])
@@ -293,6 +318,8 @@ model AuditLog {
   @@index([targetType, targetId, createdAt])
   // Cron sweep: delete old audit logs
   @@index([createdAt])
+
+  @@map("audit_logs")
 }
 
 // ====================================================================
@@ -309,19 +336,21 @@ model AuditLog {
 
 model DeviceKey {
   id           String    @id @default(cuid())
-  accountId    String
+  accountId    String    @map("account_id")
   account      Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  publicKeyJwk String    // Ed25519 public key as JSON Web Key (JSON string)
+  publicKeyJwk String    @map("public_key_jwk") // Ed25519 public key as JSON Web Key (JSON string)
   fingerprint  String    @unique // SHA-256 hash of the public key (hex)
   label        String?   // optional device name (e.g. "iPhone 14")
-  createdAt    DateTime  @default(now())
-  lastUsedAt   DateTime?
-  revokedAt    DateTime?
+  createdAt    DateTime  @default(now()) @map("created_at")
+  lastUsedAt   DateTime? @map("last_used_at")
+  revokedAt    DateTime? @map("revoked_at")
 
   // Composite: "list this account's registered devices"
   @@index([accountId, revokedAt])
   // Lookup by fingerprint (used during certificate verification)
   // fingerprint is already @unique so no separate index needed
+
+  @@map("device_keys")
 }
 
 // ====================================================================
@@ -331,7 +360,7 @@ model DeviceKey {
 model Setting {
   key       String   @id
   value     String
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("settings")
 }

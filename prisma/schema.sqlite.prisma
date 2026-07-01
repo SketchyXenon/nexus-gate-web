@@ -1,0 +1,286 @@
+// ====================================================================
+// Nexus Gate — LOCAL DEV schema (SQLite)
+// --------------------------------------------------------------------
+// This schema is used ONLY for local development (`bun run dev`).
+// It uses the SQLite provider so the app runs against a local file DB
+// without needing a Postgres instance.
+//
+// The PRODUCTION schema is `prisma/schema.prisma` (PostgreSQL + @map
+// annotations matching the Supabase migrations). Vercel's build
+// generates the client from `schema.prisma` (postgres). The local
+// `dev` script generates the client from THIS file (sqlite) instead.
+//
+// IMPORTANT: This file has NO @map/@@map annotations because the local
+// SQLite database was created by `prisma db push` against this exact
+// schema, so its tables/columns use Prisma's default PascalCase /
+// camelCase naming. The two schemas describe the SAME models — they
+// only differ in provider + physical column names.
+//
+// When adding/removing a field, update BOTH schema files identically
+// (field names, types, relations, indexes) — only the provider and
+// @map annotations differ.
+// ====================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ====================================================================
+// 1. ACCOUNTS
+// ====================================================================
+
+model Account {
+  id              String        @id @default(cuid())
+  email           String        @unique
+  passwordHash    String        @default("")
+  fullName        String
+  role            String        @default("USER")
+  status          String        @default("PENDING_VERIFICATION")
+  studentId       Int?          @unique
+  program         String?
+  section         String?
+  authProvider    String?
+  providerAccountId String?
+  year            Int?
+  organizationName String?
+  courseModifiedAt DateTime?
+  lastProfileUpdateAt DateTime?
+  lastPasswordChangeAt DateTime?
+  notificationEndpoint String?
+  notificationKeys     String?
+  passkeyCredential    String?
+  notificationEnabled  Boolean  @default(false)
+  lastLoginAt     DateTime?
+  failedLoginAttempts Int       @default(0)
+  lockedUntil     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  eventsOwned       Event[]
+  attendances       EventAttendance[]
+  overridesMade     AttendanceOverride[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  verificationTokens VerificationToken[]
+  refreshTokens     RefreshToken[]
+  deviceKeys        DeviceKey[]
+
+  @@index([role, status])
+  @@index([program, section])
+  @@index([notificationEnabled])
+  @@index([lockedUntil])
+  @@index([lastLoginAt])
+}
+
+// ====================================================================
+// 2. AUTHORIZED STUDENTS
+// ====================================================================
+
+model AuthorizedStudent {
+  studentId   Int      @id
+  email       String   @unique
+  fullName    String
+  program     String
+  section     String
+  activated   Boolean  @default(false)
+  overrides   AttendanceOverride[]
+
+  @@index([program, section, activated])
+  @@index([activated])
+}
+
+// ====================================================================
+// 3. VERIFICATION TOKENS
+// ====================================================================
+
+model VerificationToken {
+  id        String   @id @default(cuid())
+  accountId String
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  codeHash  String
+  purpose   String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+  attempts  Int      @default(0)
+
+  @@index([accountId, purpose, usedAt])
+  @@index([expiresAt])
+}
+
+// ====================================================================
+// 4. REFRESH TOKENS
+// ====================================================================
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  accountId String
+  account   Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([accountId, revokedAt])
+  @@index([expiresAt])
+}
+
+// ====================================================================
+// 5. EVENTS
+// ====================================================================
+
+model Event {
+  id            Int       @id @default(autoincrement())
+  title         String
+  description   String?
+  eventSecret   String    @default(cuid())
+  ownerId       String
+  owner         Account   @relation(fields: [ownerId], references: [id])
+  scope         String    @default("academic")
+  targetProgram String?
+  targetSection String?
+  scheduledAt   DateTime
+  endsAt        DateTime?
+  checkInOpensAt   DateTime?
+  checkInClosesAt  DateTime?
+  timeOutOpensAt   DateTime?
+  timeOutClosesAt  DateTime?
+  enableTimeOut    Boolean   @default(false)
+  delegatable      Boolean   @default(true)
+  delegationEnabled Boolean  @default(false)
+  status        String    @default("active")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  attendances EventAttendance[]
+  overrides   AttendanceOverride[]
+
+  @@index([status, scheduledAt])
+  @@index([ownerId, status])
+  @@index([targetProgram, targetSection, status])
+  @@index([scheduledAt, status])
+}
+
+// ====================================================================
+// 6. EVENT ATTENDANCE
+// ====================================================================
+
+model EventAttendance {
+  id             Int      @id @default(autoincrement())
+  eventId        Int
+  event          Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  accountId      String
+  account        Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  scannedAt      DateTime @default(now())
+  timeOutAt      DateTime?
+  source         String   @default("qr")
+  idempotencyKey String?  @unique
+  tokenBlock     Int?
+
+  certificateNonce     String?  @unique
+  certificateSubFrames String?
+  deviceFingerprint    String?
+  scannedAtClient      DateTime?
+
+  @@unique([eventId, accountId])
+  @@index([accountId, scannedAt])
+  @@index([eventId, scannedAt])
+  @@index([scannedAt])
+  @@index([deviceFingerprint])
+}
+
+// ====================================================================
+// 7. ATTENDANCE OVERRIDES
+// ====================================================================
+
+model AttendanceOverride {
+  id          Int      @id @default(autoincrement())
+  eventId     Int
+  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  adminId     String
+  admin       Account  @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  studentId   Int
+  student     AuthorizedStudent @relation(fields: [studentId], references: [studentId])
+  reason      String
+  createdAt   DateTime @default(now())
+
+  @@index([eventId, createdAt])
+  @@index([adminId, createdAt])
+  @@unique([eventId, studentId])
+}
+
+// ====================================================================
+// 8. NOTIFICATIONS
+// ====================================================================
+
+model Notification {
+  id          Int      @id @default(autoincrement())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  title       String
+  body        String
+  type        String   @default("info")
+  readAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([accountId, readAt])
+  @@index([readAt, createdAt])
+}
+
+// ====================================================================
+// 9. AUDIT LOG
+// ====================================================================
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  actorId    String?
+  actor      Account? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  targetType String?
+  targetId   String?
+  metadata   String?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@index([targetType, targetId, createdAt])
+  @@index([createdAt])
+}
+
+// ====================================================================
+// 10. DEVICE KEYS
+// ====================================================================
+
+model DeviceKey {
+  id           String    @id @default(cuid())
+  accountId    String
+  account      Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  publicKeyJwk String
+  fingerprint  String    @unique
+  label        String?
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
+  revokedAt    DateTime?
+
+  @@index([accountId, revokedAt])
+}
+
+// ====================================================================
+// 11. SETTINGS
+// ====================================================================
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
