@@ -1,0 +1,128 @@
+# ====================================================================
+# Nexus Gate — Render Blueprint
+# --------------------------------------------------------------------
+# Deploy with ONE click:
+#   1. Push this file to your repo's root
+#   2. Go to dashboard.render.com → New + → Blueprint
+#   3. Select your repo → Render reads this file automatically
+#   4. Set the secret env vars (marked sync: false) in the dashboard
+#   5. Click Apply
+#
+# After the first deploy, every push to `main` auto-deploys.
+# ====================================================================
+
+services:
+  - type: web
+    name: nexus-gate
+    runtime: node
+    plan: free # upgrade to "starter" ($7/mo) for always-on + no spin-down
+    region: singapore # pick the region closest to your Supabase region
+    branch: main
+    rootDir: .
+
+    # ---- Build ----
+    # Install bun (Render's Node runtime doesn't include it), then install
+    # deps and build. The build script runs `prisma generate` (postgresql)
+    # + `next build` + copies static assets into the standalone output.
+    buildCommand: npm install -g bun && bun install && bun run build
+
+    # ---- Start ----
+    # Next.js standalone server reads the PORT env var automatically
+    # (Render sets PORT for you). Use node (not bun) for the runtime —
+    # the standalone server.js is plain Node and node is more
+    # battle-tested for long-lived production processes.
+    startCommand: node .next/standalone/server.js
+
+    # ---- Health check ----
+    # Render polls this path; if it returns non-200, the deploy is
+    # marked failed and rolled back. The /api/health endpoint runs
+    # a real DB query (SELECT 1 + db.setting.count) so it catches DB
+    # connection issues before traffic routes to the new deploy.
+    healthCheckPath: /api/health
+
+    # ---- Auto-deploy on push ----
+    autoDeploy: true
+
+    # ---- Environment variables ----
+    # Variables marked `sync: false` must be set manually in the Render
+    # dashboard (they're secrets). Non-secret vars are set inline here.
+    envVars:
+      # --- App config (non-secret) ---
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_APP_URL
+        # Render exposes your service at https://<name>.onrender.com.
+        # Update this if you rename the service or add a custom domain.
+        value: https://nexus-gate.onrender.com
+      - key: NEXTAUTH_URL
+        value: https://nexus-gate.onrender.com
+
+      # --- Secrets (set these in the Render dashboard) ---
+      # DATABASE_URL: use the Supabase DIRECT connection (port 5432),
+      #   NOT the pooler (port 6543). Render keeps a persistent
+      #   connection, so you do NOT need ?pgbouncer=true.
+      #   Format: postgresql://postgres:<URL-ENCODED-PASS>@db.<REF>.supabase.co:5432/postgres
+      #   URL-encode special chars in the password: @ → %40, : → %3A,
+      #   / → %2F, # → %23, $ → %24
+      - key: DATABASE_URL
+        sync: false
+
+      # --- Auth secrets (REQUIRED — generate with `openssl rand -base64 32`) ---
+      # These are just random strings (base64 is only for safe copy-paste).
+      # You do NOT need to base64-encode them further — paste the output
+      # directly. Generate THREE DIFFERENT values (don't reuse one).
+      #
+      # NEXTAUTH_SECRET → NextAuth.js (Google OAuth + sessions)
+      # AUTH_SECRET     → custom JWT access tokens (src/lib/auth.ts) — MUST be ≥32 chars
+      # REFRESH_SECRET  → refresh token signing (src/lib/auth.ts) — MUST be ≥32 chars
+      - key: NEXTAUTH_SECRET
+        sync: false
+      - key: AUTH_SECRET
+        sync: false
+      - key: REFRESH_SECRET
+        sync: false
+
+      # --- Email (optional — leave unset to skip sending emails) ---
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: SMTP_FROM_NAME
+        sync: false
+
+      # --- Turnstile (optional but recommended — real bot protection) ---
+      # NEXT_PUBLIC_TURNSTILE_SITE_KEY = the PUBLIC key (safe for browser).
+      # TURNSTILE_SECRET_KEY = the PRIVATE key (server-side siteverify).
+      # Get both from your Cloudflare dashboard → Turnstile.
+      # NOTE: Add your Render URL to the allowed domains in your Cloudflare
+      # Turnstile widget settings, or you'll get 600010 errors.
+      # If TURNSTILE_SECRET_KEY is unset, server-side verification is SKIPPED
+      # (the client widget still shows but tokens aren't verified — dev mode).
+      - key: NEXT_PUBLIC_TURNSTILE_SITE_KEY
+        sync: false
+      - key: TURNSTILE_SECRET_KEY
+        sync: false
+
+      # --- Cron jobs (REQUIRED if using Vercel Cron or Render Cron) ---
+      # Protects /api/cron/event-reminders and /api/cron/cleanup from
+      # unauthorized invocation. Vercel Cron passes this via ?secret= query
+      # param (Vercel Cron can't send custom headers). Generate with:
+      #   openssl rand -hex 32
+      - key: CRON_SECRET
+        sync: false
+
+      # --- Sentry (optional — error tracking) ---
+      - key: NEXT_PUBLIC_SENTRY_DSN
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ORG
+        sync: false
+      - key: SENTRY_PROJECT
+        sync: false

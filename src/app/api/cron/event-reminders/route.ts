@@ -2,36 +2,41 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 
 // ====================================================================
-// POST /api/cron/event-reminders
-//
-// Called by Vercel Cron (every 5 minutes) or manually.
+// /api/cron/event-reminders
+// --------------------------------------------------------------------
+// Called by Vercel Cron (daily at 8 AM — see vercel.json) OR manually.
 // Finds events starting within the next 30 minutes and creates
-// notification records for eligible students who haven't been
-// notified yet.
+// notification records for eligible students who haven't been notified.
 //
-// Security: protected by CRON_SECRET env var.
+// IMPORTANT — Vercel Cron uses GET, not POST:
+//   Vercel Cron jobs make a GET request to the configured path. They
+//   CANNOT send custom headers (like Authorization: Bearer). So this
+//   route accepts BOTH GET (for Vercel Cron) and POST (for manual
+//   curl invocation), and accepts the secret via EITHER:
+//     - Authorization: Bearer <secret> header (manual curl)
+//     - ?secret=<secret> query param (Vercel Cron)
 //
-// Vercel Cron config (vercel.json):
-//   {
-//     "crons": [
-//       { "path": "/api/cron/event-reminders", "schedule": "*/5 * * * *" }
-//     ]
-//   }
+// Security: protected by CRON_SECRET env var. If unset → 503 (fail-closed).
 // ====================================================================
 
-export async function POST(req: NextRequest) {
-  const authHeader = req.headers.get("authorization");
+// Shared auth check — accepts secret from header OR query param.
+function checkCronAuth(req: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) return false;
 
-  // FAIL CLOSED: if CRON_SECRET is not set, reject ALL requests.
-  if (!cronSecret) {
-    console.error("[cron/event-reminders] CRON_SECRET is not set — refusing to execute.");
-    return NextResponse.json({ error: "Service misconfigured" }, { status: 503 });
-  }
-  if (authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  // 1. Authorization: Bearer <secret> header (manual curl)
+  const authHeader = req.headers.get("authorization");
+  if (authHeader === `Bearer ${cronSecret}`) return true;
 
+  // 2. ?secret=<secret> query param (Vercel Cron can't send headers)
+  const url = new URL(req.url);
+  const querySecret = url.searchParams.get("secret");
+  if (querySecret && querySecret === cronSecret) return true;
+
+  return false;
+}
+
+async function runEventReminders() {
   const now = new Date();
   const THIRTY_MIN = 30 * 60 * 1000;
   const windowEnd = new Date(now.getTime() + THIRTY_MIN);
@@ -76,8 +81,7 @@ export async function POST(req: NextRequest) {
       select: { id: true },
     });
 
-    // Check if we already sent a reminder for this event
-    // (avoid duplicate notifications)
+    // Check if we already sent a reminder for this event (dedup)
     for (const student of students) {
       const existing = await db.notification.findFirst({
         where: {
@@ -89,7 +93,7 @@ export async function POST(req: NextRequest) {
 
       if (!existing) {
         const minutesUntil = Math.round(
-          (event.scheduledAt.getTime() - now.getTime()) / (60 * 1000)
+          (event.scheduledAt.getTime() - now.getTime()) / (60 * 1000),
         );
 
         await db.notification.create({
@@ -105,10 +109,45 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({
-    ok: true,
+  return {
     checkedEvents: upcomingEvents.length,
     notificationsCreated,
     timestamp: now.toISOString(),
-  });
+  };
+}
+
+// GET — for Vercel Cron (which can't send POST or custom headers)
+export async function GET(req: NextRequest) {
+  if (!process.env.CRON_SECRET) {
+    console.error(
+      "[cron/event-reminders] CRON_SECRET is not set — refusing to execute.",
+    );
+    return NextResponse.json(
+      { error: "Service misconfigured" },
+      { status: 503 },
+    );
+  }
+  if (!checkCronAuth(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const result = await runEventReminders();
+  return NextResponse.json({ ok: true, ...result });
+}
+
+// POST — for manual invocation (curl with Authorization header)
+export async function POST(req: NextRequest) {
+  if (!process.env.CRON_SECRET) {
+    console.error(
+      "[cron/event-reminders] CRON_SECRET is not set — refusing to execute.",
+    );
+    return NextResponse.json(
+      { error: "Service misconfigured" },
+      { status: 503 },
+    );
+  }
+  if (!checkCronAuth(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const result = await runEventReminders();
+  return NextResponse.json({ ok: true, ...result });
 }

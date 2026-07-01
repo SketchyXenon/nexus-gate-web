@@ -1,11 +1,11 @@
 {
   "crons": [
     {
-      "path": "/api/cron/event-reminders",
+      "path": "/api/cron/event-reminders?secret=${CRON_SECRET}",
       "schedule": "0 8 * * *"
     },
     {
-      "path": "/api/cron/cleanup",
+      "path": "/api/cron/cleanup?secret=${CRON_SECRET}",
       "schedule": "0 3 * * *"
     }
   ]
