@@ -50,19 +50,29 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
 
     // Delete the Supabase Auth user (if linked). This prevents the
     // "already registered" error when someone re-registers the same email.
+    // If the auth delete fails, we STILL delete the accounts row (so the
+    // admin can proceed) but log the error for manual cleanup.
     if (target.supabaseAuthUid && isSupabaseConfigured()) {
       try {
         const adminClient = createSupabaseAdminClient();
         const { error: authDeleteError } =
           await adminClient.auth.admin.deleteUser(target.supabaseAuthUid);
         if (authDeleteError) {
+          // Log prominently so the admin knows to manually clean up auth.users.
           console.error(
-            "[account.delete] Supabase auth user delete failed:",
+            "[account.delete] WARNING: Supabase auth user could not be deleted. Manual cleanup needed:",
             authDeleteError.message,
+            "uid:",
+            target.supabaseAuthUid,
           );
         }
       } catch (e) {
-        console.error("[account.delete] Supabase admin client error:", e);
+        console.error(
+          "[account.delete] WARNING: Supabase admin client error. Manual cleanup needed:",
+          e,
+          "uid:",
+          target.supabaseAuthUid,
+        );
       }
     }
 

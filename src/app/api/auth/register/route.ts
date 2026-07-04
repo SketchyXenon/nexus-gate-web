@@ -46,7 +46,37 @@ export async function POST(req: NextRequest) {
     const existingStudentId = await db.account.findUnique({
       where: { studentId },
     });
-    if (existingEmail || existingStudentId) {
+
+    // RECONCILIATION: if the accounts row exists but has no supabaseAuthUid,
+    // the auth user may have been deleted in Supabase Dashboard. Clean up
+    // the orphaned accounts row so registration can proceed.
+    if (
+      existingEmail &&
+      !existingEmail.supabaseAuthUid &&
+      isSupabaseConfigured()
+    ) {
+      try {
+        const admin = createSupabaseAdminClient();
+        const { data: userList } = await admin.auth.admin.listUsers();
+        const authUserExists = userList?.users?.some((u) => u.email === email);
+        if (!authUserExists) {
+          // Orphaned accounts row - delete it so registration can proceed.
+          console.log(
+            `[register] cleaning orphaned accounts row for ${email} (no auth user found)`,
+          );
+          await db.account.delete({ where: { id: existingEmail.id } });
+          // Fall through to normal registration.
+        }
+      } catch (e) {
+        console.error("[register] reconciliation check failed:", e);
+      }
+    }
+
+    // Re-check after potential cleanup.
+    const existingEmailAfter = existingEmail?.supabaseAuthUid
+      ? existingEmail
+      : await db.account.findUnique({ where: { email } });
+    if (existingEmailAfter || existingStudentId) {
       await audit({
         actorId: null,
         action: "auth.register_duplicate_attempt",
@@ -54,7 +84,7 @@ export async function POST(req: NextRequest) {
         metadata: {
           email,
           studentId,
-          reason: existingEmail ? "email_exists" : "studentId_exists",
+          reason: existingEmailAfter ? "email_exists" : "studentId_exists",
         },
         req,
       }).catch(() => {});

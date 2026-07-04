@@ -12,6 +12,7 @@ import {
 import { audit } from "@/lib/audit";
 import {
   createSupabaseServerClient,
+  createSupabaseAdminClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
 
@@ -47,16 +48,40 @@ export async function POST(req: NextRequest) {
         password,
       });
     if (authError || !authData.user) {
-      // Check if the account exists in the DB but has no Supabase Auth link.
-      // This happens for pre-migration accounts that haven't been linked yet.
+      // Check if the account exists in the DB but the auth user was deleted
+      // in Supabase Dashboard. If so, clean up the orphaned accounts row
+      // so the user can re-register.
       const dbAccount = await db.account.findUnique({ where: { email } });
       if (dbAccount && !dbAccount.supabaseAuthUid) {
+        // Pre-migration account (no auth link) — tell them to use forgot-password.
         console.warn(
           `[login] ${email} exists in accounts but has no supabaseAuthUid - needs migration`,
         );
         return unauthorized(
           "Your account needs to be migrated. Use 'Forgot password' to set a new password, or contact your administrator.",
         );
+      }
+      if (dbAccount && dbAccount.supabaseAuthUid && isSupabaseConfigured()) {
+        // The accounts row has a supabaseAuthUid but signInWithPassword failed.
+        // The auth user may have been deleted in Supabase Dashboard. Verify.
+        try {
+          const admin = createSupabaseAdminClient();
+          const { data: userData } = await admin.auth.admin.getUserById(
+            dbAccount.supabaseAuthUid,
+          );
+          if (!userData?.user) {
+            // Auth user is gone — clean up the orphaned accounts row.
+            console.log(
+              `[login] cleaning orphaned accounts row for ${email} (auth user deleted)`,
+            );
+            await db.account.delete({ where: { id: dbAccount.id } });
+            return unauthorized(
+              "Your account no longer exists. Please register again.",
+            );
+          }
+        } catch {
+          // Can't verify — fall through to the generic error.
+        }
       }
       return unauthorized(
         "Incorrect email or password. Check your details and try again.",
