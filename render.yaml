@@ -15,8 +15,8 @@ services:
   - type: web
     name: nexus-gate
     runtime: node
-    plan: free                 # upgrade to "starter" ($7/mo) for always-on + no spin-down
-    region: singapore          # pick the region closest to your Supabase region
+    plan: free # upgrade to "starter" ($7/mo) for always-on + no spin-down
+    region: singapore # pick the region closest to your Supabase region
     branch: main
     rootDir: .
 
@@ -53,9 +53,9 @@ services:
       - key: NEXT_PUBLIC_APP_URL
         # Render exposes your service at https://<name>.onrender.com.
         # Update this if you rename the service or add a custom domain.
-        value: https://nexus-gate.onrender.com
+        value: https://nexus-gate-realtime.onrender.com
       - key: NEXTAUTH_URL
-        value: https://nexus-gate.onrender.com
+        value: https://nexus-gate-realtime.onrender.com
 
       # --- Secrets (set these in the Render dashboard) ---
       # DATABASE_URL: use the Supabase DIRECT connection (port 5432),
@@ -92,19 +92,6 @@ services:
       - key: SMTP_FROM
         sync: false
       - key: SMTP_FROM_NAME
-        sync: false
-
-      # --- Turnstile (optional but recommended — real bot protection) ---
-      # NEXT_PUBLIC_TURNSTILE_SITE_KEY = the PUBLIC key (safe for browser).
-      # TURNSTILE_SECRET_KEY = the PRIVATE key (server-side siteverify).
-      # Get both from your Cloudflare dashboard → Turnstile.
-      # NOTE: Add your Render URL to the allowed domains in your Cloudflare
-      # Turnstile widget settings, or you'll get 600010 errors.
-      # If TURNSTILE_SECRET_KEY is unset, server-side verification is SKIPPED
-      # (the client widget still shows but tokens aren't verified — dev mode).
-      - key: NEXT_PUBLIC_TURNSTILE_SITE_KEY
-        sync: false
-      - key: TURNSTILE_SECRET_KEY
         sync: false
 
       # --- Cron jobs (REQUIRED if using Vercel Cron or Render Cron) ---

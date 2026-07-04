@@ -40,13 +40,21 @@ export function NotificationBell() {
 
   async function handleEnableNotifications() {
     if (!("Notification" in window)) {
-      toast({ title: "Not supported", description: "Your browser doesn't support notifications.", variant: "destructive" });
+      toast({
+        title: "Not supported",
+        description: "Your browser doesn't support notifications.",
+        variant: "destructive",
+      });
       return;
     }
 
     const permission = await Notification.requestPermission();
     if (permission !== "granted") {
-      toast({ title: "Permission denied", description: "You can enable notifications later in your browser settings." });
+      toast({
+        title: "Permission denied",
+        description:
+          "You can enable notifications later in your browser settings.",
+      });
       return;
     }
 
@@ -58,9 +66,18 @@ export function NotificationBell() {
         keys: { p256dh: "in-app", auth: "in-app" },
       },
       {
-        onSuccess: () => toast({ title: "Notifications enabled", description: "You'll get reminders before your classes start." }),
-        onError: () => toast({ title: "Failed", description: "Could not enable notifications.", variant: "destructive" }),
-      }
+        onSuccess: () =>
+          toast({
+            title: "Notifications enabled",
+            description: "You'll get reminders before your classes start.",
+          }),
+        onError: () =>
+          toast({
+            title: "Failed",
+            description: "Could not enable notifications.",
+            variant: "destructive",
+          }),
+      },
     );
   }
 
@@ -109,12 +126,14 @@ export function NotificationBell() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.15 }}
-            className="absolute right-0 top-full mt-2 w-[calc(100vw-2rem)] sm:w-80 max-w-[22rem] z-50"
+            className="fixed inset-x-2 top-16 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80 sm:max-w-[22rem] z-50"
           >
             <div className="rounded-xl border bg-card shadow-2xl overflow-hidden">
               {/* Header */}
               <div className="p-3 border-b flex items-center justify-between">
-                <span className="font-heading font-semibold text-sm">Notifications</span>
+                <span className="font-heading font-semibold text-sm">
+                  Notifications
+                </span>
                 {unreadCount > 0 && (
                   <button
                     onClick={handleMarkAllRead}
@@ -130,7 +149,9 @@ export function NotificationBell() {
                 {notifications.length === 0 ? (
                   <div className="p-6 text-center">
                     <Bell className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
-                    <p className="text-xs text-muted-foreground">No notifications yet.</p>
+                    <p className="text-xs text-muted-foreground">
+                      No notifications yet.
+                    </p>
                   </div>
                 ) : (
                   <div className="divide-y">
@@ -147,10 +168,16 @@ export function NotificationBell() {
                             <span className="h-2 w-2 rounded-full bg-primary shrink-0 mt-1.5" />
                           )}
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">{n.title}</p>
-                            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{n.body}</p>
+                            <p className="text-sm font-medium truncate">
+                              {n.title}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                              {n.body}
+                            </p>
                             <p className="text-[10px] text-muted-foreground mt-1">
-                              {formatDistanceToNow(new Date(n.createdAt), { addSuffix: true })}
+                              {formatDistanceToNow(new Date(n.createdAt), {
+                                addSuffix: true,
+                              })}
                             </p>
                           </div>
                         </div>
@@ -170,7 +197,11 @@ export function NotificationBell() {
                     onClick={handleDisable}
                     disabled={unsubscribe.isPending}
                   >
-                    {unsubscribe.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BellOff className="h-3.5 w-3.5" />}
+                    {unsubscribe.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <BellOff className="h-3.5 w-3.5" />
+                    )}
                     Disable notifications
                   </Button>
                 ) : (
@@ -181,7 +212,11 @@ export function NotificationBell() {
                     onClick={handleEnableNotifications}
                     disabled={subscribe.isPending}
                   >
-                    {subscribe.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bell className="h-3.5 w-3.5" />}
+                    {subscribe.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Bell className="h-3.5 w-3.5" />
+                    )}
                     Enable notifications
                   </Button>
                 )}

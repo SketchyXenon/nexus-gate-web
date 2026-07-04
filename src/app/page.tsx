@@ -6,7 +6,6 @@ import { useMe } from "@/lib/api-client";
 import { LoginScreen } from "@/components/nexus/login-screen";
 import { AppShell } from "@/components/nexus/app-shell";
 import { ErrorBoundary } from "@/components/nexus/error-boundary";
-import { TurnstileGate } from "@/components/nexus/turnstile-gate";
 
 export default function Page() {
   const { data: user, isLoading, isError } = useMe();
@@ -34,7 +33,6 @@ export default function Page() {
     );
   }
 
-  // Maintenance mode: non-admins see the maintenance screen
   if (maintenance && (!user || user.role !== "ADMIN")) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 bg-background">
@@ -43,9 +41,12 @@ export default function Page() {
             <span className="text-3xl">!</span>
           </div>
           <div className="space-y-2">
-            <h1 className="font-heading text-2xl font-bold">Under Maintenance</h1>
+            <h1 className="font-heading text-2xl font-bold">
+              Under Maintenance
+            </h1>
             <p className="text-sm text-muted-foreground">
-              Nexus Gate is currently undergoing maintenance. Please check back later.
+              Nexus Gate is currently undergoing maintenance. Please check back
+              later.
             </p>
           </div>
           <button
@@ -59,18 +60,13 @@ export default function Page() {
     );
   }
 
-  // Turnstile gate wraps ONLY the unauthenticated path (login/register).
-  // Authenticated users (valid session) go straight to the app shell —
-  // they should never see a bot challenge on every dashboard load.
-  // The gate also persists verification in sessionStorage (4h grace), so
-  // it doesn't re-trigger on every navigation within a session.
+  // Unauthenticated: show login screen directly (no Turnstile gate).
+  // Server-side rate limiting on auth endpoints provides bot protection.
   if (isError || !user) {
     return (
-      <TurnstileGate>
-        <ErrorBoundary>
-          <LoginScreen />
-        </ErrorBoundary>
-      </TurnstileGate>
+      <ErrorBoundary>
+        <LoginScreen />
+      </ErrorBoundary>
     );
   }
 

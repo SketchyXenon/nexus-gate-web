@@ -6,6 +6,7 @@ import { checkRateLimit } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import {
   createSupabaseAdminClient,
+  createSupabaseServerClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
 
@@ -129,8 +130,9 @@ export async function POST(req: NextRequest) {
   }
 
   // Establish a Supabase session for the verified user.
-  // generateLink with type "magiclink" returns an action_link containing
-  // the token. We extract the token from the URL and verify it to get a session.
+  // Strategy: use admin.generateLink to get a magic link token, then use
+  // the ANON client (not admin) to call verifyOtp. The admin client's
+  // verifyOtp doesn't establish a session cookie; the anon client does.
   const admin = createSupabaseAdminClient();
   const { data: linkData, error: linkError } =
     await admin.auth.admin.generateLink({
@@ -148,39 +150,36 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // The action_link contains the token as a query param: ...&token=xxx&type=magiclink
-  // Extract the token and use it with verifyOtp.
-  const actionLink = linkData.properties?.action_link || "";
-  let token = "";
-  try {
-    const url = new URL(actionLink);
-    token = url.searchParams.get("token") || "";
-  } catch {
-    console.error("[passkey] could not parse action_link:", actionLink);
+  // Try the hashed_token first (Supabase docs say verifyOtp expects this).
+  const hashedToken = linkData.properties?.hashed_token || "";
+  if (!hashedToken) {
+    console.error("[passkey] no hashed_token in linkData");
     return failWithCookieDelete(
       { error: "Could not establish session.", code: "SESSION_FAILED" },
       500,
     );
   }
 
-  if (!token) {
-    console.error("[passkey] no token in action_link");
-    return failWithCookieDelete(
-      { error: "Could not establish session.", code: "SESSION_FAILED" },
-      500,
-    );
-  }
-
-  const { data: sessionData, error: sessionError } = await admin.auth.verifyOtp(
-    {
-      token_hash: token,
+  // Use the ANON (cookie-based) client to verify the OTP — this sets the
+  // session cookie on the response. The admin client can't set cookies.
+  const anonClient = await createSupabaseServerClient();
+  const { data: sessionData, error: sessionError } =
+    await anonClient.auth.verifyOtp({
+      token_hash: hashedToken,
       type: "magiclink",
-    },
-  );
+    });
   if (sessionError || !sessionData.session) {
-    console.error("[passkey] verifyOtp failed:", sessionError?.message);
+    console.error(
+      "[passkey] verifyOtp failed:",
+      sessionError?.message,
+      "| hashed_token len:",
+      hashedToken.length,
+    );
     return failWithCookieDelete(
-      { error: "Could not establish session.", code: "SESSION_FAILED" },
+      {
+        error: "Could not establish session. Please try again.",
+        code: "SESSION_FAILED",
+      },
       500,
     );
   }
@@ -210,7 +209,10 @@ export async function POST(req: NextRequest) {
     req,
   }).catch(() => {});
 
-  // Set the Supabase session cookies directly on the response.
+  // The anon client (createSupabaseServerClient) already set the session
+  // cookies via @supabase/ssr's setAll callback. But in case that failed
+  // (cookies().set() can fail in some contexts), also set them manually
+  // on the response as a fallback.
   const isProduction = process.env.NODE_ENV === "production";
   const session = sessionData.session;
   const response = NextResponse.json({
@@ -227,7 +229,7 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  const cookiePrefix = isProduction ? "__Secure-" : "";
+  // Fallback: set cookies directly on the response.
   const cookieOpts = {
     httpOnly: true,
     sameSite: "lax" as const,
@@ -235,19 +237,19 @@ export async function POST(req: NextRequest) {
     path: "/",
     maxAge: 60 * 60 * 24 * 7,
   };
-  response.cookies.set(
-    `${cookiePrefix}sb-access-token`,
-    session.access_token,
-    cookieOpts,
-  );
-  response.cookies.set(
-    `${cookiePrefix}sb-refresh-token`,
-    session.refresh_token,
-    cookieOpts,
-  );
+  response.cookies.set("sb-access-token", session.access_token, cookieOpts);
+  response.cookies.set("sb-refresh-token", session.refresh_token, cookieOpts);
   if (isProduction) {
-    response.cookies.set("sb-access-token", session.access_token, cookieOpts);
-    response.cookies.set("sb-refresh-token", session.refresh_token, cookieOpts);
+    response.cookies.set(
+      "__Secure-sb-access-token",
+      session.access_token,
+      cookieOpts,
+    );
+    response.cookies.set(
+      "__Secure-sb-refresh-token",
+      session.refresh_token,
+      cookieOpts,
+    );
   }
 
   response.cookies.delete("ng_passkey_challenge");
