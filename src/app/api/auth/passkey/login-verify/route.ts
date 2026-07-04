@@ -130,10 +130,11 @@ export async function POST(req: NextRequest) {
   }
 
   // Establish a Supabase session for the verified user.
-  // Strategy: use admin.generateLink to get a magic link, extract the RAW
-  // token from the action_link URL (NOT hashed_token — verifyOtp expects
-  // the raw token). Then use the ANON client to call verifyOtp, which sets
-  // the session cookie via @supabase/ssr.
+  // Strategy: use admin.generateLink to get a magic link, then use the
+  // ANON client's verifyOtp with the hashed_token (NOT the raw token from
+  // the action_link URL). The Supabase JS SDK verifyOtp method expects
+  // the hashed_token, not the raw token. Using the anon client (not admin)
+  // ensures the session cookie is set via @supabase/ssr.
   const admin = createSupabaseAdminClient();
   const { data: linkData, error: linkError } =
     await admin.auth.admin.generateLink({
@@ -151,22 +152,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Extract the raw token from the action_link URL.
-  // The action_link looks like: https://xxx.supabase.co/auth/v1/verify?token=RAW_TOKEN&type=magiclink&redirect_to=...
-  const actionLink = linkData.properties?.action_link || "";
-  let rawToken = "";
-  try {
-    const linkUrl = new URL(actionLink);
-    rawToken = linkUrl.searchParams.get("token") || "";
-  } catch {
-    console.error("[passkey] could not parse action_link");
-    return failWithCookieDelete(
-      { error: "Could not establish session.", code: "SESSION_FAILED" },
-      500,
-    );
-  }
-  if (!rawToken) {
-    console.error("[passkey] no token in action_link");
+  // The hashed_token is what verifyOtp expects as token_hash.
+  const hashedToken = linkData.properties?.hashed_token || "";
+  if (!hashedToken) {
+    console.error("[passkey] no hashed_token in linkData properties");
     return failWithCookieDelete(
       { error: "Could not establish session.", code: "SESSION_FAILED" },
       500,
@@ -177,23 +166,72 @@ export async function POST(req: NextRequest) {
   const anonClient = await createSupabaseServerClient();
   const { data: sessionData, error: sessionError } =
     await anonClient.auth.verifyOtp({
-      token_hash: rawToken,
+      token_hash: hashedToken,
       type: "magiclink",
     });
   if (sessionError || !sessionData.session) {
-    console.error(
-      "[passkey] verifyOtp failed:",
+    // If the anon client fails (PKCE mismatch), try the admin client as fallback.
+    console.warn(
+      "[passkey] anon verifyOtp failed, trying admin:",
       sessionError?.message,
-      "| token len:",
-      rawToken.length,
     );
-    return failWithCookieDelete(
-      {
-        error: "Could not establish session. Please try again.",
-        code: "SESSION_FAILED",
+    const { data: adminSession, error: adminError } =
+      await admin.auth.verifyOtp({
+        token_hash: hashedToken,
+        type: "magiclink",
+      });
+    if (adminError || !adminSession.session) {
+      console.error(
+        "[passkey] admin verifyOtp also failed:",
+        adminError?.message,
+      );
+      return failWithCookieDelete(
+        {
+          error: "Could not establish session. Please try email login instead.",
+          code: "SESSION_FAILED",
+        },
+        500,
+      );
+    }
+    // Admin client got a session — set cookies manually.
+    const session = adminSession.session;
+    const isProduction = process.env.NODE_ENV === "production";
+    const cookieOpts = {
+      httpOnly: true,
+      sameSite: "lax" as const,
+      secure: isProduction,
+      path: "/",
+      maxAge: 60 * 60 * 24 * 7,
+    };
+    const response = NextResponse.json({
+      ok: true,
+      account: {
+        id: verifiedAccount.id,
+        email: verifiedAccount.email,
+        fullName: verifiedAccount.fullName,
+        role: verifiedAccount.role,
+        status: verifiedAccount.status,
+        studentId: verifiedAccount.studentId,
+        program: verifiedAccount.program,
+        section: verifiedAccount.section,
       },
-      500,
-    );
+    });
+    response.cookies.set("sb-access-token", session.access_token, cookieOpts);
+    response.cookies.set("sb-refresh-token", session.refresh_token, cookieOpts);
+    if (isProduction) {
+      response.cookies.set(
+        "__Secure-sb-access-token",
+        session.access_token,
+        cookieOpts,
+      );
+      response.cookies.set(
+        "__Secure-sb-refresh-token",
+        session.refresh_token,
+        cookieOpts,
+      );
+    }
+    response.cookies.delete("ng_passkey_challenge");
+    return response;
   }
 
   // Activate pending accounts on first passkey login.
