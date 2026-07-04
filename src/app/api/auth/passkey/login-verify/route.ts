@@ -6,6 +6,7 @@ import { checkRateLimit, badRequest } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import {
   createSupabaseAdminClient,
+  createSupabaseServerClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
 
@@ -160,15 +161,22 @@ export async function POST(req: NextRequest) {
     req,
   }).catch(() => {});
 
-  // Set the Supabase session cookie by returning the session tokens.
-  // The client will call supabase.auth.setSession() with these tokens.
+  // Set the Supabase session cookie SERVER-SIDE (not in the JSON body).
+  // Returning tokens in JSON breaks the httpOnly property - any XSS could
+  // steal them from the fetch response. Setting via the cookie-based client
+  // keeps the tokens in an httpOnly cookie that JS can't read.
+  const cookieClient = await createSupabaseServerClient();
+  const { error: setSessionError } = await cookieClient.auth.setSession({
+    access_token: sessionData.session.access_token,
+    refresh_token: sessionData.session.refresh_token,
+  });
+  if (setSessionError) {
+    console.error("[passkey] setSession failed:", setSessionError.message);
+    return badRequest("Could not establish session.", "SESSION_FAILED");
+  }
+
   const response = NextResponse.json({
     ok: true,
-    session: {
-      access_token: sessionData.session.access_token,
-      refresh_token: sessionData.session.refresh_token,
-      expires_at: sessionData.session.expires_at,
-    },
     account: {
       id: verifiedAccount.id,
       email: verifiedAccount.email,

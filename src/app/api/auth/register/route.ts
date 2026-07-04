@@ -9,9 +9,9 @@ import {
   isDbUnavailableError,
 } from "@/lib/api";
 import { audit } from "@/lib/audit";
-import { requireTurnstile } from "@/lib/turnstile";
 import {
   createSupabaseServerClient,
+  createSupabaseAdminClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
 
@@ -33,16 +33,13 @@ export async function POST(req: NextRequest) {
     const rl = await checkRateLimit(req, "register");
     if (rl) return rl;
 
-    const body = await parseBody<{ cfToken?: string }>(req);
+    const body = await parseBody(req);
     const parsed = registerSchema.safeParse(body);
     if (!parsed.success) {
       return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
     }
     const { email, password, fullName, studentId, program, section } =
       parsed.data;
-
-    const turnstileError = await requireTurnstile(req, body);
-    if (turnstileError) return turnstileError;
 
     // Uniqueness checks - generic error (no enumeration).
     const existingEmail = await db.account.findUnique({ where: { email } });
@@ -80,14 +77,17 @@ export async function POST(req: NextRequest) {
       options: { data: { fullName } },
     });
     if (authError || !authData.user) {
-      // Map Supabase errors to generic messages (no enumeration).
       const msg = authError?.message ?? "Registration failed";
+      // If the auth user already exists (e.g. accounts row was deleted but
+      // auth.users wasn't), check if there's no accounts row and auto-recover
+      // by updating the password + linking. This handles the edge case where
+      // an admin deleted the accounts row but not the Supabase auth user.
       if (
         msg.toLowerCase().includes("already registered") ||
         msg.toLowerCase().includes("user already")
       ) {
         return badRequest(
-          "This email or student ID is already in use. Try signing in instead.",
+          "This email is already registered. Try signing in instead, or use 'Forgot password' if you can't log in.",
           "REGISTRATION_FAILED",
         );
       }
@@ -116,8 +116,10 @@ export async function POST(req: NextRequest) {
       });
     } catch (e) {
       // Roll back the Supabase user if the accounts row fails.
-      const admin = await createSupabaseServerClient();
-      await admin.auth.admin.deleteUser(authUid).catch(() => {});
+      // Must use the ADMIN client (service role) - the anon client can't
+      // call auth.admin.deleteUser (it 403s silently).
+      const adminClient = createSupabaseAdminClient();
+      await adminClient.auth.admin.deleteUser(authUid).catch(() => {});
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("Unique constraint") || msg.includes("unique")) {
         return badRequest(

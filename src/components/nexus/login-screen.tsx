@@ -44,7 +44,7 @@ import { CookieConsent } from "./cookie-consent";
 import { InfoModals, openInfoModal } from "./info-modals";
 import { LandingPage } from "./landing-page";
 import { PasswordStrengthMeter } from "./password-meter";
-import { TurnstileField, type TurnstileFieldRef } from "./turnstile-field";
+
 import { PROGRAMS } from "@/lib/programs";
 import {
   useLogin,
@@ -189,13 +189,6 @@ function AuthScreen({
   // Remembers the email used at registration so the success screen can
   // show "Account created for <email>" even if the user edited the field.
   const [registeredEmail, setRegisteredEmail] = useState("");
-  // Cloudflare Turnstile tokens for the login + register forms.
-  // These are verified SERVER-SIDE via Cloudflare's siteverify API —
-  // this is the real anti-bot boundary, not the client-side gate.
-  const [loginCfToken, setLoginCfToken] = useState("");
-  const [registerCfToken, setRegisterCfToken] = useState("");
-  const loginTurnstileRef = useRef<TurnstileFieldRef>(null);
-  const registerTurnstileRef = useRef<TurnstileFieldRef>(null);
 
   const login = useLogin();
   const register = useRegister();
@@ -268,14 +261,8 @@ function AuthScreen({
         const data = await verifyRes.json().catch(() => ({}));
         throw new Error(data.error || "Passkey verification failed");
       }
-      const data = await verifyRes.json();
-      // Establish the Supabase session from the tokens returned by the server.
-      const { createSupabaseBrowserClient } =
-        await import("@/lib/supabase-browser");
-      await createSupabaseBrowserClient().auth.setSession({
-        access_token: data.session.access_token,
-        refresh_token: data.session.refresh_token,
-      });
+      // Session cookie was set server-side by the login-verify route.
+      // No need to call setSession() client-side (tokens are httpOnly).
       toast({ title: "Signed in with passkey!" });
       window.location.reload();
     } catch (e) {
@@ -328,13 +315,10 @@ function AuthScreen({
     e.preventDefault();
     if (!validateLogin()) return;
     login.mutate(
-      { email, password, cfToken: loginCfToken },
+      { email, password },
       {
         onSuccess: () => toast({ title: "Welcome back!" }),
         onError: (err) => {
-          // Reset the Turnstile widget so it produces a fresh token for
-          // the next attempt (tokens are single-use).
-          loginTurnstileRef.current?.reset();
           toast({
             title: "Couldn't sign in",
             description: err.message,
@@ -358,7 +342,6 @@ function AuthScreen({
         studentId: Number(studentId),
         program: programValue,
         section: section.trim(),
-        cfToken: registerCfToken,
       },
       {
         onSuccess: (data) => {
@@ -372,8 +355,6 @@ function AuthScreen({
           });
         },
         onError: (err) => {
-          // Reset the Turnstile widget for the next attempt.
-          registerTurnstileRef.current?.reset();
           toast({
             title: "Couldn't create account",
             description: err.message,
@@ -609,10 +590,6 @@ function AuthScreen({
                             </p>
                           )}
                         </div>
-                        <TurnstileField
-                          ref={loginTurnstileRef}
-                          onToken={setLoginCfToken}
-                        />
                         <Button
                           type="submit"
                           className="w-full h-10 transition-all hover:scale-[1.01]"
@@ -827,10 +804,6 @@ function AuthScreen({
                             </p>
                           )}
                         </div>
-                        <TurnstileField
-                          ref={registerTurnstileRef}
-                          onToken={setRegisterCfToken}
-                        />
                         <Button
                           type="submit"
                           className="w-full h-10 transition-all hover:scale-[1.01]"

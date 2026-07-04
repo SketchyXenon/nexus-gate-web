@@ -41,8 +41,14 @@ export async function POST(req: NextRequest) {
   const { email } = parsed.data;
 
   // Auto-link pre-migration accounts (same logic as forgot-password).
+  // Only ACTIVE or PENDING_VERIFICATION - not SUSPENDED (DoS prevention).
   const dbAccount = await db.account.findUnique({ where: { email } });
-  if (dbAccount && !dbAccount.supabaseAuthUid) {
+  if (
+    dbAccount &&
+    !dbAccount.supabaseAuthUid &&
+    (dbAccount.status === "ACTIVE" ||
+      dbAccount.status === "PENDING_VERIFICATION")
+  ) {
     try {
       const admin = createSupabaseAdminClient();
       const { data: authData, error: authError } =

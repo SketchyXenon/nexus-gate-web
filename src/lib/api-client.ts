@@ -177,7 +177,7 @@ export const useMe = () =>
 export const useLogin = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { email: string; password: string; cfToken?: string }) =>
+    mutationFn: (vars: { email: string; password: string }) =>
       api<Account>("/api/auth/login", {
         method: "POST",
         body: JSON.stringify(vars),
@@ -195,7 +195,6 @@ export const useRegister = () =>
       studentId: number;
       program?: string;
       section?: string;
-      cfToken?: string;
     }) =>
       api<{
         ok: boolean;

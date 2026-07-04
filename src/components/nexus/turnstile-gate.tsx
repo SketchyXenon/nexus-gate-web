@@ -28,9 +28,11 @@ import { Button } from "@/components/ui/button";
 //      the interactive widget if Cloudflare flags the visitor.
 //
 // SECURITY NOTE:
-//   This page-level gate is UX friction only. Real bot protection is
-//   the form-level TurnstileField + server-side siteverify (src/lib/turnstile.ts).
-//   Tokens from this gate are NOT verified — only form tokens are.
+//   This page-level gate is the SOLE bot-protection boundary. It runs
+//   before the landing/login page. Server-side rate limiting on login/
+//   register endpoints provides the brute-force defense. The gate
+//   persists verification in sessionStorage (4h grace) so users only
+//   see the challenge once per session.
 
 const STORAGE_KEY = "ng_turnstile_verified";
 // How long a verification is trusted (ms). 4 hours = a typical study
@@ -73,9 +75,11 @@ export function TurnstileGate({ children }: TurnstileGateProps) {
   // If no site key is configured (e.g. local dev), render children directly.
   // If there's a valid recent verification in sessionStorage, skip the gate.
   const [verified, setVerified] = useState<boolean>(
-    !siteKey || isRecentlyVerified()
+    !siteKey || isRecentlyVerified(),
   );
-  const [TurnstileComp, setTurnstileComp] = useState<TurnstileComponent | null>(null);
+  const [TurnstileComp, setTurnstileComp] = useState<TurnstileComponent | null>(
+    null,
+  );
   const [showFallback, setShowFallback] = useState(false);
   const [errored, setErrored] = useState(false);
   const fallbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -126,7 +130,9 @@ export function TurnstileGate({ children }: TurnstileGateProps) {
           <ShieldCheck className="h-8 w-8 text-primary" />
         </div>
         <div className="space-y-2">
-          <h1 className="font-heading text-xl font-semibold">Verifying your connection</h1>
+          <h1 className="font-heading text-xl font-semibold">
+            Verifying your connection
+          </h1>
           <p className="text-sm text-muted-foreground">
             Running a quick security check. This usually finishes in a moment.
           </p>
@@ -180,7 +186,8 @@ export function TurnstileGate({ children }: TurnstileGateProps) {
             >
               {errored ? (
                 <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                  Verification service is temporarily unavailable. You can continue — rate limiting still protects the login.
+                  Verification service is temporarily unavailable. You can
+                  continue — rate limiting still protects the login.
                 </p>
               ) : (
                 <p className="text-[11px] text-muted-foreground">

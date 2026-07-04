@@ -10,7 +10,6 @@ import {
   isDbUnavailableError,
 } from "@/lib/api";
 import { audit } from "@/lib/audit";
-import { requireTurnstile } from "@/lib/turnstile";
 import {
   createSupabaseServerClient,
   isSupabaseConfigured,
@@ -33,15 +32,12 @@ export async function POST(req: NextRequest) {
     const rl = await checkRateLimit(req, "login");
     if (rl) return rl;
 
-    const body = await parseBody<{ cfToken?: string }>(req);
+    const body = await parseBody(req);
     const parsed = loginSchema.safeParse(body);
     if (!parsed.success) {
       return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
     }
     const { email, password } = parsed.data;
-
-    const turnstileError = await requireTurnstile(req, body);
-    if (turnstileError) return turnstileError;
 
     // Sign in via Supabase Auth (sets the session cookie).
     const supabase = await createSupabaseServerClient();

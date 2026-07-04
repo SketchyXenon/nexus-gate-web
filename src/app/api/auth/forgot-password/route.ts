@@ -59,9 +59,16 @@ export async function POST(req: NextRequest) {
   const supabase = await createSupabaseServerClient();
 
   // Check if the account exists in our DB but has no Supabase Auth link.
-  // This is the pre-migration case - auto-link it so the reset email works.
+  // Only auto-link ACTIVE or PENDING_VERIFICATION accounts - not SUSPENDED
+  // (an attacker could otherwise create auth users for suspended accounts,
+  // locking the victim out of password login until they complete the email flow).
   const dbAccount = await db.account.findUnique({ where: { email } });
-  if (dbAccount && !dbAccount.supabaseAuthUid) {
+  if (
+    dbAccount &&
+    !dbAccount.supabaseAuthUid &&
+    (dbAccount.status === "ACTIVE" ||
+      dbAccount.status === "PENDING_VERIFICATION")
+  ) {
     try {
       const admin = createSupabaseAdminClient();
       const { data: authData, error: authError } =
