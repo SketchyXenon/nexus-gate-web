@@ -100,6 +100,9 @@ export async function POST(req: NextRequest) {
     const isWhitelisted = !!whitelisted;
 
     // 1. Create the Supabase Auth user (identity layer).
+    // If Supabase has email confirmation enabled (default), signUp creates
+    // the user with email_confirmed=false and sends a confirmation link.
+    // The user cannot log in until they click that link.
     const supabase = await createSupabaseServerClient();
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
@@ -108,10 +111,6 @@ export async function POST(req: NextRequest) {
     });
     if (authError || !authData.user) {
       const msg = authError?.message ?? "Registration failed";
-      // If the auth user already exists (e.g. accounts row was deleted but
-      // auth.users wasn't), check if there's no accounts row and auto-recover
-      // by updating the password + linking. This handles the edge case where
-      // an admin deleted the accounts row but not the Supabase auth user.
       if (
         msg.toLowerCase().includes("already registered") ||
         msg.toLowerCase().includes("user already")
@@ -127,6 +126,9 @@ export async function POST(req: NextRequest) {
       );
     }
     const authUid = authData.user.id;
+    // If authData.session is null, email confirmation is pending — Supabase
+    // sent a confirmation link and the user must click it before logging in.
+    const needsEmailConfirmation = !authData.session;
 
     // 2. Create the accounts row linked to the Supabase user (profile + RBAC).
     let account;
@@ -198,12 +200,26 @@ export async function POST(req: NextRequest) {
       req,
     });
 
-    const message = isWhitelisted
-      ? "Account created! Your student ID was found on the approved list. Sign in to activate your account."
-      : "Account created! Sign in to activate your account.";
+    // Build the success message based on whether email confirmation is needed.
+    let message: string;
+    if (needsEmailConfirmation) {
+      message = isWhitelisted
+        ? "Account created! Your student ID was found on the approved list. Check your email to confirm your account, then sign in."
+        : "Account created! Check your email to confirm your account, then sign in.";
+    } else {
+      message = isWhitelisted
+        ? "Account created! Your student ID was found on the approved list. Sign in to activate your account."
+        : "Account created! Sign in to activate your account.";
+    }
 
     return NextResponse.json(
-      { ok: true, message, email: account.email, whitelisted: isWhitelisted },
+      {
+        ok: true,
+        message,
+        email: account.email,
+        whitelisted: isWhitelisted,
+        needsEmailConfirmation,
+      },
       { status: 201 },
     );
   } catch (e) {

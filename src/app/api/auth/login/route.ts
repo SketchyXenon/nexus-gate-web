@@ -48,12 +48,26 @@ export async function POST(req: NextRequest) {
         password,
       });
     if (authError || !authData.user) {
+      // Check for "Email not confirmed" error from Supabase.
+      const errMsg = authError?.message ?? "";
+      if (
+        errMsg.toLowerCase().includes("not confirmed") ||
+        errMsg.toLowerCase().includes("email not confirmed")
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Please confirm your email first. Check your inbox for the confirmation link we sent when you registered.",
+            code: "EMAIL_NOT_CONFIRMED",
+          },
+          { status: 403 },
+        );
+      }
       // Check if the account exists in the DB but the auth user was deleted
       // in Supabase Dashboard. If so, clean up the orphaned accounts row
       // so the user can re-register.
       const dbAccount = await db.account.findUnique({ where: { email } });
       if (dbAccount && !dbAccount.supabaseAuthUid) {
-        // Pre-migration account (no auth link) — tell them to use forgot-password.
         console.warn(
           `[login] ${email} exists in accounts but has no supabaseAuthUid - needs migration`,
         );
@@ -62,15 +76,12 @@ export async function POST(req: NextRequest) {
         );
       }
       if (dbAccount && dbAccount.supabaseAuthUid && isSupabaseConfigured()) {
-        // The accounts row has a supabaseAuthUid but signInWithPassword failed.
-        // The auth user may have been deleted in Supabase Dashboard. Verify.
         try {
           const admin = createSupabaseAdminClient();
           const { data: userData } = await admin.auth.admin.getUserById(
             dbAccount.supabaseAuthUid,
           );
           if (!userData?.user) {
-            // Auth user is gone — clean up the orphaned accounts row.
             console.log(
               `[login] cleaning orphaned accounts row for ${email} (auth user deleted)`,
             );
@@ -80,7 +91,7 @@ export async function POST(req: NextRequest) {
             );
           }
         } catch {
-          // Can't verify — fall through to the generic error.
+          // Can't verify - fall through to the generic error.
         }
       }
       return unauthorized(
