@@ -47,12 +47,16 @@ export async function POST(req: NextRequest) {
   let verification;
   try {
     verification = await verifyRegistrationResponse({
-      response: body as RegistrationResponseJSON,
+      response: body.response as RegistrationResponseJSON,
       expectedChallenge: challenge,
       expectedOrigin,
       expectedRPID: rpID,
     });
   } catch (e) {
+    console.error(
+      "[passkey/register-verify] verification error:",
+      e instanceof Error ? e.message : e,
+    );
     return failWithCookieDelete(
       { error: "Passkey registration failed.", code: "VERIFICATION_FAILED" },
       400,
@@ -71,7 +75,7 @@ export async function POST(req: NextRequest) {
     id: credential.id,
     publicKey: credential.publicKey,
     counter: credential.counter,
-    transports: body.response.transports || [],
+    transports: body.response.response?.transports || [],
   });
 
   await db.account.update({
