@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyAuthenticationResponse } from "@simplewebauthn/server";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { db } from "@/lib/db";
-import { checkRateLimit, badRequest } from "@/lib/api";
+import { checkRateLimit } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import {
   createSupabaseAdminClient,
@@ -11,10 +11,9 @@ import {
 
 // POST /api/auth/passkey/login-verify
 // Verifies the WebAuthn assertion and signs the user in via Supabase.
-// Since Supabase doesn't expose a "sign in as user X" server API, we
-// generate a one-time magic link and consume it immediately server-side.
+// Uses admin.generateLink to get a magic link, extracts the token, and
+// consumes it via verifyOtp to establish a session.
 export async function POST(req: NextRequest) {
-  // Helper: delete the challenge cookie on any failure path (single-use).
   const failWithCookieDelete = (body: object, status: number) => {
     const resp = NextResponse.json(body, { status });
     resp.cookies.delete("ng_passkey_challenge");
@@ -129,9 +128,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Sign the user in via Supabase: generate a magic link and consume it.
-  // This is the only server-side way to establish a Supabase session for a
-  // user without their password. The link is single-use and immediately consumed.
+  // Establish a Supabase session for the verified user.
+  // generateLink with type "magiclink" returns an action_link containing
+  // the token. We extract the token from the URL and verify it to get a session.
   const admin = createSupabaseAdminClient();
   const { data: linkData, error: linkError } =
     await admin.auth.admin.generateLink({
@@ -141,15 +140,40 @@ export async function POST(req: NextRequest) {
   if (linkError || !linkData) {
     console.error("[passkey] generateLink failed:", linkError?.message);
     return failWithCookieDelete(
-      { error: "Could not establish session.", code: "SESSION_FAILED" },
-      400,
+      {
+        error: "Could not establish session. Please try again.",
+        code: "SESSION_FAILED",
+      },
+      500,
     );
   }
 
-  // Consume the magic link OTP to get a session access_token.
+  // The action_link contains the token as a query param: ...&token=xxx&type=magiclink
+  // Extract the token and use it with verifyOtp.
+  const actionLink = linkData.properties?.action_link || "";
+  let token = "";
+  try {
+    const url = new URL(actionLink);
+    token = url.searchParams.get("token") || "";
+  } catch {
+    console.error("[passkey] could not parse action_link:", actionLink);
+    return failWithCookieDelete(
+      { error: "Could not establish session.", code: "SESSION_FAILED" },
+      500,
+    );
+  }
+
+  if (!token) {
+    console.error("[passkey] no token in action_link");
+    return failWithCookieDelete(
+      { error: "Could not establish session.", code: "SESSION_FAILED" },
+      500,
+    );
+  }
+
   const { data: sessionData, error: sessionError } = await admin.auth.verifyOtp(
     {
-      token_hash: linkData.properties?.hashed_token || "",
+      token_hash: token,
       type: "magiclink",
     },
   );
@@ -157,7 +181,7 @@ export async function POST(req: NextRequest) {
     console.error("[passkey] verifyOtp failed:", sessionError?.message);
     return failWithCookieDelete(
       { error: "Could not establish session.", code: "SESSION_FAILED" },
-      400,
+      500,
     );
   }
 
@@ -187,10 +211,6 @@ export async function POST(req: NextRequest) {
   }).catch(() => {});
 
   // Set the Supabase session cookies directly on the response.
-  // We can't use createSupabaseServerClient().auth.setSession() here because
-  // it tries to set cookies via next/headers cookies().set(), which can fail
-  // in certain contexts. Instead, we set the cookies manually with the same
-  // names + options that @supabase/ssr uses.
   const isProduction = process.env.NODE_ENV === "production";
   const session = sessionData.session;
   const response = NextResponse.json({
@@ -207,14 +227,13 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  // Set the Supabase auth session cookies (same names @supabase/ssr uses).
   const cookiePrefix = isProduction ? "__Secure-" : "";
   const cookieOpts = {
     httpOnly: true,
     sameSite: "lax" as const,
     secure: isProduction,
     path: "/",
-    maxAge: 60 * 60 * 24 * 7, // 7 days (matches Supabase default)
+    maxAge: 60 * 60 * 24 * 7,
   };
   response.cookies.set(
     `${cookiePrefix}sb-access-token`,
@@ -226,7 +245,6 @@ export async function POST(req: NextRequest) {
     session.refresh_token,
     cookieOpts,
   );
-  // Also set the non-prefixed version for dev compatibility.
   if (isProduction) {
     response.cookies.set("sb-access-token", session.access_token, cookieOpts);
     response.cookies.set("sb-refresh-token", session.refresh_token, cookieOpts);
