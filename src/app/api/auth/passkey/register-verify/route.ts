@@ -2,27 +2,40 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyRegistrationResponse } from "@simplewebauthn/server";
 import type { RegistrationResponseJSON } from "@simplewebauthn/server";
 import { db } from "@/lib/db";
-import { requireAuth, badRequest } from "@/lib/api";
+import { requireAuth } from "@/lib/api";
 import { audit } from "@/lib/audit";
 
 // POST /api/auth/passkey/register-verify
 // Verifies the WebAuthn registration response and stores the credential.
 export async function POST(req: NextRequest) {
+  // Helper: delete the challenge cookie on any failure path (single-use).
+  const failWithCookieDelete = (body: object, status: number) => {
+    const resp = NextResponse.json(body, { status });
+    resp.cookies.delete("ng_passkey_challenge");
+    return resp;
+  };
+
   const res = await requireAuth();
   if ("error" in res) return res.error;
   const { account } = res;
 
   const challenge = req.cookies.get("ng_passkey_challenge")?.value;
   if (!challenge) {
-    return badRequest(
-      "Challenge expired. Please try again.",
-      "CHALLENGE_EXPIRED",
+    return failWithCookieDelete(
+      {
+        error: "Challenge expired. Please try again.",
+        code: "CHALLENGE_EXPIRED",
+      },
+      400,
     );
   }
 
   const body = await req.json().catch(() => null);
   if (!body?.response) {
-    return badRequest("Missing registration response.", "BAD_REQUEST");
+    return failWithCookieDelete(
+      { error: "Missing registration response.", code: "BAD_REQUEST" },
+      400,
+    );
   }
 
   const rpID = process.env.NEXT_PUBLIC_APP_URL
@@ -40,11 +53,17 @@ export async function POST(req: NextRequest) {
       expectedRPID: rpID,
     });
   } catch (e) {
-    return badRequest("Passkey registration failed.", "VERIFICATION_FAILED");
+    return failWithCookieDelete(
+      { error: "Passkey registration failed.", code: "VERIFICATION_FAILED" },
+      400,
+    );
   }
 
   if (!verification.verified || !verification.registrationInfo) {
-    return badRequest("Passkey registration failed.", "VERIFICATION_FAILED");
+    return failWithCookieDelete(
+      { error: "Passkey registration failed.", code: "VERIFICATION_FAILED" },
+      400,
+    );
   }
 
   const { credential } = verification.registrationInfo;

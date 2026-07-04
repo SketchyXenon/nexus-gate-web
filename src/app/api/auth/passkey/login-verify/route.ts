@@ -15,6 +15,13 @@ import {
 // Since Supabase doesn't expose a "sign in as user X" server API, we
 // generate a one-time magic link and consume it immediately server-side.
 export async function POST(req: NextRequest) {
+  // Helper: delete the challenge cookie on any failure path (single-use).
+  const failWithCookieDelete = (body: object, status: number) => {
+    const resp = NextResponse.json(body, { status });
+    resp.cookies.delete("ng_passkey_challenge");
+    return resp;
+  };
+
   if (!isSupabaseConfigured()) {
     return NextResponse.json(
       {
@@ -29,15 +36,21 @@ export async function POST(req: NextRequest) {
 
   const challenge = req.cookies.get("ng_passkey_challenge")?.value;
   if (!challenge) {
-    return badRequest(
-      "Challenge expired. Please try again.",
-      "CHALLENGE_EXPIRED",
+    return failWithCookieDelete(
+      {
+        error: "Challenge expired. Please try again.",
+        code: "CHALLENGE_EXPIRED",
+      },
+      400,
     );
   }
 
   const body = await req.json().catch(() => null);
   if (!body?.assertion) {
-    return badRequest("Missing authentication response.", "BAD_REQUEST");
+    return failWithCookieDelete(
+      { error: "Missing authentication response.", code: "BAD_REQUEST" },
+      400,
+    );
   }
 
   const rpID = process.env.NEXT_PUBLIC_APP_URL
@@ -95,18 +108,25 @@ export async function POST(req: NextRequest) {
   }
 
   if (!verifiedAccount) {
-    return badRequest("Passkey verification failed.", "VERIFICATION_FAILED");
+    return failWithCookieDelete(
+      { error: "Passkey verification failed.", code: "VERIFICATION_FAILED" },
+      400,
+    );
   }
   if (verifiedAccount.status === "SUSPENDED") {
-    return NextResponse.json(
+    return failWithCookieDelete(
       { error: "Your account has been suspended.", code: "SUSPENDED" },
-      { status: 403 },
+      403,
     );
   }
   if (!verifiedAccount.supabaseAuthUid) {
-    return badRequest(
-      "Account not linked to Supabase Auth. Use email/password or magic link first.",
-      "NOT_LINKED",
+    return failWithCookieDelete(
+      {
+        error:
+          "Account not linked to Supabase Auth. Use email/password or magic link first.",
+        code: "NOT_LINKED",
+      },
+      400,
     );
   }
 
@@ -121,7 +141,10 @@ export async function POST(req: NextRequest) {
     });
   if (linkError || !linkData) {
     console.error("[passkey] generateLink failed:", linkError?.message);
-    return badRequest("Could not establish session.", "SESSION_FAILED");
+    return failWithCookieDelete(
+      { error: "Could not establish session.", code: "SESSION_FAILED" },
+      400,
+    );
   }
 
   // Consume the magic link OTP to get a session access_token.
@@ -133,7 +156,10 @@ export async function POST(req: NextRequest) {
   );
   if (sessionError || !sessionData.session) {
     console.error("[passkey] verifyOtp failed:", sessionError?.message);
-    return badRequest("Could not establish session.", "SESSION_FAILED");
+    return failWithCookieDelete(
+      { error: "Could not establish session.", code: "SESSION_FAILED" },
+      400,
+    );
   }
 
   // Activate pending accounts on first passkey login.
@@ -172,7 +198,10 @@ export async function POST(req: NextRequest) {
   });
   if (setSessionError) {
     console.error("[passkey] setSession failed:", setSessionError.message);
-    return badRequest("Could not establish session.", "SESSION_FAILED");
+    return failWithCookieDelete(
+      { error: "Could not establish session.", code: "SESSION_FAILED" },
+      400,
+    );
   }
 
   const response = NextResponse.json({
