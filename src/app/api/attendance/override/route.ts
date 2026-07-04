@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { badRequest, forbidden, notFound, parseBody, requireAuth } from "@/lib/api";
+import {
+  badRequest,
+  forbidden,
+  notFound,
+  parseBody,
+  requireAuth,
+} from "@/lib/api";
 import { overrideSchema } from "@/lib/validation";
 import { audit } from "@/lib/audit";
 import { notifyAttendance } from "@/lib/realtime";
@@ -14,7 +20,8 @@ export async function POST(req: NextRequest) {
 
   const body = await parseBody(req);
   const parsed = overrideSchema.safeParse(body);
-  if (!parsed.success) return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
+  if (!parsed.success)
+    return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
   const { eventId, studentId, reason } = parsed.data;
 
   const event = await db.event.findUnique({ where: { id: eventId } });
@@ -23,14 +30,41 @@ export async function POST(req: NextRequest) {
     return forbidden("You can only add overrides for your own events");
   }
 
-  const student = await db.authorizedStudent.findUnique({ where: { studentId } });
-  if (!student) return badRequest("This student is not on the approved list", "NOT_WHITELISTED");
+  // Check if the student is on the whitelist OR has an account.
+  // The whitelist is the primary source, but students who registered
+  // directly (without being whitelisted) should also be eligible.
+  const student = await db.authorizedStudent.findUnique({
+    where: { studentId },
+  });
+  let studentName: string;
+  let studentProgram: string | null;
+  let studentSection: string | null;
 
-  // Verify the student is eligible for this event (matches target program/section)
-  if (event.targetProgram && student.program !== event.targetProgram) {
+  if (student) {
+    studentName = student.fullName;
+    studentProgram = student.program;
+    studentSection = student.section;
+  } else {
+    // Not on whitelist — check if they have an account.
+    const studentAccount = await db.account.findUnique({
+      where: { studentId },
+    });
+    if (!studentAccount) {
+      return badRequest(
+        "This student is not on the approved list and has no account.",
+        "NOT_WHITELISTED",
+      );
+    }
+    studentName = studentAccount.fullName;
+    studentProgram = studentAccount.program;
+    studentSection = studentAccount.section;
+  }
+
+  // Verify the student is eligible for this event (matches target program/section).
+  if (event.targetProgram && studentProgram !== event.targetProgram) {
     return forbidden("This student is not eligible for this event");
   }
-  if (event.targetSection && student.section !== event.targetSection) {
+  if (event.targetSection && studentSection !== event.targetSection) {
     return forbidden("This student is not eligible for this event");
   }
 
@@ -46,7 +80,10 @@ export async function POST(req: NextRequest) {
 
   let studentAccount = await db.account.findUnique({ where: { studentId } });
   if (!studentAccount) {
-    return badRequest("This student has not created an account yet.", "NO_ACCOUNT");
+    return badRequest(
+      "This student has not created an account yet.",
+      "NO_ACCOUNT",
+    );
   }
 
   const result = await db.$transaction(async (tx) => {
@@ -62,15 +99,23 @@ export async function POST(req: NextRequest) {
   });
 
   notifyAttendance(eventId, {
-    id: result.attendance.id, accountId: studentAccount.id,
-    fullName: studentAccount.fullName, studentId: studentAccount.studentId,
-    program: studentAccount.program, section: studentAccount.section,
-    scannedAt: result.attendance.scannedAt.toISOString(), source: "override",
+    id: result.attendance.id,
+    accountId: studentAccount.id,
+    fullName: studentAccount.fullName,
+    studentId: studentAccount.studentId,
+    program: studentAccount.program,
+    section: studentAccount.section,
+    scannedAt: result.attendance.scannedAt.toISOString(),
+    source: "override",
   }).catch(() => {});
 
   await audit({
-    actorId: account.id, action: "attendance.override", targetType: "EventAttendance",
-    targetId: result.attendance.id, metadata: { eventId, studentId, reason }, req,
+    actorId: account.id,
+    action: "attendance.override",
+    targetType: "EventAttendance",
+    targetId: result.attendance.id,
+    metadata: { eventId, studentId, reason },
+    req,
   });
 
   return NextResponse.json(result, { status: 201 });

@@ -3,29 +3,60 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
 import {
-  ScanLine, Camera, CameraOff, CheckCircle2, XCircle, Loader2,
-  HardDrive, RefreshCw, Trash2, Wifi, WifiOff, Send, Clock, Info, AlertCircle,
+  ScanLine,
+  Camera,
+  CameraOff,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  HardDrive,
+  RefreshCw,
+  Trash2,
+  Wifi,
+  WifiOff,
+  Send,
+  Clock,
+  Info,
+  AlertCircle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Card, CardContent, CardDescription, CardHeader, CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
-  Tooltip, TooltipContent, TooltipTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ConfirmDialog } from "@/components/nexus/confirm-dialog";
 import { useEvents, type Account } from "@/lib/api-client";
 import { useScanQueue } from "@/hooks/use-scan-queue";
 import { useOnlineStatus } from "@/hooks/use-online-status";
 import { toast } from "@/hooks/use-toast";
-import { signCertificate, getOrCreateDeviceKeyPair, registerDeviceKeyWithServer, getDeviceFingerprint } from "@/lib/device-key-client";
-import { createCertificate, type ScanCertificate } from "@/lib/scan-certificate";
+import {
+  signCertificate,
+  getOrCreateDeviceKeyPair,
+  registerDeviceKeyWithServer,
+  getDeviceFingerprint,
+} from "@/lib/device-key-client";
+import {
+  createCertificate,
+  type ScanCertificate,
+} from "@/lib/scan-certificate";
 import { MIN_SUB_FRAMES, SUB_FRAMES_PER_BLOCK } from "@/lib/qr-token-client";
 
 type ScanFeedback =
@@ -51,7 +82,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
   const eventId: number | null =
     selectedEventId !== SELECT_NONE
       ? Number(selectedEventId)
-      : events[0]?.id ?? null;
+      : (events[0]?.id ?? null);
 
   const queue = useScanQueue();
   const online = useOnlineStatus();
@@ -71,10 +102,16 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
   // The scanner collects sub-frame indices + their client-observed HMACs
   // as the QR refreshes at 2 FPS. When MIN_SUB_FRAMES (3) consecutive
   // sub-frames are captured, we create a signed certificate and enqueue it.
-  const subFramesRef = useRef<Map<number, { subFrame: number; hmac: string; token: string }>>(new Map());
+  const subFramesRef = useRef<
+    Map<number, { subFrame: number; hmac: string; token: string }>
+  >(new Map());
   const currentBlockRef = useRef<number>(-1);
   const currentEventIdRef = useRef<number>(0);
-  const [scanProgress, setScanProgress] = useState<number>(0); // 0 to MIN_SUB_FRAMES
+  const [scanProgress, setScanProgress] = useState<number>(0);
+  // Cooldown lock: after a successful scan, block new scans for 3 seconds
+  // to prevent the "stuck after 2-3 scans" bug where sub-frames get
+  // re-collected within the same time block.
+  const scanningLockedRef = useRef<boolean>(false);
 
   const stopCamera = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -100,10 +137,17 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
   // set of indices without real HMACs is rejected.
   const handleDecode = useCallback(
     async (raw: string) => {
+      // Cooldown lock: ignore scans for 3s after a successful scan.
+      if (scanningLockedRef.current) return;
+
       // Parse the v8 token: <eventId>.<timeBlock>.<subFrame>.<subHmac>
       const parts = raw.split(".");
       if (parts.length !== 4) {
-        setFeedbackKey(k=>k+1); setFeedback({ kind: "error", msg: "This QR code doesn't look like a Nexus Gate check-in code." });
+        setFeedbackKey((k) => k + 1);
+        setFeedback({
+          kind: "error",
+          msg: "This QR code doesn't look like a Nexus Gate check-in code.",
+        });
         return;
       }
       const tokenEventId = Number(parts[0]);
@@ -111,21 +155,38 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
       const subFrameIdx = Number(parts[2]);
       const subHmac = parts[3];
 
-      if (!Number.isFinite(tokenEventId) || tokenEventId <= 0 || !Number.isFinite(timeBlock)) {
-        setFeedbackKey(k=>k+1); setFeedback({ kind: "error", msg: "We couldn't read the event number from this code." });
+      if (
+        !Number.isFinite(tokenEventId) ||
+        tokenEventId <= 0 ||
+        !Number.isFinite(timeBlock)
+      ) {
+        setFeedbackKey((k) => k + 1);
+        setFeedback({
+          kind: "error",
+          msg: "We couldn't read the event number from this code.",
+        });
         return;
       }
-      if (!Number.isFinite(subFrameIdx) || subFrameIdx < 0 || subFrameIdx >= SUB_FRAMES_PER_BLOCK) {
-        setFeedbackKey(k=>k+1); setFeedback({ kind: "error", msg: "Invalid QR code format." });
+      if (
+        !Number.isFinite(subFrameIdx) ||
+        subFrameIdx < 0 ||
+        subFrameIdx >= SUB_FRAMES_PER_BLOCK
+      ) {
+        setFeedbackKey((k) => k + 1);
+        setFeedback({ kind: "error", msg: "Invalid QR code format." });
         return;
       }
       if (!subHmac || subHmac.length !== 64) {
-        setFeedbackKey(k=>k+1); setFeedback({ kind: "error", msg: "Invalid QR code signature." });
+        setFeedbackKey((k) => k + 1);
+        setFeedback({ kind: "error", msg: "Invalid QR code signature." });
         return;
       }
 
       // If the block or event changed, reset the collection
-      if (currentBlockRef.current !== timeBlock || currentEventIdRef.current !== tokenEventId) {
+      if (
+        currentBlockRef.current !== timeBlock ||
+        currentEventIdRef.current !== tokenEventId
+      ) {
         currentBlockRef.current = timeBlock;
         currentEventIdRef.current = tokenEventId;
         subFramesRef.current = new Map();
@@ -135,7 +196,11 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
       // Dedup: only add each sub-frame once
       if (subFramesRef.current.has(subFrameIdx)) return;
       // Store the sub-frame index + its client-observed HMAC
-      subFramesRef.current.set(subFrameIdx, { subFrame: subFrameIdx, hmac: subHmac, token: raw });
+      subFramesRef.current.set(subFrameIdx, {
+        subFrame: subFrameIdx,
+        hmac: subHmac,
+        token: raw,
+      });
 
       const collected = subFramesRef.current.size;
       setScanProgress(collected);
@@ -143,7 +208,8 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
       // Check if we have enough consecutive sub-frames
       if (collected < MIN_SUB_FRAMES) {
         // Not enough yet — show progress feedback
-        setFeedbackKey(k=>k+1); setFeedback({
+        setFeedbackKey((k) => k + 1);
+        setFeedback({
           kind: "success",
           name: user.fullName,
           msg: `Hold steady… ${collected}/${MIN_SUB_FRAMES} frames captured`,
@@ -152,10 +218,13 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
       }
 
       // We have enough sub-frames — verify they're consecutive
-      const sortedSubFrames = Array.from(subFramesRef.current.values()).sort((a, b) => a.subFrame - b.subFrame);
+      const sortedSubFrames = Array.from(subFramesRef.current.values()).sort(
+        (a, b) => a.subFrame - b.subFrame,
+      );
       let consecutive = true;
       for (let i = 1; i < sortedSubFrames.length; i++) {
-        const diff = sortedSubFrames[i].subFrame - sortedSubFrames[i - 1].subFrame;
+        const diff =
+          sortedSubFrames[i].subFrame - sortedSubFrames[i - 1].subFrame;
         if (diff < 1 || diff > 2) {
           consecutive = false;
           break;
@@ -165,7 +234,11 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
         // Reset and try again
         subFramesRef.current = new Map();
         setScanProgress(0);
-        setFeedbackKey(k=>k+1); setFeedback({ kind: "error", msg: "Frames weren't consecutive. Hold the camera steady and try again." });
+        setFeedbackKey((k) => k + 1);
+        setFeedback({
+          kind: "error",
+          msg: "Frames weren't consecutive. Hold the camera steady and try again.",
+        });
         return;
       }
 
@@ -174,7 +247,11 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
       await getOrCreateDeviceKeyPair();
       const fingerprint = await getDeviceFingerprint();
       if (!fingerprint) {
-        setFeedbackKey(k=>k+1); setFeedback({ kind: "error", msg: "Couldn't access device key. Please refresh the page." });
+        setFeedbackKey((k) => k + 1);
+        setFeedback({
+          kind: "error",
+          msg: "Couldn't access device key. Please refresh the page.",
+        });
         return;
       }
 
@@ -203,7 +280,14 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
         // Register the device key in the background (non-blocking)
         registerDeviceKeyWithServer().catch(() => {});
 
-        setFeedbackKey(k=>k+1); setFeedback({
+        // Lock scanning for 3 seconds to prevent duplicate scans.
+        scanningLockedRef.current = true;
+        setTimeout(() => {
+          scanningLockedRef.current = false;
+        }, 3000);
+
+        setFeedbackKey((k) => k + 1);
+        setFeedback({
           kind: "success",
           name: user.fullName,
           msg: online
@@ -215,13 +299,17 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
         subFramesRef.current = new Map();
         setScanProgress(0);
       } catch (e) {
-        setFeedbackKey(k=>k+1); setFeedback({
+        setFeedbackKey((k) => k + 1);
+        setFeedback({
           kind: "error",
-          msg: e instanceof Error ? e.message : "Failed to sign the scan certificate.",
+          msg:
+            e instanceof Error
+              ? e.message
+              : "Failed to sign the scan certificate.",
         });
       }
     },
-    [queue, user.fullName, online]
+    [queue, user.fullName, online],
   );
 
   const scanLoop = useCallback(() => {
@@ -246,14 +334,17 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
     }
     ctx.drawImage(video, 0, 0, w, h);
     const imageData = ctx.getImageData(0, 0, w, h);
-    const code = jsQR(imageData.data, w, h, { inversionAttempts: "dontInvert" });
+    const code = jsQR(imageData.data, w, h, {
+      inversionAttempts: "dontInvert",
+    });
     if (code && code.data) handleDecode(code.data);
     rafRef.current = requestAnimationFrame(scanLoop);
   }, [handleDecode]);
 
   const startCamera = useCallback(async () => {
     setStarting(true);
-    setFeedbackKey(k=>k+1); setFeedback(null);
+    setFeedbackKey((k) => k + 1);
+    setFeedback(null);
     setCameraError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -268,7 +359,8 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
       setCameraOn(true);
       rafRef.current = requestAnimationFrame(scanLoop);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Camera permission was denied.";
+      const msg =
+        e instanceof Error ? e.message : "Camera permission was denied.";
       setCameraError(msg);
       toast({
         title: "Couldn't open the camera",
@@ -285,7 +377,8 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
   }, [stopCamera]);
 
   const pendingItems = queue.queue.filter(
-    (s) => s.status === "pending" || s.status === "syncing" || s.status === "failed"
+    (s) =>
+      s.status === "pending" || s.status === "syncing" || s.status === "failed",
   );
   const syncedItems = queue.queue.filter((s) => s.status === "synced");
 
@@ -294,7 +387,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
   const lastFailed = queue.queue.find((s) => s.status === "failed");
 
   return (
-    <div className="grid gap-6 lg:grid-cols-3">
+    <div className="grid gap-4 lg:gap-6 lg:grid-cols-3">
       <Card className="lg:col-span-2 relative overflow-hidden">
         <CardHeader>
           <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -309,7 +402,13 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
             </div>
             {events.length > 0 && (
               <Select
-                value={selectedEventId === SELECT_NONE ? (eventId ? String(eventId) : SELECT_NONE) : selectedEventId}
+                value={
+                  selectedEventId === SELECT_NONE
+                    ? eventId
+                      ? String(eventId)
+                      : SELECT_NONE
+                    : selectedEventId
+                }
                 onValueChange={(v) => setSelectedEventId(v)}
               >
                 <SelectTrigger className="w-56">
@@ -341,7 +440,10 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                   <TooltipTrigger asChild>
                     <Info className="h-3.5 w-3.5 text-amber-600/70 cursor-help" />
                   </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">Only events open to everyone are showing. Set your course and section to see events for your class.</TooltipContent>
+                  <TooltipContent className="max-w-xs">
+                    Only events open to everyone are showing. Set your course
+                    and section to see events for your class.
+                  </TooltipContent>
                 </Tooltip>
                 {onNavigate && (
                   <Button
@@ -370,7 +472,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
           )}
           {eventId != null && (
             <div className="space-y-4">
-              <div className="relative aspect-video bg-black rounded-xl overflow-hidden ng-glow">
+              <div className="relative aspect-square sm:aspect-video bg-black rounded-xl overflow-hidden ng-glow">
                 <video
                   ref={videoRef}
                   className={`w-full h-full object-cover ${cameraOn ? "" : "hidden"}`}
@@ -391,7 +493,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                 )}
                 {cameraOn && (
                   <div className="absolute inset-0 pointer-events-none">
-                    <div className="absolute inset-x-8 inset-y-12 border-2 border-primary/70 rounded-xl">
+                    <div className="absolute inset-x-4 inset-y-8 sm:inset-x-8 sm:inset-y-12 border-2 border-primary/70 rounded-xl">
                       <div className="absolute -top-1 -left-1 h-5 w-5 border-t-2 border-l-2 border-primary" />
                       <div className="absolute -top-1 -right-1 h-5 w-5 border-t-2 border-r-2 border-primary" />
                       <div className="absolute -bottom-1 -left-1 h-5 w-5 border-b-2 border-l-2 border-primary" />
@@ -399,7 +501,11 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                       <motion.div
                         className="absolute left-2 right-2 h-0.5 bg-primary/80"
                         animate={{ top: ["8%", "88%", "8%"] }}
-                        transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
+                        transition={{
+                          duration: 2.2,
+                          repeat: Infinity,
+                          ease: "easeInOut",
+                        }}
                       />
                     </div>
                   </div>
@@ -415,8 +521,8 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                         feedback.kind === "success"
                           ? "bg-primary/90 text-primary-foreground"
                           : feedback.kind === "dup"
-                          ? "bg-amber-500/90 text-white"
-                          : "bg-destructive/90 text-white"
+                            ? "bg-amber-500/90 text-white"
+                            : "bg-destructive/90 text-white"
                       }`}
                     >
                       <div className="flex items-center gap-3">
@@ -430,10 +536,12 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                             {feedback.kind === "success"
                               ? "Scan saved"
                               : feedback.kind === "dup"
-                              ? "Already checked in"
-                              : "Couldn't read this code"}
+                                ? "Already checked in"
+                                : "Couldn't read this code"}
                           </p>
-                          <p className="text-xs opacity-90 break-words">{feedback.msg}</p>
+                          <p className="text-xs opacity-90 break-words">
+                            {feedback.msg}
+                          </p>
                         </div>
                       </div>
                     </motion.div>
@@ -457,9 +565,12 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                   <div className="flex-1">
                     <p className="font-medium">A scan couldn't be sent</p>
                     <p className="opacity-90 mt-0.5">
-                      We tried a few times but the server didn't accept it. {lastFailed.error ?? ""}
+                      We tried a few times but the server didn't accept it.{" "}
+                      {lastFailed.error ?? ""}
                     </p>
-                    <p className="opacity-90">Tap “Send now” below to try again.</p>
+                    <p className="opacity-90">
+                      Tap “Send now” below to try again.
+                    </p>
                   </div>
                 </div>
               )}
@@ -488,7 +599,11 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                       : "border-amber-500/40 text-amber-600"
                   }`}
                 >
-                  {online ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+                  {online ? (
+                    <Wifi className="h-3 w-3" />
+                  ) : (
+                    <WifiOff className="h-3 w-3" />
+                  )}
                   {online ? "Online" : "Offline — scans saved on this device"}
                 </Badge>
                 {queue.syncing && (
@@ -504,7 +619,10 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                   <TooltipTrigger asChild>
                     <Info className="h-3.5 w-3.5 text-primary cursor-help" />
                   </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">Offline scans are saved on this device and sent automatically when you reconnect.</TooltipContent>
+                  <TooltipContent className="max-w-xs">
+                    Offline scans are saved on this device and sent
+                    automatically when you reconnect.
+                  </TooltipContent>
                 </Tooltip>
                 <span>Offline scans auto-sync when reconnected.</span>
               </div>
@@ -526,13 +644,17 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
         <CardContent className="space-y-3">
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded-md bg-amber-500/10 p-2.5 text-center">
-              <div className="text-xl font-bold text-amber-600">{pendingItems.length}</div>
+              <div className="text-xl font-bold text-amber-600">
+                {pendingItems.length}
+              </div>
               <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
                 Waiting
               </div>
             </div>
             <div className="rounded-md bg-emerald-500/10 p-2.5 text-center">
-              <div className="text-xl font-bold text-emerald-600">{syncedItems.length}</div>
+              <div className="text-xl font-bold text-emerald-600">
+                {syncedItems.length}
+              </div>
               <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
                 Sent
               </div>
@@ -584,10 +706,10 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                       item.status === "synced"
                         ? "bg-emerald-500"
                         : item.status === "failed"
-                        ? "bg-destructive"
-                        : item.status === "syncing"
-                        ? "bg-primary animate-pulse"
-                        : "bg-amber-500"
+                          ? "bg-destructive"
+                          : item.status === "syncing"
+                            ? "bg-primary animate-pulse"
+                            : "bg-amber-500"
                     }`}
                   />
                   <div className="flex-1 min-w-0">
@@ -596,14 +718,17 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                         ? item.result?.action === "time_out"
                           ? "Time-out recorded"
                           : item.result?.action === "already_complete"
-                          ? "Already checked in"
-                          : "Time-in recorded"
+                            ? "Already checked in"
+                            : "Time-in recorded"
                         : item.status === "failed"
-                        ? "Failed"
-                        : item.status === "syncing"
-                        ? "Sending…"
-                        : "Waiting"}
-                      <span className="text-muted-foreground font-normal"> · event #{item.eventId}</span>
+                          ? "Failed"
+                          : item.status === "syncing"
+                            ? "Sending…"
+                            : "Waiting"}
+                      <span className="text-muted-foreground font-normal">
+                        {" "}
+                        · event #{item.eventId}
+                      </span>
                     </p>
                     <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                       <Clock className="h-2.5 w-2.5" />
@@ -627,7 +752,9 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                           <Trash2 className="h-3 w-3" />
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent>Remove this sent scan from the list.</TooltipContent>
+                      <TooltipContent>
+                        Remove this sent scan from the list.
+                      </TooltipContent>
                     </Tooltip>
                   )}
                 </motion.div>
@@ -649,7 +776,8 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                Remove every sent scan from this list. They're already saved on the server.
+                Remove every sent scan from this list. They're already saved on
+                the server.
               </TooltipContent>
             </Tooltip>
           )}

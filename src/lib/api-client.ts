@@ -361,6 +361,17 @@ export const useEventSecret = (id: number | null) =>
       }>(`/api/events/${id}/secret`),
     enabled: id != null,
     staleTime: 5 * 60_000,
+    // Poll every 15s when the response is an error (e.g. UPCOMING 403).
+    // This auto-refreshes the QR when the check-in window opens.
+    refetchInterval: (query) => {
+      if (
+        query.state.error ||
+        (query.state.data as { code?: string })?.code === "UPCOMING"
+      ) {
+        return 15_000;
+      }
+      return false;
+    },
   });
 
 export const useCreateEvent = () => {
