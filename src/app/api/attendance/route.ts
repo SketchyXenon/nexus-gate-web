@@ -1,8 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { badRequest, checkRateLimitAuthed, forbidden, notFound, parseBody, requireAuth } from "@/lib/api";
+import {
+  badRequest,
+  checkRateLimitAuthed,
+  forbidden,
+  notFound,
+  parseBody,
+  requireAuth,
+} from "@/lib/api";
 import { scanCertificateSchema } from "@/lib/validation";
-import { validateQrPayload, verifySubFrameLiveness, MIN_SUB_FRAMES } from "@/lib/qr-token";
+import {
+  validateQrPayload,
+  verifySubFrameLiveness,
+  MIN_SUB_FRAMES,
+} from "@/lib/qr-token";
 import { verifySignedCertificate } from "@/lib/device-key-server";
 import {
   validateCertificateTimestamp,
@@ -54,7 +65,9 @@ export async function POST(req: NextRequest) {
   const body = await parseBody(req);
   const parsed = scanCertificateSchema.safeParse(body);
   if (!parsed.success) {
-    return badRequest(parsed.error.issues[0]?.message ?? "Invalid scan certificate");
+    return badRequest(
+      parsed.error.issues[0]?.message ?? "Invalid scan certificate",
+    );
   }
   const signed: SignedCertificate = parsed.data;
 
@@ -63,7 +76,12 @@ export async function POST(req: NextRequest) {
   // return immediately with "already scanned." This runs BEFORE
   // certificate verification to save CPU on repeat scans.
   const existing = await db.eventAttendance.findUnique({
-    where: { eventId_accountId: { eventId: signed.certificate.eventId, accountId: account.id } },
+    where: {
+      eventId_accountId: {
+        eventId: signed.certificate.eventId,
+        accountId: account.id,
+      },
+    },
   });
   if (existing) {
     return NextResponse.json({
@@ -71,7 +89,8 @@ export async function POST(req: NextRequest) {
       alreadyPresent: true,
       action: "already_scanned",
       scannedAt: existing.scannedAt,
-      message: "This QR was already scanned. You are already marked present for this event.",
+      message:
+        "This QR was already scanned. You are already marked present for this event.",
     });
   }
 
@@ -82,9 +101,9 @@ export async function POST(req: NextRequest) {
       sigResult.reason === "device_not_registered"
         ? "This device is not registered. Please refresh and try again."
         : sigResult.reason === "device_revoked"
-        ? "This device has been revoked. Contact an administrator."
-        : "Scan certificate signature verification failed. The scan may have been tampered with.",
-      "INVALID_CERTIFICATE"
+          ? "This device has been revoked. Contact an administrator."
+          : "Scan certificate signature verification failed. The scan may have been tampered with.",
+      "INVALID_CERTIFICATE",
     );
   }
 
@@ -95,14 +114,17 @@ export async function POST(req: NextRequest) {
       tsResult.reason === "scanned_in_future"
         ? "Your device clock is too far ahead. Please sync your clock and try again."
         : "This scan is too old to be accepted. Please scan again.",
-      tsResult.reason?.toUpperCase()
+      tsResult.reason?.toUpperCase(),
     );
   }
 
   // ---- Fetch the event ----
-  const event = await db.event.findUnique({ where: { id: signed.certificate.eventId } });
+  const event = await db.event.findUnique({
+    where: { id: signed.certificate.eventId },
+  });
   if (!event) return notFound("Event not found");
-  if (event.status !== "active") return forbidden("This event is no longer active");
+  if (event.status !== "active")
+    return forbidden("This event is no longer active");
 
   // ---- Validate the token HMAC (against the certificate's scannedAt) ----
   // This is the KEY to offline resilience: we validate against the time
@@ -110,12 +132,15 @@ export async function POST(req: NextRequest) {
   const tokenValidation = validateQrPayload(
     signed.certificate.token,
     event.eventSecret,
-    signed.certificate.scannedAt
+    signed.certificate.scannedAt,
   );
   if (!tokenValidation.ok) {
     return NextResponse.json(
-      { error: `Scan rejected: ${tokenValidation.reason}`, code: tokenValidation.reason },
-      { status: 400 }
+      {
+        error: `Scan rejected: ${tokenValidation.reason}`,
+        code: tokenValidation.reason,
+      },
+      { status: 400 },
     );
   }
 
@@ -123,7 +148,10 @@ export async function POST(req: NextRequest) {
   if (tokenValidation.eventId !== signed.certificate.eventId) {
     return badRequest("This token does not match the event", "EVENT_MISMATCH");
   }
-  const eventMatch = validateCertificateEventMatch(signed.certificate, tokenValidation.eventId);
+  const eventMatch = validateCertificateEventMatch(
+    signed.certificate,
+    tokenValidation.eventId,
+  );
   if (!eventMatch.ok) {
     return badRequest("Certificate event mismatch", "EVENT_MISMATCH");
   }
@@ -134,11 +162,14 @@ export async function POST(req: NextRequest) {
   // each client-supplied HMAC against the server-recomputed value.
   // This proves the scanner watched the QR change over time — a single
   // photo captures only 1 sub-frame (1 HMAC), which is < MIN_SUB_FRAMES.
-  if (tokenValidation.format === "v8" && tokenValidation.timeBlock !== undefined) {
+  if (
+    tokenValidation.format === "v8" &&
+    tokenValidation.timeBlock !== undefined
+  ) {
     if (signed.certificate.subFrames.length < MIN_SUB_FRAMES) {
       return badRequest(
         `Scan rejected: insufficient frames captured. Hold the camera steady for at least 2 seconds.`,
-        "insufficient_subframes"
+        "insufficient_subframes",
       );
     }
 
@@ -150,27 +181,44 @@ export async function POST(req: NextRequest) {
       signed.certificate.subFrames,
       event.eventSecret,
       signed.certificate.eventId,
-      tokenValidation.timeBlock
+      tokenValidation.timeBlock,
     );
     if (!liveness.ok) {
       return badRequest(
         `Scan rejected: ${liveness.reason}. Please scan again — hold the camera steady for 2 seconds.`,
-        liveness.reason
+        liveness.reason,
       );
     }
   }
 
-  // ---- Anti-cheating: server-authoritative time window ----
-  // We validate against the SERVER's current time (not the certificate's
-  // scannedAt) to ensure the check-in window is currently open. The
-  // certificate's scannedAt only affects token validity, not the
-  // check-in window.
-  const windows = getEventTimeWindows(event);
-  if (windows.checkIn.isUpcoming) {
-    return forbidden("This event hasn't opened for check-in yet.");
+  // ---- Anti-cheating: time window validation ----
+  // For offline scans, use the certificate's scannedAt timestamp (when the
+  // student actually scanned) instead of Date.now() (when the server
+  // processes it). This allows offline scans to be synced after the window
+  // closes. Grace period: 24 hours max (prevents abuse).
+  const certScannedAt = new Date(signed.certificate.scannedAt);
+  const now = Date.now();
+  const scanAgeMs = now - certScannedAt.getTime();
+  const MAX_OFFLINE_GRACE_MS = 24 * 60 * 60 * 1000; // 24 hours
+  if (scanAgeMs > MAX_OFFLINE_GRACE_MS) {
+    return forbidden(
+      "This scan is too old. Offline scans must be synced within 24 hours.",
+    );
   }
-  if (windows.checkIn.isEnded) {
-    return forbidden("This event's check-in window has closed.");
+
+  // Check the time window using the scannedAt timestamp (not server time).
+  const windows = getEventTimeWindows(event);
+  const scanTime = certScannedAt.getTime();
+  const opensAt = windows.checkIn.opensAt.getTime();
+  const closesAt = windows.checkIn.closesAt.getTime();
+
+  if (scanTime < opensAt) {
+    return forbidden("This event hadn't opened for check-in when you scanned.");
+  }
+  if (scanTime > closesAt) {
+    return forbidden(
+      "This event's check-in window had closed when you scanned.",
+    );
   }
 
   // ---- Event eligibility (strict — mirrors GET /api/events visibility) ----
@@ -196,7 +244,9 @@ export async function POST(req: NextRequest) {
     event.targetProgram === account.program &&
     event.targetSection === account.section;
   if (!isOpenToAll && !isExactMatch) {
-    return forbidden("You are not eligible for this event. Your course and section must match the event's target.");
+    return forbidden(
+      "You are not eligible for this event. Your course and section must match the event's target.",
+    );
   }
 
   // ---- Derive the idempotency key (deterministic, tamper-proof) ----
@@ -229,28 +279,42 @@ export async function POST(req: NextRequest) {
         idempotencyKey,
         tokenBlock: tokenValidation.timeBlock,
         certificateNonce: signed.certificate.nonce,
-        certificateSubFrames: JSON.stringify(signed.certificate.subFrames.map(s => ({ subFrame: s.subFrame }))),
+        certificateSubFrames: JSON.stringify(
+          signed.certificate.subFrames.map((s) => ({ subFrame: s.subFrame })),
+        ),
         deviceFingerprint: signed.certificate.deviceFingerprint,
         scannedAtClient: new Date(signed.certificate.scannedAt),
       },
       include: {
         account: {
-          select: { id: true, fullName: true, studentId: true, program: true, section: true },
+          select: {
+            id: true,
+            fullName: true,
+            studentId: true,
+            program: true,
+            section: true,
+          },
         },
       },
     });
 
     // ---- Realtime notification ----
     notifyAttendance(signed.certificate.eventId, {
-      id: attendance.id, accountId: attendance.account.id,
-      fullName: attendance.account.fullName, studentId: attendance.account.studentId,
-      program: attendance.account.program, section: attendance.account.section,
-      scannedAt: attendance.scannedAt.toISOString(), source: "qr",
+      id: attendance.id,
+      accountId: attendance.account.id,
+      fullName: attendance.account.fullName,
+      studentId: attendance.account.studentId,
+      program: attendance.account.program,
+      section: attendance.account.section,
+      scannedAt: attendance.scannedAt.toISOString(),
+      source: "qr",
     }).catch(() => {});
 
     // ---- Audit log ----
     await audit({
-      actorId: account.id, action: "attendance.timein", targetType: "EventAttendance",
+      actorId: account.id,
+      action: "attendance.timein",
+      targetType: "EventAttendance",
       targetId: attendance.id,
       metadata: {
         eventId: signed.certificate.eventId,
@@ -262,12 +326,15 @@ export async function POST(req: NextRequest) {
       req,
     });
 
-    return NextResponse.json({
-      ok: true,
-      action: "time_in",
-      attendance,
-      message: "Time-in recorded. You're marked present for this event.",
-    }, { status: 201 });
+    return NextResponse.json(
+      {
+        ok: true,
+        action: "time_in",
+        attendance,
+        message: "Time-in recorded. You're marked present for this event.",
+      },
+      { status: 201 },
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     // P2002 = unique constraint violation (race condition or duplicate)
@@ -276,7 +343,8 @@ export async function POST(req: NextRequest) {
         ok: true,
         alreadyPresent: true,
         action: "already_scanned",
-        message: "This QR was already scanned. You are already marked present for this event.",
+        message:
+          "This QR was already scanned. You are already marked present for this event.",
       });
     }
     throw e;

@@ -44,7 +44,13 @@ export async function GET(req: NextRequest) {
   const sort = searchParams.get("sort") || "newest";
   const sortDir: "desc" | "asc" = sort === "oldest" ? "asc" : "desc";
 
-  const where: Record<string, unknown> = { status: "active" };
+  // Allow organizers/admins to see cancelled events via ?includeCancelled=true.
+  const includeCancelled = searchParams.get("includeCancelled") === "true";
+  const where: Record<string, unknown> =
+    includeCancelled &&
+    (account.role === "ADMIN" || account.role === "ORGANIZER")
+      ? { status: { in: ["active", "cancelled"] } }
+      : { status: "active" };
   if (scope) where.scope = scope;
   if (q) {
     // SQLite LIKE is case-insensitive for ASCII by default; for full
@@ -102,35 +108,47 @@ export async function GET(req: NextRequest) {
   // forge valid QR tokens if they had the secret.
   const canSeeSecret = account.role === "ADMIN" || account.role === "ORGANIZER";
 
-  const events = await db.event.findMany({
-    where,
-    orderBy: { scheduledAt: sortDir },
-    take: 200,
-    select: {
-      id: true,
-      title: true,
-      description: true,
-      // eventSecret ONLY for ORGANIZER/ADMIN
-      ...(canSeeSecret ? { eventSecret: true } : {}),
-      ownerId: true,
-      owner: { select: { fullName: true } },
-      scope: true,
-      targetProgram: true,
-      targetSection: true,
-      scheduledAt: true,
-      endsAt: true,
-      checkInOpensAt: true,
-      checkInClosesAt: true,
-      timeOutOpensAt: true,
-      timeOutClosesAt: true,
-      enableTimeOut: true,
-      delegatable: true, delegationEnabled: true,
-      status: true,
-      createdAt: true,
-      updatedAt: true,
-      _count: { select: { attendances: true } },
-    },
-  });
+  // Pagination: default page 1, 100 per page. Cap at 200 to prevent abuse.
+  const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
+  const pageSize = Math.min(
+    200,
+    Math.max(1, parseInt(searchParams.get("pageSize") || "100", 10)),
+  );
+  const skip = (page - 1) * pageSize;
+
+  const [events, totalCount] = await Promise.all([
+    db.event.findMany({
+      where,
+      orderBy: { scheduledAt: sortDir },
+      take: pageSize,
+      skip,
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        ...(canSeeSecret ? { eventSecret: true } : {}),
+        ownerId: true,
+        owner: { select: { fullName: true } },
+        scope: true,
+        targetProgram: true,
+        targetSection: true,
+        scheduledAt: true,
+        endsAt: true,
+        checkInOpensAt: true,
+        checkInClosesAt: true,
+        timeOutOpensAt: true,
+        timeOutClosesAt: true,
+        enableTimeOut: true,
+        delegatable: true,
+        delegationEnabled: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: { select: { attendances: true } },
+      },
+    }),
+    db.event.count({ where }),
+  ]);
 
   // Compute timeStatus and filter out ended events (unless includeEnded=true
   // or the client explicitly requested ended/all via ?status=).
@@ -163,13 +181,20 @@ export async function GET(req: NextRequest) {
   // Flag for the frontend: does this student need to complete their profile
   // (program + section) before they can see course-specific events?
   const needsProfile =
-    account.role === "USER" && studentNeedsProfile(account.program, account.section);
+    account.role === "USER" &&
+    studentNeedsProfile(account.program, account.section);
 
   return NextResponse.json({
     events: eventsWithStatus,
     needsProfile,
     userProgram: account.program,
     userSection: account.section,
+    pagination: {
+      page,
+      pageSize,
+      total: totalCount,
+      totalPages: Math.ceil(totalCount / pageSize),
+    },
   });
 }
 
@@ -181,7 +206,8 @@ export async function POST(req: NextRequest) {
 
   const body = await parseBody(req);
   const parsed = createEventSchema.safeParse(body);
-  if (!parsed.success) return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
+  if (!parsed.success)
+    return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
   const d = parsed.data;
 
   if (new Date(d.scheduledAt) < new Date()) {
@@ -191,14 +217,20 @@ export async function POST(req: NextRequest) {
   // Organizers can only target their own program/section.
   // Admins can target any.
   // Departmental events clear program/section (applies to everyone).
-  let targetProgram = d.scope === "departmental" ? null : (d.targetProgram ?? null);
-  let targetSection = d.scope === "departmental" ? null : (d.targetSection ?? null);
+  let targetProgram =
+    d.scope === "departmental" ? null : (d.targetProgram ?? null);
+  let targetSection =
+    d.scope === "departmental" ? null : (d.targetSection ?? null);
   if (account.role === "ORGANIZER" && d.scope !== "departmental") {
     if (targetProgram && account.program && targetProgram !== account.program) {
-      return forbidden(`You can only create events for the ${account.program} program.`);
+      return forbidden(
+        `You can only create events for the ${account.program} program.`,
+      );
     }
     if (targetSection && account.section && targetSection !== account.section) {
-      return forbidden(`You can only create events for section ${account.section}.`);
+      return forbidden(
+        `You can only create events for section ${account.section}.`,
+      );
     }
     // Default to the organizer's own program/section if not specified
     if (!targetProgram && account.program) targetProgram = account.program;
@@ -216,17 +248,22 @@ export async function POST(req: NextRequest) {
       endsAt: d.endsAt ? new Date(d.endsAt) : null,
       checkInOpensAt: d.checkInOpensAt ? new Date(d.checkInOpensAt) : null,
       checkInClosesAt: d.checkInClosesAt ? new Date(d.checkInClosesAt) : null,
-      // QR delegation: defaults to true if not specified
+      enableTimeOut: d.enableTimeOut ?? false,
+      timeOutOpensAt: d.timeOutOpensAt ? new Date(d.timeOutOpensAt) : null,
+      timeOutClosesAt: d.timeOutClosesAt ? new Date(d.timeOutClosesAt) : null,
       delegatable: d.delegatable ?? true,
-      // Admin-controlled delegation: defaults to false (disabled)
       delegationEnabled: d.delegationEnabled ?? false,
       ownerId: account.id,
     },
   });
 
   await audit({
-    actorId: account.id, action: "event.create", targetType: "Event",
-    targetId: event.id, metadata: { title: event.title }, req,
+    actorId: account.id,
+    action: "event.create",
+    targetType: "Event",
+    targetId: event.id,
+    metadata: { title: event.title },
+    req,
   });
 
   return NextResponse.json(event, { status: 201 });

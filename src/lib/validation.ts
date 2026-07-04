@@ -153,6 +153,10 @@ const eventBaseSchema = z.object({
   endsAt: z.string().datetime().optional().nullable(),
   checkInOpensAt: z.string().datetime().optional().nullable(),
   checkInClosesAt: z.string().datetime().optional().nullable(),
+  // Time-out feature: when enabled, students can scan to time out after class.
+  enableTimeOut: z.boolean().optional(),
+  timeOutOpensAt: z.string().datetime().optional().nullable(),
+  timeOutClosesAt: z.string().datetime().optional().nullable(),
   // QR delegation: when true, other organizers in the same program can
   // project this event's QR code (GET /api/events/[id]/secret).
   delegatable: z.boolean().optional(),

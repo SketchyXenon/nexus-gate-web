@@ -75,29 +75,43 @@ export async function GET(_req: NextRequest) {
   // Organizer/Admin dashboard.
   const eventWhere =
     account.role === "ORGANIZER" ? { ownerId: account.id } : {};
-  const [totalStudents, totalEvents, totalScans, totalOverrides] =
+  const attendanceWhere =
+    account.role === "ORGANIZER" ? { event: { ownerId: account.id } } : {};
+  const overrideWhere =
+    account.role === "ORGANIZER" ? { adminId: account.id } : {};
+
+  // Run all counts + recent events in parallel for faster dashboard load.
+  const [totalStudents, totalEvents, totalScans, totalOverrides, recentEvents] =
     await Promise.all([
       db.authorizedStudent.count(),
       db.event.count({ where: { ...eventWhere, status: "active" } }),
-      db.eventAttendance.count({
-        where:
-          account.role === "ORGANIZER"
-            ? { event: { ownerId: account.id } }
-            : {},
-      }),
-      db.attendanceOverride.count({
-        where: account.role === "ORGANIZER" ? { adminId: account.id } : {},
+      db.eventAttendance.count({ where: attendanceWhere }),
+      db.attendanceOverride.count({ where: overrideWhere }),
+      db.event.findMany({
+        where: { ...eventWhere, status: "active" },
+        orderBy: { scheduledAt: "desc" },
+        take: 10,
+        select: {
+          id: true,
+          title: true,
+          scheduledAt: true,
+          endsAt: true,
+          checkInOpensAt: true,
+          checkInClosesAt: true,
+          status: true,
+          targetProgram: true,
+          targetSection: true,
+          scope: true,
+          _count: { select: { attendances: true } },
+          owner: { select: { fullName: true } },
+        },
       }),
     ]);
 
-  const recentEvents = await db.event.findMany({
-    where: { ...eventWhere, status: "active" },
-    orderBy: { scheduledAt: "desc" },
-    take: 10,
-    include: {
-      _count: { select: { attendances: true } },
-      owner: { select: { fullName: true } },
-    },
+  // Filter recentEvents to only show live + upcoming (not ended).
+  const liveOrUpcomingEvents = recentEvents.filter((e) => {
+    const ts = getTimeStatus(e);
+    return ts === "live" || ts === "upcoming";
   });
 
   const programGroups = await db.authorizedStudent.groupBy({
@@ -121,7 +135,7 @@ export async function GET(_req: NextRequest) {
   return NextResponse.json({
     user: account,
     stats: { totalStudents, totalEvents, totalScans, totalOverrides },
-    recentEvents: recentEvents.map((e) => {
+    recentEvents: liveOrUpcomingEvents.map((e) => {
       return {
         id: e.id,
         title: e.title,

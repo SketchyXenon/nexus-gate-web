@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { badRequest, forbidden, notFound, parseBody, requireAuth } from "@/lib/api";
+import {
+  badRequest,
+  forbidden,
+  notFound,
+  parseBody,
+  requireAuth,
+} from "@/lib/api";
 import { updateEventSchema } from "@/lib/validation";
 import { audit } from "@/lib/audit";
 
@@ -38,7 +44,8 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       timeOutOpensAt: true,
       timeOutClosesAt: true,
       enableTimeOut: true,
-      delegatable: true, delegationEnabled: true,
+      delegatable: true,
+      delegationEnabled: true,
       status: true,
       createdAt: true,
       updatedAt: true,
@@ -60,7 +67,8 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       !!event.targetSection &&
       event.targetProgram === account.program &&
       event.targetSection === account.section;
-    if (!isOpenToAll && !isExactMatch) return forbidden("This event isn't available to you");
+    if (!isOpenToAll && !isExactMatch)
+      return forbidden("This event isn't available to you");
   }
 
   return NextResponse.json(event);
@@ -81,7 +89,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 
   const body = await parseBody(req);
   const parsed = updateEventSchema.safeParse(body);
-  if (!parsed.success) return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
+  if (!parsed.success)
+    return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
   const d = parsed.data;
 
   // Prevent setting scheduledAt to a past date
@@ -93,10 +102,20 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   let targetProgram = d.targetProgram;
   let targetSection = d.targetSection;
   if (account.role === "ORGANIZER") {
-    if (targetProgram !== undefined && targetProgram && account.program && targetProgram !== account.program) {
+    if (
+      targetProgram !== undefined &&
+      targetProgram &&
+      account.program &&
+      targetProgram !== account.program
+    ) {
       return forbidden(`You can only target the ${account.program} program.`);
     }
-    if (targetSection !== undefined && targetSection && account.section && targetSection !== account.section) {
+    if (
+      targetSection !== undefined &&
+      targetSection &&
+      account.section &&
+      targetSection !== account.section
+    ) {
       return forbidden(`You can only target section ${account.section}.`);
     }
   }
@@ -116,18 +135,56 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       ...(d.scope !== undefined ? { scope: d.scope } : {}),
       ...(targetProgram !== undefined ? { targetProgram } : {}),
       ...(targetSection !== undefined ? { targetSection } : {}),
-      ...(d.scheduledAt !== undefined ? { scheduledAt: new Date(d.scheduledAt) } : {}),
-      ...(d.endsAt !== undefined ? { endsAt: d.endsAt ? new Date(d.endsAt) : null } : {}),
-      ...(d.checkInOpensAt !== undefined ? { checkInOpensAt: d.checkInOpensAt ? new Date(d.checkInOpensAt) : null } : {}),
-      ...(d.checkInClosesAt !== undefined ? { checkInClosesAt: d.checkInClosesAt ? new Date(d.checkInClosesAt) : null } : {}),
+      ...(d.scheduledAt !== undefined
+        ? { scheduledAt: new Date(d.scheduledAt) }
+        : {}),
+      ...(d.endsAt !== undefined
+        ? { endsAt: d.endsAt ? new Date(d.endsAt) : null }
+        : {}),
+      ...(d.checkInOpensAt !== undefined
+        ? {
+            checkInOpensAt: d.checkInOpensAt
+              ? new Date(d.checkInOpensAt)
+              : null,
+          }
+        : {}),
+      ...(d.checkInClosesAt !== undefined
+        ? {
+            checkInClosesAt: d.checkInClosesAt
+              ? new Date(d.checkInClosesAt)
+              : null,
+          }
+        : {}),
+      ...(d.enableTimeOut !== undefined
+        ? { enableTimeOut: d.enableTimeOut }
+        : {}),
+      ...(d.timeOutOpensAt !== undefined
+        ? {
+            timeOutOpensAt: d.timeOutOpensAt
+              ? new Date(d.timeOutOpensAt)
+              : null,
+          }
+        : {}),
+      ...(d.timeOutClosesAt !== undefined
+        ? {
+            timeOutClosesAt: d.timeOutClosesAt
+              ? new Date(d.timeOutClosesAt)
+              : null,
+          }
+        : {}),
       ...(d.delegatable !== undefined ? { delegatable: d.delegatable } : {}),
-      ...(d.delegationEnabled !== undefined ? { delegationEnabled: d.delegationEnabled } : {}),
+      ...(d.delegationEnabled !== undefined
+        ? { delegationEnabled: d.delegationEnabled }
+        : {}),
     },
   });
 
   await audit({
-    actorId: account.id, action: "event.update", targetType: "Event",
-    targetId: updated.id, req,
+    actorId: account.id,
+    action: "event.update",
+    targetType: "Event",
+    targetId: updated.id,
+    req,
   });
 
   return NextResponse.json(updated);
@@ -158,18 +215,28 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
     }
     await db.event.delete({ where: { id: Number(id) } });
     await audit({
-      actorId: account.id, action: "event.hard_delete", targetType: "Event",
-      targetId: Number(id), metadata: { title: event.title }, req,
+      actorId: account.id,
+      action: "event.hard_delete",
+      targetType: "Event",
+      targetId: Number(id),
+      metadata: { title: event.title },
+      req,
     });
     return NextResponse.json({ ok: true, deleted: true });
   }
 
   // Soft delete — marks as cancelled, preserves attendance records
-  await db.event.update({ where: { id: Number(id) }, data: { status: "cancelled" } });
+  await db.event.update({
+    where: { id: Number(id) },
+    data: { status: "cancelled" },
+  });
 
   await audit({
-    actorId: account.id, action: "event.cancel", targetType: "Event",
-    targetId: Number(id), req,
+    actorId: account.id,
+    action: "event.cancel",
+    targetType: "Event",
+    targetId: Number(id),
+    req,
   });
 
   return NextResponse.json({ ok: true });
