@@ -201,6 +201,7 @@ export const useRegister = () =>
         email: string;
         message: string;
         whitelisted?: boolean;
+        needsEmailConfirmation?: boolean;
       }>("/api/auth/register", {
         method: "POST",
         body: JSON.stringify(vars),
