@@ -677,7 +677,7 @@ export const useDashboard = () =>
         sectionCounts?: Record<string, number>;
         needsProfile?: boolean;
       }>("/api/dashboard"),
-    staleTime: 10_000,
+    staleTime: 30_000,
   });
 
 // ---------------- Audit logs ----------------

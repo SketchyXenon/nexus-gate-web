@@ -5,30 +5,13 @@ import { getTimeStatus, getEventTimeWindow } from "@/lib/event-time";
 import { studentNeedsProfile } from "@/lib/event-visibility";
 
 // GET /api/dashboard
+// Short cache to reduce DB load on repeated page loads (30s stale-while-revalidate).
 export async function GET(_req: NextRequest) {
   const res = await requireAuth();
   if ("error" in res) return res.error;
   const { account } = res;
 
   if (account.role === "USER") {
-    // Use count() instead of take:50 + .length for an accurate total.
-    const totalAttended = await db.eventAttendance.count({
-      where: { accountId: account.id },
-    });
-
-    // Recent attendances (for the list display, limited to 50).
-    const attendances = await db.eventAttendance.findMany({
-      where: { accountId: account.id },
-      orderBy: { scannedAt: "desc" },
-      take: 50,
-      include: {
-        event: {
-          select: { id: true, title: true, scheduledAt: true, scope: true },
-        },
-      },
-    });
-
-    // Eligible events: only LIVE or UPCOMING (not ended).
     const hasProgramAndSection = !!account.program && !!account.section;
     const eligibleBase = hasProgramAndSection
       ? {
@@ -44,17 +27,35 @@ export async function GET(_req: NextRequest) {
           targetSection: null,
         };
 
-    const allEligibleEvents = await db.event.findMany({
-      where: eligibleBase,
-      select: {
-        id: true,
-        scheduledAt: true,
-        endsAt: true,
-        checkInOpensAt: true,
-        checkInClosesAt: true,
-        status: true,
-      },
-    });
+    // Run all 3 queries in parallel (was 3 sequential awaits).
+    const [totalAttended, attendances, allEligibleEvents] = await Promise.all([
+      db.eventAttendance.count({ where: { accountId: account.id } }),
+      db.eventAttendance.findMany({
+        where: { accountId: account.id },
+        orderBy: { scannedAt: "desc" },
+        take: 50,
+        select: {
+          id: true,
+          scannedAt: true,
+          timeOutAt: true,
+          source: true,
+          event: {
+            select: { id: true, title: true, scheduledAt: true, scope: true },
+          },
+        },
+      }),
+      db.event.findMany({
+        where: eligibleBase,
+        select: {
+          id: true,
+          scheduledAt: true,
+          endsAt: true,
+          checkInOpensAt: true,
+          checkInClosesAt: true,
+          status: true,
+        },
+      }),
+    ]);
 
     // Filter out ended events using the shared time-window helper.
     const liveOrUpcoming = allEligibleEvents.filter((e) => {
@@ -64,12 +65,17 @@ export async function GET(_req: NextRequest) {
 
     const needsProfile = studentNeedsProfile(account.program, account.section);
 
-    return NextResponse.json({
+    const userRes = NextResponse.json({
       user: account,
       stats: { totalAttended, eligibleEvents: liveOrUpcoming.length },
       attendances,
       needsProfile,
     });
+    userRes.headers.set(
+      "Cache-Control",
+      "private, no-cache, stale-while-revalidate=30",
+    );
+    return userRes;
   }
 
   // Organizer/Admin dashboard.
@@ -132,7 +138,7 @@ export async function GET(_req: NextRequest) {
     sectionCounts[key] = g._count;
   }
 
-  return NextResponse.json({
+  const adminRes = NextResponse.json({
     user: account,
     stats: { totalStudents, totalEvents, totalScans, totalOverrides },
     recentEvents: liveOrUpcomingEvents.map((e) => {
@@ -151,4 +157,9 @@ export async function GET(_req: NextRequest) {
     programCounts,
     sectionCounts,
   });
+  adminRes.headers.set(
+    "Cache-Control",
+    "private, no-cache, stale-while-revalidate=30",
+  );
+  return adminRes;
 }
