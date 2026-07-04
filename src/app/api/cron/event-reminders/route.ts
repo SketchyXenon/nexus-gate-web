@@ -10,19 +10,32 @@ import { timingSafeCompareHex } from "@/lib/timing-safe";
 
 function checkCronAuth(req: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return false;
+  if (!cronSecret) {
+    console.error(
+      "[cron] CRON_SECRET env var is not set - refusing to authenticate.",
+    );
+    return false;
+  }
 
   // 1. Bearer header (Vercel Cron, curl).
   const authHeader = req.headers.get("authorization");
   if (authHeader && authHeader.startsWith("Bearer ")) {
-    return timingSafeCompareHex(authHeader.slice(7), cronSecret);
+    const token = authHeader.slice(7);
+    if (token.length === cronSecret.length) {
+      return timingSafeCompareHex(token, cronSecret);
+    }
   }
 
   // 2. ?secret= query param (cron-job.org and other external cron services).
   const url = new URL(req.url);
   const querySecret = url.searchParams.get("secret");
   if (querySecret) {
-    return timingSafeCompareHex(querySecret, cronSecret);
+    if (querySecret.length === cronSecret.length) {
+      return timingSafeCompareHex(querySecret, cronSecret);
+    }
+    console.warn(
+      `[cron] query secret length mismatch: got ${querySecret.length}, expected ${cronSecret.length}`,
+    );
   }
 
   return false;

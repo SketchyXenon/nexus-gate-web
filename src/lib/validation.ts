@@ -15,26 +15,27 @@ export const emailSchema = z
   .email("Enter a valid email address")
   .max(255);
 
-// Basic password schema — enforces the minimum complexity rules.
-// Used by the registration schema (where we want to let users register
-// with a "Good" password but not require "Strong").
+// Password schema — minimum standard: 8+ chars with uppercase, lowercase,
+// number, and special character. Enforced server-side (cannot be bypassed).
 export const passwordSchema = z
   .string()
   .min(8, "Password must be at least 8 characters")
   .max(128, "Password is too long")
   .regex(/[A-Z]/, "Include at least one uppercase letter")
   .regex(/[a-z]/, "Include at least one lowercase letter")
-  .regex(/[0-9]/, "Include at least one number");
+  .regex(/[0-9]/, "Include at least one number")
+  .regex(
+    /[^A-Za-z0-9]/,
+    "Include at least one special character (!@#$%^&*...)",
+  );
 
 // STRONG password schema — used by the CHANGE PASSWORD route.
 // Runs the shared scorePassword() scorer on the SERVER and rejects
-// any password scoring below MIN_PASSWORD_SCORE (4). This cannot be
-// bypassed by client modifications — the server re-runs the exact
-// same check and returns "Password is not strong enough."
+// any password scoring below MIN_PASSWORD_SCORE (4).
 export const strongPasswordSchema = passwordSchema.refine(
   (pw) => scorePassword(pw).passes,
   {
-    message: `Password is not strong enough. Use 8+ characters with uppercase, lowercase, a number, and a special character (or 12+ characters).`,
+    message: `Password is not strong enough. Use 12+ characters with a mix of uppercase, lowercase, numbers, and special characters.`,
   },
 );
 

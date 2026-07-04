@@ -1,21 +1,30 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 
+// Cache the settings response for 30 seconds (reduces DB load on page loads).
+export const revalidate = 30;
+
 export async function GET() {
   try {
     const settings = await db.setting.findMany();
     const settingsMap: Record<string, string> = {};
     for (const s of settings) settingsMap[s.key] = s.value;
-    return NextResponse.json({
+    const res = NextResponse.json({
       maintenanceMode: settingsMap.maintenance_mode === "true",
-      maintenanceMessage: settingsMap.maintenance_message || "The system is under maintenance. Please check back later.",
+      maintenanceMessage:
+        settingsMap.maintenance_message ||
+        "The system is under maintenance. Please check back later.",
     });
+    res.headers.set(
+      "Cache-Control",
+      "public, s-maxage=30, stale-while-revalidate=60",
+    );
+    return res;
   } catch {
-    // If the database isn't connected (e.g. missing DATABASE_URL on Vercel),
-    // return defaults instead of crashing the page.
     return NextResponse.json({
       maintenanceMode: false,
-      maintenanceMessage: "The system is under maintenance. Please check back later.",
+      maintenanceMessage:
+        "The system is under maintenance. Please check back later.",
     });
   }
 }

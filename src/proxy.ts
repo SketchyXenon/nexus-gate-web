@@ -5,11 +5,29 @@ import { createServerClient } from "@supabase/ssr";
 export async function proxy(request: NextRequest) {
   const response = NextResponse.next();
 
-  // Refresh the Supabase Auth session on every request.
-  // Wrapped in a timeout so an unreachable Supabase doesn't block all requests.
+  // Refresh the Supabase Auth session, but only on routes that need auth.
+  // Skipping public routes avoids a network call to Supabase on every request.
+  const path = request.nextUrl.pathname;
+  const isAuthRoute =
+    path.startsWith("/api/auth/") ||
+    path.startsWith("/api/accounts") ||
+    path.startsWith("/api/profile") ||
+    path.startsWith("/api/events") ||
+    path.startsWith("/api/attendance") ||
+    path.startsWith("/api/dashboard") ||
+    path.startsWith("/api/notifications") ||
+    path.startsWith("/api/whitelist") ||
+    path.startsWith("/api/audit-logs") ||
+    path.startsWith("/api/admin");
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (supabaseUrl && supabaseKey) {
+  // Skip if no Supabase config, not an auth route, or the request has no
+  // session cookie (no point refreshing a session that doesn't exist).
+  const hasSessionCookie =
+    request.cookies.get("sb-access-token") ||
+    request.cookies.get("__Secure-sb-access-token");
+  if (supabaseUrl && supabaseKey && isAuthRoute && hasSessionCookie) {
     try {
       const supabase = createServerClient(supabaseUrl, supabaseKey, {
         cookies: {
@@ -26,7 +44,9 @@ export async function proxy(request: NextRequest) {
       });
       await Promise.race([
         supabase.auth.getSession(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("timeout")), 1500),
+        ),
       ]);
     } catch {
       // Supabase unreachable — skip session refresh, let the request proceed.
@@ -69,7 +89,9 @@ export async function proxy(request: NextRequest) {
     //   - X-Forwarded-Host: comma-separated chain of original client hosts
     //     (added by Caddy/nginx when proxying)
     const directHost = (request.headers.get("host") || "").toLowerCase();
-    const forwardedHostRaw = (request.headers.get("x-forwarded-host") || "").toLowerCase();
+    const forwardedHostRaw = (
+      request.headers.get("x-forwarded-host") || ""
+    ).toLowerCase();
     const forwardedHosts = forwardedHostRaw
       .split(",")
       .map((h) => h.trim())
@@ -81,7 +103,13 @@ export async function proxy(request: NextRequest) {
     // The configured production URL (host + hostname)
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
     const appUrlHost = appUrl
-      ? (() => { try { return new URL(appUrl).host.toLowerCase(); } catch { return null; } })()
+      ? (() => {
+          try {
+            return new URL(appUrl).host.toLowerCase();
+          } catch {
+            return null;
+          }
+        })()
       : null;
     const appUrlHostname = appUrlHost ? appUrlHost.split(":")[0] : null;
 
@@ -99,7 +127,10 @@ export async function proxy(request: NextRequest) {
         if (allHostnames.includes(originHostname)) return true;
 
         // 3. Match the configured NEXT_PUBLIC_APP_URL (production canonical URL)
-        if (appUrlHost && (originHost === appUrlHost || originHostname === appUrlHostname)) {
+        if (
+          appUrlHost &&
+          (originHost === appUrlHost || originHostname === appUrlHostname)
+        ) {
           return true;
         }
 
@@ -107,7 +138,10 @@ export async function proxy(request: NextRequest) {
         //    (The previous code gated this on `!appUrlHost`, which was never
         //    true because NEXT_PUBLIC_APP_URL is always set — so the dev
         //    fallback was dead code. Now it keys off NODE_ENV instead.)
-        if (isDev && (originHostname === "localhost" || originHostname === "127.0.0.1")) {
+        if (
+          isDev &&
+          (originHostname === "localhost" || originHostname === "127.0.0.1")
+        ) {
           return true;
         }
 
@@ -130,14 +164,14 @@ export async function proxy(request: NextRequest) {
     if (origin && !isSameOrigin(origin)) {
       return NextResponse.json(
         { error: "Cross-site requests are not allowed.", code: "CSRF_BLOCKED" },
-        { status: 403 }
+        { status: 403 },
       );
     }
     // Fallback: if Origin is absent, check Referer.
     if (!origin && referer && !isSameOrigin(referer)) {
       return NextResponse.json(
         { error: "Cross-site requests are not allowed.", code: "CSRF_BLOCKED" },
-        { status: 403 }
+        { status: 403 },
       );
     }
   }
@@ -147,7 +181,9 @@ export async function proxy(request: NextRequest) {
   // Restricted connect-src to 'self' only (was ws: wss: which allowed any WS origin).
   // In dev: relax frame-ancestors so preview panels work.
   // In production: strict 'none' to prevent clickjacking.
-  const cspFrameAncestors = isDev ? "frame-ancestors *" : "frame-ancestors 'none'";
+  const cspFrameAncestors = isDev
+    ? "frame-ancestors *"
+    : "frame-ancestors 'none'";
   response.headers.set(
     "Content-Security-Policy",
     [
@@ -162,7 +198,7 @@ export async function proxy(request: NextRequest) {
       "base-uri 'self'",
       "form-action 'self'",
       "object-src 'none'",
-    ].join("; ")
+    ].join("; "),
   );
 
   // Prevent clickjacking — in dev allow same-origin framing (preview panels),
@@ -179,13 +215,13 @@ export async function proxy(request: NextRequest) {
   // Only meaningful over HTTPS; harmless on localhost HTTP dev.
   response.headers.set(
     "Strict-Transport-Security",
-    "max-age=31536000; includeSubDomains; preload"
+    "max-age=31536000; includeSubDomains; preload",
   );
 
   // Permissions policy — disable unnecessary browser features
   response.headers.set(
     "Permissions-Policy",
-    "camera=(self), microphone=(), geolocation=(), payment=()"
+    "camera=(self), microphone=(), geolocation=(), payment=()",
   );
 
   // XSS protection — set to 0 (modern browsers use CSP; old IE XSS Auditor was flawed)

@@ -6,7 +6,6 @@ import { checkRateLimit, badRequest } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import {
   createSupabaseAdminClient,
-  createSupabaseServerClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
 
@@ -187,23 +186,13 @@ export async function POST(req: NextRequest) {
     req,
   }).catch(() => {});
 
-  // Set the Supabase session cookie SERVER-SIDE (not in the JSON body).
-  // Returning tokens in JSON breaks the httpOnly property - any XSS could
-  // steal them from the fetch response. Setting via the cookie-based client
-  // keeps the tokens in an httpOnly cookie that JS can't read.
-  const cookieClient = await createSupabaseServerClient();
-  const { error: setSessionError } = await cookieClient.auth.setSession({
-    access_token: sessionData.session.access_token,
-    refresh_token: sessionData.session.refresh_token,
-  });
-  if (setSessionError) {
-    console.error("[passkey] setSession failed:", setSessionError.message);
-    return failWithCookieDelete(
-      { error: "Could not establish session.", code: "SESSION_FAILED" },
-      400,
-    );
-  }
-
+  // Set the Supabase session cookies directly on the response.
+  // We can't use createSupabaseServerClient().auth.setSession() here because
+  // it tries to set cookies via next/headers cookies().set(), which can fail
+  // in certain contexts. Instead, we set the cookies manually with the same
+  // names + options that @supabase/ssr uses.
+  const isProduction = process.env.NODE_ENV === "production";
+  const session = sessionData.session;
   const response = NextResponse.json({
     ok: true,
     account: {
@@ -217,6 +206,32 @@ export async function POST(req: NextRequest) {
       section: verifiedAccount.section,
     },
   });
+
+  // Set the Supabase auth session cookies (same names @supabase/ssr uses).
+  const cookiePrefix = isProduction ? "__Secure-" : "";
+  const cookieOpts = {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: isProduction,
+    path: "/",
+    maxAge: 60 * 60 * 24 * 7, // 7 days (matches Supabase default)
+  };
+  response.cookies.set(
+    `${cookiePrefix}sb-access-token`,
+    session.access_token,
+    cookieOpts,
+  );
+  response.cookies.set(
+    `${cookiePrefix}sb-refresh-token`,
+    session.refresh_token,
+    cookieOpts,
+  );
+  // Also set the non-prefixed version for dev compatibility.
+  if (isProduction) {
+    response.cookies.set("sb-access-token", session.access_token, cookieOpts);
+    response.cookies.set("sb-refresh-token", session.refresh_token, cookieOpts);
+  }
+
   response.cookies.delete("ng_passkey_challenge");
   return response;
 }
