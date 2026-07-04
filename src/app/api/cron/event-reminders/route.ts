@@ -67,18 +67,27 @@ async function runEventReminders() {
   let notificationsCreated = 0;
 
   for (const event of upcomingEvents) {
-    // Find eligible students (active accounts with matching program/section)
+    // Find eligible students using the SAME strict visibility rule as the
+    // events API: open-to-all OR exact program+section match.
+    // Program-wide events (targetSection=null, targetProgram=set) are NOT
+    // eligible under the strict rule, so we don't notify students for them.
     const where: Record<string, unknown> = {
       role: "USER",
       status: "ACTIVE",
       notificationEnabled: true,
     };
 
-    if (event.targetProgram) {
+    if (event.targetProgram && event.targetSection) {
+      // Exact program + section match.
       where.program = event.targetProgram;
-    }
-    if (event.targetSection) {
       where.section = event.targetSection;
+    } else if (!event.targetProgram && !event.targetSection) {
+      // Open to all — no additional filter.
+    } else {
+      // Program-wide event (targetProgram set, targetSection null) —
+      // under the strict visibility rule, NO student is eligible.
+      // Skip notifications for this event.
+      continue;
     }
 
     const students = await db.account.findMany({
@@ -121,11 +130,19 @@ async function runEventReminders() {
   };
 }
 
-// GET — for Vercel Cron (which can't send POST or custom headers)
+// GET — for Vercel Cron + cron-job.org
 export async function GET(req: NextRequest) {
-  if (!process.env.CRON_SECRET) {
+  const hasSecret = !!process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization");
+  const url = new URL(req.url);
+  const hasQueryParam = url.searchParams.has("secret");
+  console.log(
+    `[cron/event-reminders] GET — CRON_SECRET set: ${hasSecret}, has Auth header: ${!!authHeader}, has ?secret query: ${hasQueryParam}`,
+  );
+
+  if (!hasSecret) {
     console.error(
-      "[cron/event-reminders] CRON_SECRET is not set — refusing to execute.",
+      "[cron/event-reminders] CRON_SECRET is not set - refusing to execute.",
     );
     return NextResponse.json(
       { error: "Service misconfigured" },
@@ -133,17 +150,23 @@ export async function GET(req: NextRequest) {
     );
   }
   if (!checkCronAuth(req)) {
+    console.warn(
+      `[cron/event-reminders] auth failed — header: ${authHeader ? "present" : "absent"}, query: ${hasQueryParam ? "present" : "absent"}`,
+    );
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const result = await runEventReminders();
   return NextResponse.json({ ok: true, ...result });
 }
 
-// POST — for manual invocation (curl with Authorization header)
+// POST — for manual invocation (curl)
 export async function POST(req: NextRequest) {
-  if (!process.env.CRON_SECRET) {
+  const hasSecret = !!process.env.CRON_SECRET;
+  console.log(`[cron/event-reminders] POST — CRON_SECRET set: ${hasSecret}`);
+
+  if (!hasSecret) {
     console.error(
-      "[cron/event-reminders] CRON_SECRET is not set — refusing to execute.",
+      "[cron/event-reminders] CRON_SECRET is not set - refusing to execute.",
     );
     return NextResponse.json(
       { error: "Service misconfigured" },
@@ -151,6 +174,10 @@ export async function POST(req: NextRequest) {
     );
   }
   if (!checkCronAuth(req)) {
+    const authHeader = req.headers.get("authorization");
+    console.warn(
+      `[cron/event-reminders] POST auth failed — header: ${authHeader ? "present" : "absent"}`,
+    );
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const result = await runEventReminders();
