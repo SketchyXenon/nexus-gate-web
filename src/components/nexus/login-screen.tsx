@@ -264,7 +264,7 @@ function AuthScreen({
       const options = await res.json();
 
       const { startAuthentication } = await import("@simplewebauthn/browser");
-      const assertion = await startAuthentication(options);
+      const assertion = await startAuthentication({ optionsJSON: options });
 
       const verifyRes = await fetch("/api/auth/passkey/login-verify", {
         method: "POST",
@@ -1279,5 +1279,3 @@ function NexusLogo({ className }: { className?: string }) {
     </div>
   );
 }
-
-// ---- Google logo icon (removed - Google OAuth disabled) ----

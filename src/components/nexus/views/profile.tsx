@@ -114,7 +114,7 @@ export function ProfileView() {
       const options = await res.json();
 
       const { startRegistration } = await import("@simplewebauthn/browser");
-      const registration = await startRegistration(options);
+      const registration = await startRegistration({ optionsJSON: options });
 
       const verifyRes = await fetch("/api/auth/passkey/register-verify", {
         method: "POST",
