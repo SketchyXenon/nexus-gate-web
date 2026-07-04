@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 // Auth: Bearer header (Vercel Cron) OR ?secret= query param (cron-job.org).
 
 function checkCronAuth(req: NextRequest): boolean {
-  const cronSecret = process.env.CRON_SECRET;
+  const cronSecret = (process.env.CRON_SECRET || "").trim();
   if (!cronSecret) {
     console.error("[cron/event-reminders] CRON_SECRET env var is not set");
     return false;
@@ -17,23 +17,27 @@ function checkCronAuth(req: NextRequest): boolean {
   if (authHeader && authHeader.startsWith("Bearer ")) {
     const token = authHeader.slice(7).trim();
     if (token === cronSecret) return true;
-    console.warn("[cron/event-reminders] Bearer token mismatch");
+    console.warn(
+      `[cron/event-reminders] Bearer mismatch (got len ${token.length}, expected ${cronSecret.length})`,
+    );
   }
 
   // 2. ?secret= query param (cron-job.org).
   const url = new URL(req.url);
-  const querySecret = url.searchParams.get("secret");
+  const querySecret = (url.searchParams.get("secret") || "").trim();
   if (querySecret) {
-    if (querySecret.trim() === cronSecret) return true;
+    if (querySecret === cronSecret) return true;
+    // Log first/last chars to diagnose encoding issues without leaking the full secret.
+    const qStart = querySecret.substring(0, 4);
+    const qEnd = querySecret.substring(querySecret.length - 4);
+    const sStart = cronSecret.substring(0, 4);
+    const sEnd = cronSecret.substring(cronSecret.length - 4);
     console.warn(
-      `[cron/event-reminders] query secret mismatch (got len ${querySecret.length}, expected ${cronSecret.length})`,
+      `[cron/event-reminders] query mismatch: got len ${querySecret.length} (${qStart}...${qEnd}), expected len ${cronSecret.length} (${sStart}...${sEnd})`,
     );
+  } else {
+    console.warn("[cron/event-reminders] no query secret param found");
   }
-
-  // Log what we received for debugging.
-  console.warn(
-    `[cron/event-reminders] auth failed. Header: ${authHeader ? "yes" : "no"}, Query: ${querySecret ? "yes" : "no"}`,
-  );
 
   return false;
 }
