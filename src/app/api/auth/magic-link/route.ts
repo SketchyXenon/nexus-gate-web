@@ -11,7 +11,6 @@ import {
 
 const magicLinkSchema = z.object({
   email: z.string().email().max(255),
-  redirectTo: z.string().trim().url().optional(),
 });
 
 // POST /api/auth/magic-link
@@ -40,7 +39,6 @@ export async function POST(req: NextRequest) {
     });
   }
   const { email } = parsed.data;
-  const redirectTo = parsed.data.redirectTo?.trim() || "";
 
   // Auto-link pre-migration accounts (same logic as forgot-password).
   // Only ACTIVE or PENDING_VERIFICATION - not SUSPENDED (DoS prevention).
@@ -71,21 +69,10 @@ export async function POST(req: NextRequest) {
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  const safeRedirectTo = (() => {
-    if (!redirectTo) return appUrl;
-    try {
-      const candidate = new URL(redirectTo, appUrl);
-      const base = new URL(appUrl);
-      if (candidate.origin !== base.origin) return appUrl;
-      return `${candidate.origin}${candidate.pathname}`;
-    } catch {
-      return appUrl;
-    }
-  })();
   const supabase = await createSupabaseServerClient();
   const { error } = await supabase.auth.signInWithOtp({
     email,
-    options: { emailRedirectTo: safeRedirectTo },
+    options: { emailRedirectTo: appUrl },
   });
   if (error) {
     console.error("[magic-link] signInWithOtp failed:", error.message);

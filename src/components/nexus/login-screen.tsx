@@ -222,11 +222,6 @@ function AuthScreen({
   // Whether the registration requires email confirmation (Supabase sends a link).
   const [needsEmailConfirmation, setNeedsEmailConfirmation] = useState(false);
 
-  function getAuthRedirectTo() {
-    if (typeof window === "undefined") return undefined;
-    return `${window.location.origin}${window.location.pathname}`;
-  }
-
   const login = useLogin();
   const register = useRegister();
   const forgotPassword = useForgotPassword();
@@ -246,7 +241,7 @@ function AuthScreen({
       const res = await fetch("/api/auth/magic-link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, redirectTo: getAuthRedirectTo() }),
+        body: JSON.stringify({ email }),
       });
       if (res.ok) {
         setMagicLinkSent(true);
@@ -413,7 +408,7 @@ function AuthScreen({
     if (Object.keys(e2).length > 0) return;
     setForgotEmail(email);
     forgotPassword.mutate(
-      { email, redirectTo: getAuthRedirectTo() },
+      { email },
       {
         onSuccess: () => {
           setMode("forgot-success");
