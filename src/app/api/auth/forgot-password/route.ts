@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Send the password-reset email via Supabase.
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = req.nextUrl.origin;
   const { error: resetError } = await supabase.auth.resetPasswordForEmail(
     email,
     {

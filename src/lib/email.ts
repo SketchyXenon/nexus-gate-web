@@ -10,6 +10,7 @@
 // ====================================================================
 
 import nodemailer from "nodemailer";
+import { getAppUrl } from "@/lib/app-url";
 
 // ---- HTML escaping for user-supplied content in emails (XSS defense) ----
 function escapeHtml(s: string): string {
@@ -131,11 +132,12 @@ export async function sendWelcomeEmail(
   if (!transport) return;
 
   try {
+    const appUrl = getAppUrl();
     await transport.sendMail({
       from: `"${config.fromName}" <${config.from}>`,
       to,
       subject: "Welcome to Nexus Gate",
-      text: `Hi ${fullName},\n\nYour account is now active. You can sign in at ${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}\n\nIf you have any questions, contact your teacher or the College of Technology office.\n\n— Nexus Gate Team`,
+      text: `Hi ${fullName},\n\nYour account is now active. You can sign in at ${appUrl}\n\nIf you have any questions, contact your teacher or the College of Technology office.\n\n— Nexus Gate Team`,
       html: `
         <div style="font-family: 'Roboto Mono', ui-monospace, monospace; max-width: 480px; margin: 0 auto; padding: 24px; background: #fffef7; border-radius: 12px;">
           <div style="text-align: center; margin-bottom: 24px;">
@@ -146,7 +148,7 @@ export async function sendWelcomeEmail(
             Your account is now active. You can sign in and start checking in to your classes.
           </p>
           <div style="text-align: center; margin: 24px 0;">
-            <a href="${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}" style="display: inline-block; background: #b45309; color: #fff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">
+            <a href="${appUrl}" style="display: inline-block; background: #b45309; color: #fff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">
               Sign in
             </a>
           </div>

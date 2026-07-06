@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Providers } from "@/components/providers";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ServiceWorkerRegister } from "@/components/sw-register";
+import { getAppUrl } from "@/lib/app-url";
 
 // JetBrains Mono — headings and subheadings
 const jetbrains = JetBrains_Mono({
@@ -22,7 +23,7 @@ const roboto = Roboto_Mono({
   weight: ["300", "400", "500", "600"],
 });
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const APP_URL = getAppUrl();
 
 export const metadata: Metadata = {
   title: {

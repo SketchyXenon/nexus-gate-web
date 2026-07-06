@@ -4,6 +4,7 @@ import type { RegistrationResponseJSON } from "@simplewebauthn/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/api";
 import { audit } from "@/lib/audit";
+import { getWebAuthnContext } from "@/lib/webauthn-context";
 
 // POST /api/auth/passkey/register-verify
 // Verifies the WebAuthn registration response and stores the credential.
@@ -38,11 +39,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const rpID = process.env.NEXT_PUBLIC_APP_URL
-    ? new URL(process.env.NEXT_PUBLIC_APP_URL).hostname
-    : "localhost";
-  const expectedOrigin =
-    process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const { rpID, expectedOrigin } = getWebAuthnContext(req);
 
   let verification;
   try {
