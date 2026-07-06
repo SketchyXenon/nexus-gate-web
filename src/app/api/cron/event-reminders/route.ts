@@ -1,46 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { isAuthorizedCronRequest } from "@/lib/cron-auth";
 
 // /api/cron/event-reminders
 // Finds events starting within the next 30 min and creates notifications.
 // Auth: Bearer header (Vercel Cron) OR ?secret= query param (cron-job.org).
-
-function checkCronAuth(req: NextRequest): boolean {
-  const cronSecret = (process.env.CRON_SECRET || "").trim();
-  if (!cronSecret) {
-    console.error("[cron/event-reminders] CRON_SECRET env var is not set");
-    return false;
-  }
-
-  // 1. Bearer header (Vercel Cron, curl).
-  const authHeader = req.headers.get("authorization");
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    const token = authHeader.slice(7).trim();
-    if (token === cronSecret) return true;
-    console.warn(
-      `[cron/event-reminders] Bearer mismatch (got len ${token.length}, expected ${cronSecret.length})`,
-    );
-  }
-
-  // 2. ?secret= query param (cron-job.org).
-  const url = new URL(req.url);
-  const querySecret = (url.searchParams.get("secret") || "").trim();
-  if (querySecret) {
-    if (querySecret === cronSecret) return true;
-    // Log first/last chars to diagnose encoding issues without leaking the full secret.
-    const qStart = querySecret.substring(0, 4);
-    const qEnd = querySecret.substring(querySecret.length - 4);
-    const sStart = cronSecret.substring(0, 4);
-    const sEnd = cronSecret.substring(cronSecret.length - 4);
-    console.warn(
-      `[cron/event-reminders] query mismatch: got len ${querySecret.length} (${qStart}...${qEnd}), expected len ${cronSecret.length} (${sStart}...${sEnd})`,
-    );
-  } else {
-    console.warn("[cron/event-reminders] no query secret param found");
-  }
-
-  return false;
-}
 
 async function runEventReminders() {
   const now = new Date();
@@ -114,7 +78,10 @@ async function runEventReminders() {
 }
 
 export async function GET(req: NextRequest) {
-  if (!checkCronAuth(req)) {
+  if (!isAuthorizedCronRequest(req)) {
+    if (!process.env.CRON_SECRET?.trim()) {
+      console.error("[cron/event-reminders] CRON_SECRET env var is not set");
+    }
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const result = await runEventReminders();
@@ -122,7 +89,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!checkCronAuth(req)) {
+  if (!isAuthorizedCronRequest(req)) {
+    if (!process.env.CRON_SECRET?.trim()) {
+      console.error("[cron/event-reminders] CRON_SECRET env var is not set");
+    }
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const result = await runEventReminders();

@@ -97,6 +97,9 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [feedbackKey, setFeedbackKey] = useState(0);
+  const scanInFlightRef = useRef<boolean>(false);
+  const lastCaptureAtRef = useRef<number>(0);
+  const captureStaleMs = 1750;
 
   // ---- v8: Multi-frame sub-frame collection (Tier 2 liveness) ----
   // The scanner collects sub-frame indices + their client-observed HMACs
@@ -113,6 +116,14 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
   // re-collected within the same time block.
   const scanningLockedRef = useRef<boolean>(false);
 
+  const resetCaptureState = useCallback(() => {
+    subFramesRef.current = new Map();
+    currentBlockRef.current = -1;
+    currentEventIdRef.current = 0;
+    lastCaptureAtRef.current = 0;
+    setScanProgress(0);
+  }, []);
+
   const stopCamera = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
@@ -120,8 +131,11 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
+    scanInFlightRef.current = false;
+    scanningLockedRef.current = false;
+    resetCaptureState();
     setCameraOn(false);
-  }, []);
+  }, [resetCaptureState]);
 
   // ---- v8: Multi-frame sub-frame collection + signed certificate ----
   // Each decoded QR frame is parsed for its sub-frame index + HMAC.
@@ -138,7 +152,22 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
   const handleDecode = useCallback(
     async (raw: string) => {
       // Cooldown lock: ignore scans for 3s after a successful scan.
-      if (scanningLockedRef.current) return;
+      if (scanningLockedRef.current || scanInFlightRef.current) return;
+
+      const now = Date.now();
+      if (
+        lastCaptureAtRef.current &&
+        now - lastCaptureAtRef.current > captureStaleMs &&
+        subFramesRef.current.size > 0 &&
+        subFramesRef.current.size < MIN_SUB_FRAMES
+      ) {
+        resetCaptureState();
+        setFeedbackKey((k) => k + 1);
+        setFeedback({
+          kind: "error",
+          msg: "The scan took too long to finish. Hold the camera steady and try again.",
+        });
+      }
 
       // Parse the v8 token: <eventId>.<timeBlock>.<subFrame>.<subHmac>
       const parts = raw.split(".");
@@ -187,10 +216,9 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
         currentBlockRef.current !== timeBlock ||
         currentEventIdRef.current !== tokenEventId
       ) {
+        resetCaptureState();
         currentBlockRef.current = timeBlock;
         currentEventIdRef.current = tokenEventId;
-        subFramesRef.current = new Map();
-        setScanProgress(0);
       }
 
       // Dedup: only add each sub-frame once
@@ -201,6 +229,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
         hmac: subHmac,
         token: raw,
       });
+      lastCaptureAtRef.current = now;
 
       const collected = subFramesRef.current.size;
       setScanProgress(collected);
@@ -232,8 +261,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
       }
       if (!consecutive) {
         // Reset and try again
-        subFramesRef.current = new Map();
-        setScanProgress(0);
+        resetCaptureState();
         setFeedbackKey((k) => k + 1);
         setFeedback({
           kind: "error",
@@ -244,34 +272,30 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
 
       // ---- Create the signed scan certificate ----
       // Ensure the device key is registered before signing
-      await getOrCreateDeviceKeyPair();
-      const fingerprint = await getDeviceFingerprint();
-      if (!fingerprint) {
-        setFeedbackKey((k) => k + 1);
-        setFeedback({
-          kind: "error",
-          msg: "Couldn't access device key. Please refresh the page.",
-        });
-        return;
-      }
-
-      // Use the LAST captured frame's raw token as the certificate token
-      const lastCapture = sortedSubFrames[sortedSubFrames.length - 1];
-
-      // Build the sub-frame captures (index + client-observed HMAC)
-      const subFrameCaptures = sortedSubFrames.map((s) => ({
-        subFrame: s.subFrame,
-        hmac: s.hmac,
-      }));
-
-      const cert = createCertificate({
-        eventId: tokenEventId,
-        token: lastCapture.token,
-        deviceFingerprint: fingerprint,
-        subFrames: subFrameCaptures,
-      });
-
+      scanInFlightRef.current = true;
       try {
+        await getOrCreateDeviceKeyPair();
+        const fingerprint = await getDeviceFingerprint();
+        if (!fingerprint) {
+          throw new Error("Couldn't access device key. Please refresh the page.");
+        }
+
+        // Use the LAST captured frame's raw token as the certificate token
+        const lastCapture = sortedSubFrames[sortedSubFrames.length - 1];
+
+        // Build the sub-frame captures (index + client-observed HMAC)
+        const subFrameCaptures = sortedSubFrames.map((s) => ({
+          subFrame: s.subFrame,
+          hmac: s.hmac,
+        }));
+
+        const cert = createCertificate({
+          eventId: tokenEventId,
+          token: lastCapture.token,
+          deviceFingerprint: fingerprint,
+          subFrames: subFrameCaptures,
+        });
+
         const signed = await signCertificate(cert);
 
         // Enqueue the signed certificate
@@ -282,6 +306,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
 
         // Lock scanning for 3 seconds to prevent duplicate scans.
         scanningLockedRef.current = true;
+        scanInFlightRef.current = false;
         setTimeout(() => {
           scanningLockedRef.current = false;
         }, 3000);
@@ -296,9 +321,10 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
         });
 
         // Reset sub-frame collection for the next scan
-        subFramesRef.current = new Map();
-        setScanProgress(0);
+        resetCaptureState();
       } catch (e) {
+        scanInFlightRef.current = false;
+        resetCaptureState();
         setFeedbackKey((k) => k + 1);
         setFeedback({
           kind: "error",
@@ -309,7 +335,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
         });
       }
     },
-    [queue, user.fullName, online],
+    [queue, user.fullName, online, resetCaptureState],
   );
 
   const scanLoop = useCallback(() => {

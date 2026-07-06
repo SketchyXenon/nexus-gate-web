@@ -54,8 +54,9 @@ export async function POST(req: NextRequest) {
     );
   }
   const { email } = parsed.data;
+  const redirectTo =
+    typeof body?.redirectTo === "string" ? body.redirectTo.trim() : "";
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   const supabase = await createSupabaseServerClient();
 
   // Check if the account exists in our DB but has no Supabase Auth link.
@@ -92,10 +93,22 @@ export async function POST(req: NextRequest) {
   }
 
   // Send the password-reset email via Supabase.
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const safeRedirectTo = (() => {
+    if (!redirectTo) return appUrl;
+    try {
+      const candidate = new URL(redirectTo, appUrl);
+      const base = new URL(appUrl);
+      if (candidate.origin !== base.origin) return appUrl;
+      return `${candidate.origin}${candidate.pathname}`;
+    } catch {
+      return appUrl;
+    }
+  })();
   const { error: resetError } = await supabase.auth.resetPasswordForEmail(
     email,
     {
-      redirectTo: appUrl,
+      redirectTo: safeRedirectTo,
     },
   );
   if (resetError) {

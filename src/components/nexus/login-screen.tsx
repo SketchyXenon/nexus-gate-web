@@ -103,33 +103,56 @@ export function LoginScreen({
   // If we recovered a token, jump straight into the reset flow on mount.
   const [mode, setMode] = useState<Mode>(resetToken ? "reset" : initialMode);
 
-  // Handle Supabase email redirects (?code=...&type=recovery|magiclink|signup).
+  function getAuthRedirectTo() {
+    if (typeof window === "undefined") return undefined;
+    return `${window.location.origin}${window.location.pathname}`;
+  }
+
+  // Handle Supabase email redirects (?code=... or hash-based tokens).
   // recovery: password reset - show the new-password form.
-  // magiclink: passwordless sign-in - just reload (session is set).
-  // signup: email verification - just reload (session is set).
+  // magiclink/signup: passwordless sign-in or verification - reload once
+  // the Supabase session is established.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
+    const url = new URL(window.location.href);
+    const params = url.searchParams;
+    const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
     const code = params.get("code");
-    const type = params.get("type");
-    if (!code) return;
+    const type = params.get("type") || hashParams.get("type");
+    const accessToken = hashParams.get("access_token");
+    const refreshToken = hashParams.get("refresh_token");
+    if (!code && !accessToken) return;
     import("@/lib/supabase-browser").then(({ createSupabaseBrowserClient }) => {
-      createSupabaseBrowserClient()
-        .auth.exchangeCodeForSession(code)
-        .then(() => {
-          window.history.replaceState({}, "", window.location.pathname);
-          if (type === "recovery") {
-            setResetToken("supabase-recovery");
-            setMode("reset");
-          } else {
-            // magiclink or signup - session established, reload to dashboard.
-            window.location.reload();
-          }
+      const supabase = createSupabaseBrowserClient();
+      const finalizeAuth = async () => {
+        window.history.replaceState({}, "", window.location.pathname);
+        if (type === "recovery") {
+          setResetToken("supabase-recovery");
+          setMode("reset");
+        } else {
+          // magiclink or signup - session established, reload to dashboard.
+          window.location.reload();
+        }
+      };
+
+      const authPromise = code
+        ? supabase.auth.exchangeCodeForSession(code)
+        : accessToken && refreshToken
+          ? supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            })
+          : Promise.reject(new Error("Missing auth tokens in redirect URL"));
+
+      authPromise
+        .then(async ({ error }) => {
+          if (error) throw error;
+          await finalizeAuth();
         })
         .catch((e) => {
           // Code exchange failed (expired, already used, cross-device PKCE mismatch).
           // Clean the URL and show a toast so the user isn't stuck on a blank page.
-          console.error("[auth] exchangeCodeForSession failed:", e);
+          console.error("[auth] email redirect handling failed:", e);
           window.history.replaceState({}, "", window.location.pathname);
           toast({
             title: "Link expired",
@@ -223,7 +246,7 @@ function AuthScreen({
       const res = await fetch("/api/auth/magic-link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, redirectTo: getAuthRedirectTo() }),
       });
       if (res.ok) {
         setMagicLinkSent(true);
@@ -390,7 +413,7 @@ function AuthScreen({
     if (Object.keys(e2).length > 0) return;
     setForgotEmail(email);
     forgotPassword.mutate(
-      { email },
+      { email, redirectTo: getAuthRedirectTo() },
       {
         onSuccess: () => {
           setMode("forgot-success");

@@ -1,31 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { isAuthorizedCronRequest } from "@/lib/cron-auth";
 
 // /api/cron/cleanup
 // Removes expired tokens + old notifications.
 // Auth: Bearer header (Vercel Cron) OR ?secret= query param (cron-job.org).
-
-function checkCronAuth(req: NextRequest): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) {
-    console.error("[cron/cleanup] CRON_SECRET env var is not set");
-    return false;
-  }
-
-  const authHeader = req.headers.get("authorization");
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    const token = authHeader.slice(7).trim();
-    if (token === cronSecret) return true;
-  }
-
-  const url = new URL(req.url);
-  const querySecret = url.searchParams.get("secret");
-  if (querySecret) {
-    if (querySecret.trim() === cronSecret) return true;
-  }
-
-  return false;
-}
 
 async function runCleanup() {
   const now = new Date();
@@ -54,7 +33,10 @@ async function runCleanup() {
 }
 
 export async function GET(req: NextRequest) {
-  if (!checkCronAuth(req)) {
+  if (!isAuthorizedCronRequest(req)) {
+    if (!process.env.CRON_SECRET?.trim()) {
+      console.error("[cron/cleanup] CRON_SECRET env var is not set");
+    }
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const result = await runCleanup();
@@ -62,7 +44,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!checkCronAuth(req)) {
+  if (!isAuthorizedCronRequest(req)) {
+    if (!process.env.CRON_SECRET?.trim()) {
+      console.error("[cron/cleanup] CRON_SECRET env var is not set");
+    }
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const result = await runCleanup();

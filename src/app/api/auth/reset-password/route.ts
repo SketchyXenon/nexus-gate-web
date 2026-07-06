@@ -9,6 +9,21 @@ import {
 } from "@/lib/supabase-server";
 import { getCurrentAccountSupabase } from "@/lib/supabase-session";
 
+function decodeJwtPayload(token: string): Record<string, unknown> {
+  const payload = token.split(".")[1];
+  if (!payload) return {};
+  const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(
+    normalized.length + ((4 - (normalized.length % 4)) % 4),
+    "=",
+  );
+  try {
+    return JSON.parse(Buffer.from(padded, "base64").toString("utf-8"));
+  } catch {
+    return {};
+  }
+}
+
 // POST /api/auth/reset-password
 // Sets a new password via Supabase Auth. Requires an active RECOVERY session
 // (established client-side when the user clicks the email link). A regular
@@ -67,12 +82,9 @@ export async function POST(req: NextRequest) {
   // Do NOT accept "otp" - that's a magic-link LOGIN session, not a recovery
   // session. Accepting "otp" would let a stolen magic-link session change
   // the victim's password (temporary compromise becomes persistent takeover).
-  const payload = JSON.parse(
-    Buffer.from(
-      sessionData.session.access_token.split(".")[1],
-      "base64",
-    ).toString("utf-8"),
-  ) as { amr?: Array<{ method: string }> };
+  const payload = decodeJwtPayload(sessionData.session.access_token) as {
+    amr?: Array<{ method: string }>;
+  };
   const amr = payload.amr;
   const isRecoverySession = amr?.some((entry) => entry.method === "recovery");
   if (!isRecoverySession) {

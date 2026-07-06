@@ -210,7 +210,7 @@ export const useRegister = () =>
 
 export const useForgotPassword = () =>
   useMutation({
-    mutationFn: (vars: { email: string }) =>
+    mutationFn: (vars: { email: string; redirectTo?: string }) =>
       api<{ ok: boolean; message: string }>("/api/auth/forgot-password", {
         method: "POST",
         body: JSON.stringify(vars),
