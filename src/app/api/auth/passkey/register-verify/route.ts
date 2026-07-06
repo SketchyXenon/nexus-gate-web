@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
   const { credential } = verification.registrationInfo;
   const stored = JSON.stringify({
     id: credential.id,
-    publicKey: credential.publicKey,
+    publicKey: Buffer.from(credential.publicKey).toString("base64"),
     counter: credential.counter,
     transports: body.response.response?.transports || [],
   });

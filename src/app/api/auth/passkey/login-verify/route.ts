@@ -11,6 +11,35 @@ import {
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
 
+function decodeStoredPublicKey(publicKey: unknown): Uint8Array | null {
+  if (publicKey instanceof Uint8Array) return publicKey;
+  if (typeof publicKey === "string" && publicKey.trim()) {
+    try {
+      return Uint8Array.from(Buffer.from(publicKey.trim(), "base64"));
+    } catch {
+      try {
+        const normalized = publicKey.trim().replace(/-/g, "+").replace(/_/g, "/");
+        return Uint8Array.from(Buffer.from(normalized, "base64"));
+      } catch {
+        return null;
+      }
+    }
+  }
+  if (Array.isArray(publicKey)) {
+    return Uint8Array.from(publicKey.map((n) => Number(n) || 0));
+  }
+  if (publicKey && typeof publicKey === "object") {
+    const entries = Object.entries(publicKey)
+      .filter(([, value]) => typeof value === "number")
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([, value]) => Number(value));
+    if (entries.length > 0) {
+      return Uint8Array.from(entries);
+    }
+  }
+  return null;
+}
+
 // POST /api/auth/passkey/login-verify
 // Verifies the WebAuthn assertion and signs the user in via Supabase.
 // Uses admin.generateLink to get a magic link, extracts the token, and
@@ -77,7 +106,8 @@ export async function POST(req: NextRequest) {
   for (const acc of accounts) {
     try {
       const stored = JSON.parse(acc.passkeyCredential || "{}");
-      if (!stored.publicKey) continue;
+      const publicKey = decodeStoredPublicKey(stored.publicKey);
+      if (!stored.id || !publicKey) continue;
       const verification = await verifyAuthenticationResponse({
         response: body.assertion as AuthenticationResponseJSON,
         expectedChallenge: challenge,
@@ -85,7 +115,7 @@ export async function POST(req: NextRequest) {
         expectedRPID: rpID,
         credential: {
           id: stored.id,
-          publicKey: stored.publicKey,
+          publicKey,
           counter: stored.counter,
           transports: stored.transports,
         },
