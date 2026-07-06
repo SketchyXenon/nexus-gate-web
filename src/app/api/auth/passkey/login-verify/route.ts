@@ -4,6 +4,7 @@ import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { db } from "@/lib/db";
 import { checkRateLimit } from "@/lib/api";
 import { audit } from "@/lib/audit";
+import { getWebAuthnContext } from "@/lib/webauthn-context";
 import {
   createSupabaseAdminClient,
   createSupabaseServerClient,
@@ -46,17 +47,14 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => null);
   if (!body?.assertion) {
+    console.warn("[passkey/login-verify] missing assertion payload");
     return failWithCookieDelete(
       { error: "Missing authentication response.", code: "BAD_REQUEST" },
       400,
     );
   }
 
-  const rpID = process.env.NEXT_PUBLIC_APP_URL
-    ? new URL(process.env.NEXT_PUBLIC_APP_URL).hostname
-    : "localhost";
-  const expectedOrigin =
-    process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const { rpID, expectedOrigin } = getWebAuthnContext(req);
 
   // Find the account that owns this credential by scanning passkey holders.
   const accounts = await db.account.findMany({
@@ -102,11 +100,13 @@ export async function POST(req: NextRequest) {
         break;
       }
     } catch {
+      console.warn("[passkey/login-verify] verification threw for account");
       continue;
     }
   }
 
   if (!verifiedAccount) {
+    console.warn("[passkey/login-verify] no matching passkey credential verified");
     return failWithCookieDelete(
       { error: "Passkey verification failed.", code: "VERIFICATION_FAILED" },
       400,
@@ -119,6 +119,9 @@ export async function POST(req: NextRequest) {
     );
   }
   if (!verifiedAccount.supabaseAuthUid) {
+    console.warn(
+      "[passkey/login-verify] verified account has no Supabase link",
+    );
     return failWithCookieDelete(
       {
         error:

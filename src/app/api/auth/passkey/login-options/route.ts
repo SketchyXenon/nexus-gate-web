@@ -1,19 +1,15 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { generateAuthenticationOptions } from "@simplewebauthn/server";
 import { checkRateLimit } from "@/lib/api";
+import { getWebAuthnContext } from "@/lib/webauthn-context";
 
 // POST /api/auth/passkey/login-options
 // Returns WebAuthn authentication options (userless discoverable credentials).
-export async function POST(req: Request) {
-  const rl = await checkRateLimit(
-    req as unknown as import("next/server").NextRequest,
-    "login",
-  );
+export async function POST(req: NextRequest) {
+  const rl = await checkRateLimit(req, "login");
   if (rl) return rl;
 
-  const rpID = process.env.NEXT_PUBLIC_APP_URL
-    ? new URL(process.env.NEXT_PUBLIC_APP_URL).hostname
-    : "localhost";
+  const { rpID } = getWebAuthnContext(req);
 
   const options = await generateAuthenticationOptions({
     rpID,
@@ -26,6 +22,7 @@ export async function POST(req: Request) {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
+    path: "/",
     maxAge: 120,
   });
   return response;
