@@ -58,7 +58,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: APP_URL,
+    ...(APP_URL ? { url: APP_URL } : {}),
     siteName: "Nexus Gate",
     title: "Nexus Gate — Attendance, simplified.",
     description:
@@ -89,7 +89,7 @@ export const metadata: Metadata = {
     },
   },
   alternates: {
-    canonical: APP_URL,
+    ...(APP_URL ? { canonical: APP_URL } : {}),
   },
   category: "education",
 };
