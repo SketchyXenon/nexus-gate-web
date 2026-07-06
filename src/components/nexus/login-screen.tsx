@@ -103,11 +103,6 @@ export function LoginScreen({
   // If we recovered a token, jump straight into the reset flow on mount.
   const [mode, setMode] = useState<Mode>(resetToken ? "reset" : initialMode);
 
-  function getAuthRedirectTo() {
-    if (typeof window === "undefined") return undefined;
-    return `${window.location.origin}${window.location.pathname}`;
-  }
-
   // Handle Supabase email redirects (?code=... or hash-based tokens).
   // recovery: password reset - show the new-password form.
   // magiclink/signup: passwordless sign-in or verification - reload once
@@ -226,6 +221,11 @@ function AuthScreen({
   const [registeredEmail, setRegisteredEmail] = useState("");
   // Whether the registration requires email confirmation (Supabase sends a link).
   const [needsEmailConfirmation, setNeedsEmailConfirmation] = useState(false);
+
+  function getAuthRedirectTo() {
+    if (typeof window === "undefined") return undefined;
+    return `${window.location.origin}${window.location.pathname}`;
+  }
 
   const login = useLogin();
   const register = useRegister();

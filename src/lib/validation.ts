@@ -113,6 +113,7 @@ export const refreshSchema = z.object({
 // accepts a token + new password.
 export const forgotPasswordSchema = z.object({
   email: emailSchema,
+  redirectTo: z.string().trim().url().optional(),
 });
 
 export const resetPasswordSchema = z.object({

@@ -53,9 +53,7 @@ export async function POST(req: NextRequest) {
       { status: 200 },
     );
   }
-  const { email } = parsed.data;
-  const redirectTo =
-    typeof body?.redirectTo === "string" ? body.redirectTo.trim() : "";
+  const { email, redirectTo } = parsed.data;
 
   const supabase = await createSupabaseServerClient();
 
