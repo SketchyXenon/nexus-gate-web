@@ -11,22 +11,30 @@ import {
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
 
-function decodeStoredPublicKey(publicKey: unknown): Uint8Array | null {
-  if (publicKey instanceof Uint8Array) return publicKey;
+function toFixedArrayBuffer(bytes: Uint8Array<ArrayBufferLike>): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(
+    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+  );
+}
+
+function decodeStoredPublicKey(
+  publicKey: unknown,
+): Uint8Array<ArrayBuffer> | null {
+  if (publicKey instanceof Uint8Array) return toFixedArrayBuffer(publicKey);
   if (typeof publicKey === "string" && publicKey.trim()) {
     try {
-      return Uint8Array.from(Buffer.from(publicKey.trim(), "base64"));
+      return toFixedArrayBuffer(Uint8Array.from(Buffer.from(publicKey.trim(), "base64")));
     } catch {
       try {
         const normalized = publicKey.trim().replace(/-/g, "+").replace(/_/g, "/");
-        return Uint8Array.from(Buffer.from(normalized, "base64"));
+        return toFixedArrayBuffer(Uint8Array.from(Buffer.from(normalized, "base64")));
       } catch {
         return null;
       }
     }
   }
   if (Array.isArray(publicKey)) {
-    return Uint8Array.from(publicKey.map((n) => Number(n) || 0));
+    return toFixedArrayBuffer(Uint8Array.from(publicKey.map((n) => Number(n) || 0)));
   }
   if (publicKey && typeof publicKey === "object") {
     const entries = Object.entries(publicKey)
@@ -34,7 +42,7 @@ function decodeStoredPublicKey(publicKey: unknown): Uint8Array | null {
       .sort(([a], [b]) => Number(a) - Number(b))
       .map(([, value]) => Number(value));
     if (entries.length > 0) {
-      return Uint8Array.from(entries);
+      return toFixedArrayBuffer(Uint8Array.from(entries));
     }
   }
   return null;
