@@ -12,9 +12,9 @@ import {
 } from "@/lib/supabase-server";
 
 function toFixedArrayBuffer(bytes: Uint8Array<ArrayBufferLike>): Uint8Array<ArrayBuffer> {
-  return new Uint8Array(
-    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
-  );
+  const fixed = new Uint8Array(bytes.byteLength);
+  fixed.set(bytes);
+  return fixed;
 }
 
 function decodeStoredPublicKey(
