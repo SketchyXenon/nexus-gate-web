@@ -20,6 +20,16 @@ import { Server } from "socket.io";
 // defaults to localhost and the production Vercel deployment.
 // ====================================================================
 
+// ---- Crash prevention: log but never exit on uncaught errors ----
+// Without this, any uncaught exception kills the service and Render
+// returns 502 until the service restarts (which can take 30+ seconds).
+process.on("uncaughtException", (err) => {
+  console.error("[nexus-gate-realtime] uncaughtException:", err);
+});
+process.on("unhandledRejection", (err) => {
+  console.error("[nexus-gate-realtime] unhandledRejection:", err);
+});
+
 const PORT = Number(process.env.PORT || process.env.IO_PORT || 3003);
 
 // ---- Allowed CORS origins (STRICT — no wildcard) ----
@@ -29,7 +39,7 @@ const PORT = Number(process.env.PORT || process.env.IO_PORT || 3003);
 // IMPORTANT: The Vercel app is at nexus-gate-WEB.vercel.app (with -web).
 const ALLOWED_ORIGINS: string[] = (
   process.env.ALLOWED_ORIGINS ||
-  "https://nexus-gate-web.vercel.app,http://localhost:3000"
+  "https://nexus-gate-web.vercel.app,https://nexus-gate.vercel.app,http://localhost:3000"
 )
   .split(",")
   .map((s) => s.trim())
@@ -57,12 +67,18 @@ function getCorsHeaders(origin: string | undefined): Record<string, string> {
 }
 
 // ---------- shared HTTP handler (runs before socket.io) ----------
+// IMPORTANT: socket.io polling requests (/socket.io/?...) are handled
+// by socket.io's internal middleware, NOT by this handler. But this
+// handler runs FIRST and can set CORS headers that socket.io won't
+// override. So we set CORS headers here for ALL requests, including
+// /socket.io/ polling. This fixes the "No 'Access-Control-Allow-Origin'
+// header is present" error on polling requests.
 const httpServer = createServer(
   async (req: IncomingMessage, res: ServerResponse) => {
     const origin = req.headers.origin;
     const corsHeaders = getCorsHeaders(origin);
 
-    // Set CORS headers (only if origin is allowed)
+    // Set CORS headers on ALL responses (including socket.io polling).
     for (const [key, value] of Object.entries(corsHeaders)) {
       res.setHeader(key, value);
     }
@@ -117,6 +133,8 @@ const httpServer = createServer(
     }
 
     // ---- 404 for everything else (socket.io handles /socket.io/) ----
+    // NOTE: socket.io requests (/socket.io/?EIO=4&transport=polling) are
+    // intercepted by socket.io's middleware BEFORE reaching this 404.
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "not found" }));
   },
@@ -125,15 +143,19 @@ const httpServer = createServer(
 // ---------- socket.io server (browser-facing) ----------
 // SECURITY: CORS restricted to allowed origins only (no wildcard "*").
 // The browser will only be able to connect from pages served by the
-// allowed origins (nexus-gate.vercel.app or localhost:3000).
+// allowed origins (nexus-gate-web.vercel.app or localhost:3000).
 const io = new Server(httpServer, {
   path: "/socket.io/",
   cors: {
     origin: ALLOWED_ORIGINS,
     methods: ["GET", "POST"],
+    credentials: false,
   },
   pingTimeout: 60000,
   pingInterval: 25000,
+  // Allow large Engine.IO payloads (default 1MB can be too small for
+  // some polling responses with many connected clients).
+  maxHttpBufferSize: 1e6,
 });
 
 io.on("connection", (socket) => {
