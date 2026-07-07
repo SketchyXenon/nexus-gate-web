@@ -11,3 +11,5 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: ALLOWED_ORIGINS
+        value: "https://nexus-gate-web.vercel.app,https://nexus-gate.vercel.app,http://localhost:3000"

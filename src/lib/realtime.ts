@@ -3,8 +3,16 @@
 // Fire-and-forget; falls back silently if the mini-service is down.
 // ====================================================================
 
-const REALTIME_URL =
-  process.env.REALTIME_URL || "http://localhost:3003/emit";
+// Normalize the REALTIME_URL: strip trailing slashes, ensure /emit path.
+// Accepts both "https://svc.onrender.com" and "https://svc.onrender.com/emit".
+function resolveRealtimeUrl(): string {
+  const raw = (process.env.REALTIME_URL || "http://localhost:3003/emit").trim();
+  const base = raw.replace(/\/+$/, ""); // strip trailing slash(es)
+  // If the URL already ends with /emit, use it as-is. Otherwise append.
+  return base.endsWith("/emit") ? base : `${base}/emit`;
+}
+
+const REALTIME_URL = resolveRealtimeUrl();
 
 export interface AttendanceEvent {
   id: number;
@@ -19,7 +27,7 @@ export interface AttendanceEvent {
 
 export async function notifyAttendance(
   eventId: number,
-  payload: AttendanceEvent
+  payload: AttendanceEvent,
 ): Promise<void> {
   try {
     await fetch(REALTIME_URL, {

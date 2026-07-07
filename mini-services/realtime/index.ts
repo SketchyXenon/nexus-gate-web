@@ -24,11 +24,12 @@ const PORT = Number(process.env.PORT || process.env.IO_PORT || 3003);
 
 // ---- Allowed CORS origins (STRICT — no wildcard) ----
 // Set ALLOWED_ORIGINS in the environment, e.g.:
-//   ALLOWED_ORIGINS="https://nexus-gate.vercel.app,http://localhost:3000"
+//   ALLOWED_ORIGINS="https://nexus-gate-web.vercel.app,http://localhost:3000"
 // If not set, defaults to the production URL + localhost dev.
+// IMPORTANT: The Vercel app is at nexus-gate-WEB.vercel.app (with -web).
 const ALLOWED_ORIGINS: string[] = (
   process.env.ALLOWED_ORIGINS ||
-  "https://nexus-gate.vercel.app,http://localhost:3000"
+  "https://nexus-gate-web.vercel.app,http://localhost:3000"
 )
   .split(",")
   .map((s) => s.trim())
@@ -48,7 +49,7 @@ function getCorsHeaders(origin: string | undefined): Record<string, string> {
       "Access-Control-Allow-Origin": origin,
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
-      "Vary": "Origin",
+      Vary: "Origin",
     };
   }
   // Origin not allowed — return no CORS headers (browser will block)
@@ -80,12 +81,14 @@ const httpServer = createServer(
     // ---- Health check (no CORS needed — server-to-server) ----
     if (req.method === "GET" && req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        ok: true,
-        service: "nexus-gate-realtime",
-        clients: io.engine.clientsCount,
-        uptime: process.uptime(),
-      }));
+      res.end(
+        JSON.stringify({
+          ok: true,
+          service: "nexus-gate-realtime",
+          clients: io.engine.clientsCount,
+          uptime: process.uptime(),
+        }),
+      );
       return;
     }
 
@@ -116,7 +119,7 @@ const httpServer = createServer(
     // ---- 404 for everything else (socket.io handles /socket.io/) ----
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "not found" }));
-  }
+  },
 );
 
 // ---------- socket.io server (browser-facing) ----------
@@ -157,6 +160,8 @@ httpServer.listen(PORT, () => {
 // ---------- graceful shutdown ----------
 process.on("SIGTERM", () => {
   console.log("[nexus-gate-realtime] SIGTERM received, shutting down...");
-  io.close(() => { httpServer.close(() => process.exit(0)); });
+  io.close(() => {
+    httpServer.close(() => process.exit(0));
+  });
 });
 process.on("SIGINT", () => process.exit(0));
