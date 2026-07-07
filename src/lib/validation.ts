@@ -302,9 +302,21 @@ export const changePasswordSchema = z.object({
 });
 
 // ---- Pagination ----
+// Default pagination schema — caps pageSize at 100 to prevent abuse on
+// list endpoints (accounts, audit-logs, overrides, etc.).
 export const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+// Whitelist pagination schema — allows up to 500 per page. The override
+// page needs to fetch all eligible students for an event in one request
+// (to populate the student dropdown). Department-wide events can have
+// hundreds of students, so the default 100 cap is too low and causes
+// a 400 Bad Request when the client requests pageSize=200.
+export const whitelistPaginationSchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(500).default(50),
 });
 
 export type RegisterInput = z.infer<typeof registerSchema>;

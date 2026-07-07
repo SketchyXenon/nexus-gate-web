@@ -348,12 +348,19 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
         scanInFlightRef.current = false;
         resetCaptureState();
         setFeedbackKey((k) => k + 1);
+        // Detect WebCrypto exportKey errors (stale non-extractable keypair
+        // from an older version of the app). The fix is to clear IndexedDB
+        // and regenerate — but we can't do that automatically without
+        // user consent. Show a clear message instead.
+        const errMsg = e instanceof Error ? e.message : String(e);
+        const isCryptoKeyError =
+          errMsg.includes("key is not extractable") ||
+          errMsg.includes("exportKey");
         setFeedback({
           kind: "error",
-          msg:
-            e instanceof Error
-              ? e.message
-              : "Failed to sign the scan certificate.",
+          msg: isCryptoKeyError
+            ? "Device key issue detected. Please clear your browser data for this site and try again."
+            : errMsg,
         });
       }
     },

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { importWhitelistSchema, paginationSchema } from "@/lib/validation";
+import {
+  importWhitelistSchema,
+  whitelistPaginationSchema,
+} from "@/lib/validation";
 import { badRequest, parseBody, requireAuth } from "@/lib/api";
 import { audit } from "@/lib/audit";
 
@@ -20,7 +23,7 @@ export async function GET(req: NextRequest) {
   if ("error" in res) return res.error;
 
   const { searchParams } = new URL(req.url);
-  const parsed = paginationSchema.safeParse({
+  const parsed = whitelistPaginationSchema.safeParse({
     page: searchParams.get("page") ?? 1,
     pageSize: searchParams.get("pageSize") ?? 50,
   });
@@ -71,26 +74,47 @@ export async function GET(req: NextRequest) {
 
   // ---- Fetch both lists ----
   const [registeredAccounts, pendingStudents] = await Promise.all([
-    statusFilter === "pending" ? [] : db.account.findMany({
-      where: accountWhere,
-      orderBy: [{ program: "asc" }, { section: "asc" }, { fullName: "asc" }],
-      select: {
-        id: true, studentId: true, email: true, fullName: true,
-        program: true, section: true, status: true, year: true,
-        createdAt: true, lastLoginAt: true,
-      },
-    }),
-    statusFilter === "registered" ? [] : db.authorizedStudent.findMany({
-      where: authWhere,
-      orderBy: [{ program: "asc" }, { section: "asc" }, { fullName: "asc" }],
-    }),
+    statusFilter === "pending"
+      ? []
+      : db.account.findMany({
+          where: accountWhere,
+          orderBy: [
+            { program: "asc" },
+            { section: "asc" },
+            { fullName: "asc" },
+          ],
+          select: {
+            id: true,
+            studentId: true,
+            email: true,
+            fullName: true,
+            program: true,
+            section: true,
+            status: true,
+            year: true,
+            createdAt: true,
+            lastLoginAt: true,
+          },
+        }),
+    statusFilter === "registered"
+      ? []
+      : db.authorizedStudent.findMany({
+          where: authWhere,
+          orderBy: [
+            { program: "asc" },
+            { section: "asc" },
+            { fullName: "asc" },
+          ],
+        }),
   ]);
 
   // ---- Get registered studentIds for filtering pending ----
   const registeredIds = new Set(registeredAccounts.map((a) => a.studentId));
 
   // ---- Filter pending: only show those WITHOUT an account ----
-  const trulyPending = pendingStudents.filter((s) => !registeredIds.has(s.studentId));
+  const trulyPending = pendingStudents.filter(
+    (s) => !registeredIds.has(s.studentId),
+  );
 
   // ---- Merge into a unified list ----
   const merged = [
@@ -126,18 +150,28 @@ export async function GET(req: NextRequest) {
       return (a.fullName || "").localeCompare(b.fullName || "");
     }
     // default: program → section → name
-    if (a.program !== b.program) return (a.program || "").localeCompare(b.program || "");
-    if (a.section !== b.section) return (a.section || "").localeCompare(b.section || "");
+    if (a.program !== b.program)
+      return (a.program || "").localeCompare(b.program || "");
+    if (a.section !== b.section)
+      return (a.section || "").localeCompare(b.section || "");
     return a.fullName.localeCompare(b.fullName);
   });
 
   // ---- Paginate ----
   const total = merged.length;
-  const paginated = merged.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
+  const paginated = merged.slice(
+    (page - 1) * pageSize,
+    (page - 1) * pageSize + pageSize,
+  );
 
   return NextResponse.json({
     students: paginated,
-    pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+    },
   });
 }
 
@@ -167,10 +201,19 @@ export async function POST(req: NextRequest) {
     try {
       await db.authorizedStudent.upsert({
         where: { studentId: s.studentId },
-        update: { email: s.email, fullName: s.fullName, program: s.program, section: s.section },
+        update: {
+          email: s.email,
+          fullName: s.fullName,
+          program: s.program,
+          section: s.section,
+        },
         create: {
-          studentId: s.studentId, email: s.email, fullName: s.fullName,
-          program: s.program, section: s.section, activated: false,
+          studentId: s.studentId,
+          email: s.email,
+          fullName: s.fullName,
+          program: s.program,
+          section: s.section,
+          activated: false,
         },
       });
       inserted++;
@@ -180,9 +223,16 @@ export async function POST(req: NextRequest) {
   }
 
   await audit({
-    actorId: account.id, action: "whitelist.import", targetType: "Whitelist",
-    metadata: { inserted, skipped, total: parsed.data.students.length }, req,
+    actorId: account.id,
+    action: "whitelist.import",
+    targetType: "Whitelist",
+    metadata: { inserted, skipped, total: parsed.data.students.length },
+    req,
   });
 
-  return NextResponse.json({ inserted, skipped, total: parsed.data.students.length });
+  return NextResponse.json({
+    inserted,
+    skipped,
+    total: parsed.data.students.length,
+  });
 }

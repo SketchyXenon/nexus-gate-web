@@ -100,13 +100,21 @@ export function OverridesView() {
   // Whitelist (filtered by event's program/section) + existing attendance
   // for the form's selected event — used to compute the "missing students"
   // list shown in the student picker.
+  //
+  // Event targeting logic:
+  //   - Both program + section set  → fetch students matching BOTH
+  //   - Program set, section null   → fetch all students in that program
+  //   - Both null (dept-wide)       → fetch ALL students (no filter)
+  //
+  // pageSize=500 (was 200, which exceeded the old pagination cap of 100
+  // and caused a 400 Bad Request). The whitelist schema now allows up to 500.
+  const isDeptWide = !event?.targetProgram && !event?.targetSection;
   const whitelistQ = useWhitelist({
     program: event?.targetProgram || undefined,
     section: event?.targetSection || undefined,
-    pageSize: 200,
+    pageSize: 500,
     // Only fetch once an event is selected (prevents fetching ALL students
-    // before the organizer picks an event, which was causing a race condition
-    // where the unfiltered list briefly replaced the filtered one).
+    // before the organizer picks an event).
     enabled: effectiveFormEventId != null,
   });
   const whitelist = whitelistQ.data?.students ?? [];
@@ -280,8 +288,9 @@ export function OverridesView() {
             />
             {event && (
               <p className="text-[11px] text-muted-foreground">
-                Showing students in {event.targetProgram ?? "all programs"}
-                {event.targetSection ? `, section ${event.targetSection}` : ""}.
+                {isDeptWide
+                  ? "Department-wide event — showing all students."
+                  : `Showing students in ${event.targetProgram ?? "all programs"}${event.targetSection ? `, section ${event.targetSection}` : ""}.`}
               </p>
             )}
           </div>

@@ -25,7 +25,11 @@
 //   - Asynchronous API (doesn't block the main thread)
 // ====================================================================
 
-import { canonicalizeCertificate, type ScanCertificate, type SignedCertificate } from "@/lib/scan-certificate";
+import {
+  canonicalizeCertificate,
+  type ScanCertificate,
+  type SignedCertificate,
+} from "@/lib/scan-certificate";
 
 const DB_NAME = "nexus_gate_device_keys";
 const DB_VERSION = 1;
@@ -98,9 +102,14 @@ async function computeFingerprint(publicKeyJwk: JsonWebKey): Promise<string> {
   // The JWK `x` field is the raw Ed25519 public key (32 bytes) in base64url.
   // We hash that to get a stable fingerprint.
   const xBytes = base64UrlToBytes(publicKeyJwk.x!);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", xBytes.buffer as ArrayBuffer);
+  const hashBuffer = await crypto.subtle.digest(
+    "SHA-256",
+    xBytes.buffer as ArrayBuffer,
+  );
   const hashBytes = new Uint8Array(hashBuffer);
-  return Array.from(hashBytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(hashBytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function base64UrlToBytes(b64url: string): Uint8Array {
@@ -118,16 +127,34 @@ function base64UrlToBytes(b64url: string): Uint8Array {
  * Generate a new Ed25519 keypair and store it in IndexedDB.
  * Returns the keypair + fingerprint. Does NOT register with the server
  * (call registerDeviceKeyWithServer() for that).
+ *
+ * SECURITY NOTE on extractable=true:
+ *   WebCrypto requires extractable=true to call exportKey("jwk", ...).
+ *   We need the JWK form to (a) store it in IndexedDB for later signing
+ *   and (b) send the public key JWK to the server for registration.
+ *
+ *   The private key JWK never leaves the device — it's only stored in
+ *   IndexedDB (same-origin) and re-imported for each signing operation.
+ *   It is NEVER sent to the server or exposed to JavaScript from other
+ *   origins. This is the standard pattern for client-side key storage
+ *   when using the JWK format.
+ *
+ *   The previous code used extractable=false, which caused:
+ *     "Failed to execute 'exportKey' on 'SubtleCrypto': key is not extractable"
+ *   on every scan attempt (the scanner couldn't sign certificates).
  */
 export async function generateDeviceKeyPair(): Promise<DeviceKeyPair> {
   const keyPair = await crypto.subtle.generateKey(
     "Ed25519",
-    false, // not extractable as raw bytes (JWK only)
-    ["sign", "verify"]
+    true, // extractable — required to export JWK for IndexedDB storage
+    ["sign", "verify"],
   );
 
   const publicKeyJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
-  const privateKeyJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
+  const privateKeyJwk = await crypto.subtle.exportKey(
+    "jwk",
+    keyPair.privateKey,
+  );
   const fingerprint = await computeFingerprint(publicKeyJwk);
 
   const deviceKeyPair: DeviceKeyPair = {
@@ -145,10 +172,18 @@ export async function generateDeviceKeyPair(): Promise<DeviceKeyPair> {
  * Get the stored device keypair, or generate a new one if none exists.
  * This is the main entry point for the scanner — call this before
  * creating a scan certificate.
+ *
+ * If the stored keypair is missing the JWK fields (corrupt state from
+ * a previous bug), it's regenerated. This ensures the scanner never
+ * gets stuck with an unusable key.
  */
 export async function getOrCreateDeviceKeyPair(): Promise<DeviceKeyPair> {
   const existing = await idbGet<DeviceKeyPair>(KEY_RECORD_ID);
-  if (existing) return existing;
+  // Validate the stored keypair has the required JWK fields.
+  if (existing && existing.publicKeyJwk?.x && existing.privateKeyJwk?.d) {
+    return existing;
+  }
+  // Corrupt or missing — regenerate.
   return generateDeviceKeyPair();
 }
 
@@ -182,7 +217,9 @@ export async function getDeviceFingerprint(): Promise<string | null> {
  * @param cert - the unsigned scan certificate
  * @returns the signed certificate (certificate + canonical JSON + signature)
  */
-export async function signCertificate(cert: ScanCertificate): Promise<SignedCertificate> {
+export async function signCertificate(
+  cert: ScanCertificate,
+): Promise<SignedCertificate> {
   const keyPair = await getOrCreateDeviceKeyPair();
 
   // Import the private key for signing
@@ -191,7 +228,7 @@ export async function signCertificate(cert: ScanCertificate): Promise<SignedCert
     keyPair.privateKeyJwk,
     "Ed25519",
     false,
-    ["sign"]
+    ["sign"],
   );
 
   // Canonicalize the certificate (deterministic JSON)
@@ -222,7 +259,9 @@ function bytesToBase64(bytes: Uint8Array): string {
  * Register the device's public key with the server.
  * Called after login (or on first scan) if the key isn't yet registered.
  */
-export async function registerDeviceKeyWithServer(label?: string): Promise<boolean> {
+export async function registerDeviceKeyWithServer(
+  label?: string,
+): Promise<boolean> {
   const keyPair = await getOrCreateDeviceKeyPair();
   if (keyPair.registered) return true;
 
