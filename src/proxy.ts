@@ -185,12 +185,35 @@ export async function proxy(request: NextRequest) {
 
   // Content Security Policy — prevents XSS, data injection
   // SECURITY (v8): Removed 'unsafe-eval' (not needed, weakens XSS protection).
-  // Restricted connect-src to 'self' only (was ws: wss: which allowed any WS origin).
+  // connect-src: 'self' + the realtime service origin (if configured).
+  //   The realtime service runs on a separate host (e.g. Render), so the
+  //   browser needs both https:// (polling fallback) and wss:// (WebSocket)
+  //   origins in connect-src. Without this, the CSP blocks the socket.io
+  //   connection with "connect-src 'self' violates the following directive".
   // In dev: relax frame-ancestors so preview panels work.
   // In production: strict 'none' to prevent clickjacking.
   const cspFrameAncestors = isDev
     ? "frame-ancestors *"
     : "frame-ancestors 'none'";
+
+  // Derive the realtime service origins from NEXT_PUBLIC_REALTIME_URL.
+  // e.g. "https://nexus-gate-realtime.onrender.com"
+  //   → ["https://nexus-gate-realtime.onrender.com", "wss://nexus-gate-realtime.onrender.com"]
+  const realtimeUrl = process.env.NEXT_PUBLIC_REALTIME_URL;
+  const realtimeOrigins: string[] = [];
+  if (realtimeUrl) {
+    try {
+      const parsed = new URL(realtimeUrl);
+      realtimeOrigins.push(`${parsed.protocol}//${parsed.host}`);
+      // Also add the ws/wss variant (socket.io upgrades to WebSocket).
+      const wsProtocol = parsed.protocol === "https:" ? "wss:" : "ws:";
+      realtimeOrigins.push(`${wsProtocol}//${parsed.host}`);
+    } catch {
+      // Invalid URL — skip.
+    }
+  }
+  const connectSrc = ["'self'", ...realtimeOrigins].join(" ");
+
   response.headers.set(
     "Content-Security-Policy",
     [
@@ -199,7 +222,7 @@ export async function proxy(request: NextRequest) {
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: blob: https://api.dicebear.com",
-      "connect-src 'self'",
+      `connect-src ${connectSrc}`,
       "frame-src 'self' https://challenges.cloudflare.com",
       cspFrameAncestors,
       "base-uri 'self'",
