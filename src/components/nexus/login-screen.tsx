@@ -117,46 +117,59 @@ export function LoginScreen({
     const accessToken = hashParams.get("access_token");
     const refreshToken = hashParams.get("refresh_token");
     if (!code && !accessToken) return;
-    import("@/lib/supabase-browser").then(({ createSupabaseBrowserClient }) => {
-      const supabase = createSupabaseBrowserClient();
-      const finalizeAuth = async () => {
-        window.history.replaceState({}, "", window.location.pathname);
-        if (type === "recovery") {
-          setResetToken("supabase-recovery");
-          setMode("reset");
-        } else {
-          // magiclink or signup - session established, reload to dashboard.
-          window.location.reload();
-        }
-      };
 
-      const authPromise = code
-        ? supabase.auth.exchangeCodeForSession(code)
-        : accessToken && refreshToken
-          ? supabase.auth.setSession({
-              access_token: accessToken,
-              refresh_token: refreshToken,
-            })
-          : Promise.reject(new Error("Missing auth tokens in redirect URL"));
+    const finalizeAuth = async () => {
+      window.history.replaceState({}, "", window.location.pathname);
+      if (type === "recovery") {
+        setResetToken("supabase-recovery");
+        setMode("reset");
+      } else {
+        // magiclink or signup - session established, reload to dashboard.
+        window.location.reload();
+      }
+    };
 
-      authPromise
-        .then(async ({ error }) => {
-          if (error) throw error;
-          await finalizeAuth();
+    // PKCE flow (?code=...): exchange via the SERVER API route.
+    // The code_verifier is stored in an httpOnly cookie set during
+    // signInWithOtp/resetPasswordForEmail (server-side). The browser
+    // client can't read httpOnly cookies, so we must exchange server-side.
+    const codeExchangePromise = code
+      ? fetch(
+          `/api/auth/callback?code=${encodeURIComponent(code)}${type ? `&type=${encodeURIComponent(type)}` : ""}`,
+          { credentials: "include" },
+        ).then(async (res) => {
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.error || "Code exchange failed");
+          }
+          return res.json();
         })
-        .catch((e) => {
-          // Code exchange failed (expired, already used, cross-device PKCE mismatch).
-          // Clean the URL and show a toast so the user isn't stuck on a blank page.
-          console.error("[auth] email redirect handling failed:", e);
-          window.history.replaceState({}, "", window.location.pathname);
-          toast({
-            title: "Link expired",
-            description:
-              "The sign-in link is invalid or expired. Please request a new one.",
-            variant: "destructive",
-          });
+      : accessToken && refreshToken
+        ? import("@/lib/supabase-browser").then(
+            ({ createSupabaseBrowserClient }) =>
+              createSupabaseBrowserClient().auth.setSession({
+                access_token: accessToken,
+                refresh_token: refreshToken,
+              }),
+          )
+        : Promise.reject(new Error("Missing auth tokens in redirect URL"));
+
+    codeExchangePromise
+      .then(async () => {
+        await finalizeAuth();
+      })
+      .catch((e) => {
+        // Code exchange failed (expired, already used, cross-device PKCE mismatch).
+        // Clean the URL and show a toast so the user isn't stuck on a blank page.
+        console.error("[auth] email redirect handling failed:", e);
+        window.history.replaceState({}, "", window.location.pathname);
+        toast({
+          title: "Link expired",
+          description:
+            "The sign-in link is invalid or expired. Please request a new one.",
+          variant: "destructive",
         });
-    });
+      });
   }, []);
 
   function clearResetToken() {
