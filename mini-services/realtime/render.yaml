@@ -4,6 +4,11 @@ services:
     env: docker
     region: singapore
     plan: free
+    # Render needs to know where the Dockerfile is. If Render is connected
+    # to the whole repo (root), it looks for ./Dockerfile at the root —
+    # but our Dockerfile is in mini-services/realtime/. Set rootDir so
+    # Render cd's into mini-services/realtime/ before building.
+    rootDir: mini-services/realtime
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
