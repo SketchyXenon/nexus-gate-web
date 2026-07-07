@@ -80,7 +80,14 @@ export async function proxy(request: NextRequest) {
   //   recognized as same-origin.
   const method = request.method.toUpperCase();
   const isDev = process.env.NODE_ENV !== "production";
-  if (["POST", "PATCH", "PUT", "DELETE"].includes(method)) {
+
+  // Skip CSRF check for cron endpoints — they're authenticated via
+  // CRON_SECRET (Bearer/Basic/header/query), not session cookies.
+  // cron-job.org and other third-party cron services send cross-origin
+  // POSTs that would otherwise be blocked by the Origin/Referer check.
+  const isCronRoute = path.startsWith("/api/cron/");
+
+  if (["POST", "PATCH", "PUT", "DELETE"].includes(method) && !isCronRoute) {
     const origin = request.headers.get("origin");
     const referer = request.headers.get("referer");
 

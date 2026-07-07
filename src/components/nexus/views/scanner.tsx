@@ -99,7 +99,17 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
   const [feedbackKey, setFeedbackKey] = useState(0);
   const scanInFlightRef = useRef<boolean>(false);
   const lastCaptureAtRef = useRef<number>(0);
-  const captureStaleMs = 1750;
+  // Increased from 1750ms to 3000ms — gives the scanner more time to
+  // capture 3 consecutive sub-frames before resetting. The QR refreshes
+  // every 500ms, so 3 frames need ~1.5s, but camera lag can cause gaps.
+  const captureStaleMs = 3000;
+  // Throttle: only run jsQR every ~120ms (≈8 FPS). The QR refreshes at
+  // 2 FPS (500ms), so 8 FPS is more than enough to catch each sub-frame
+  // while dramatically reducing CPU load on mobile devices.
+  const lastScanAtRef = useRef<number>(0);
+  const scanIntervalMs = 120;
+  // Track the last decoded raw token to skip redundant parsing.
+  const lastRawRef = useRef<string>("");
 
   // ---- v8: Multi-frame sub-frame collection (Tier 2 liveness) ----
   // The scanner collects sub-frame indices + their client-observed HMACs
@@ -121,6 +131,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
     currentBlockRef.current = -1;
     currentEventIdRef.current = 0;
     lastCaptureAtRef.current = 0;
+    lastRawRef.current = "";
     setScanProgress(0);
   }, []);
 
@@ -151,8 +162,15 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
   // set of indices without real HMACs is rejected.
   const handleDecode = useCallback(
     async (raw: string) => {
-      // Cooldown lock: ignore scans for 3s after a successful scan.
+      // Cooldown lock: ignore scans while a certificate is being created
+      // or during the post-scan cooldown.
       if (scanningLockedRef.current || scanInFlightRef.current) return;
+
+      // Skip redundant parsing: if the exact same raw token was just
+      // processed (same sub-frame), don't re-parse. This happens because
+      // the camera captures the same QR multiple times before it refreshes.
+      if (raw === lastRawRef.current) return;
+      lastRawRef.current = raw;
 
       const now = Date.now();
       if (
@@ -277,7 +295,9 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
         await getOrCreateDeviceKeyPair();
         const fingerprint = await getDeviceFingerprint();
         if (!fingerprint) {
-          throw new Error("Couldn't access device key. Please refresh the page.");
+          throw new Error(
+            "Couldn't access device key. Please refresh the page.",
+          );
         }
 
         // Use the LAST captured frame's raw token as the certificate token
@@ -304,12 +324,14 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
         // Register the device key in the background (non-blocking)
         registerDeviceKeyWithServer().catch(() => {});
 
-        // Lock scanning for 3 seconds to prevent duplicate scans.
+        // Lock scanning for 1.5 seconds to prevent duplicate scans.
+        // Reduced from 3s — 1.5s is enough for the QR to rotate to a new
+        // sub-frame, and doesn't make the user wait too long between scans.
         scanningLockedRef.current = true;
         scanInFlightRef.current = false;
         setTimeout(() => {
           scanningLockedRef.current = false;
-        }, 3000);
+        }, 1500);
 
         setFeedbackKey((k) => k + 1);
         setFeedback({
@@ -338,34 +360,56 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
     [queue, user.fullName, online, resetCaptureState],
   );
 
+  // Use a ref to break the self-reference cycle (scanLoop references
+  // itself via requestAnimationFrame). This avoids the TDZ/immutability
+  // lint error while keeping the recursive animation frame loop.
+  const scanLoopRef = useRef<() => void>(() => {});
+
   const scanLoop = useCallback(() => {
+    rafRef.current = requestAnimationFrame(() => scanLoopRef.current());
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
-      rafRef.current = requestAnimationFrame(scanLoop);
       return;
     }
-    const w = video.videoWidth;
-    const h = video.videoHeight;
-    if (w === 0 || h === 0) {
-      rafRef.current = requestAnimationFrame(scanLoop);
-      return;
-    }
+
+    // ---- Throttle: only scan every scanIntervalMs (≈8 FPS) ----
+    // The QR refreshes at 2 FPS (500ms), so 8 FPS is more than enough.
+    // This dramatically reduces CPU load and prevents frame drops that
+    // cause the scanner to miss sub-frames (the "stuck at 2/3" bug).
+    const now = performance.now();
+    if (now - lastScanAtRef.current < scanIntervalMs) return;
+    lastScanAtRef.current = now;
+
+    const srcW = video.videoWidth;
+    const srcH = video.videoHeight;
+    if (srcW === 0 || srcH === 0) return;
+
+    // ---- Downscale to max 640px wide for faster jsQR decoding ----
+    // jsQR's cost is O(width × height). A 1080p frame is ~2M pixels;
+    // at 640×360 it's ~230K pixels — 9x faster. The QR is still
+    // decodable at this resolution (it's projected on a screen).
+    const MAX_W = 640;
+    const scale = srcW > MAX_W ? MAX_W / srcW : 1;
+    const w = Math.round(srcW * scale);
+    const h = Math.round(srcH * scale);
+
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) {
-      rafRef.current = requestAnimationFrame(scanLoop);
-      return;
-    }
+    if (!ctx) return;
     ctx.drawImage(video, 0, 0, w, h);
     const imageData = ctx.getImageData(0, 0, w, h);
     const code = jsQR(imageData.data, w, h, {
       inversionAttempts: "dontInvert",
     });
     if (code && code.data) handleDecode(code.data);
-    rafRef.current = requestAnimationFrame(scanLoop);
   }, [handleDecode]);
+
+  // Keep the ref in sync so the rAF callback always invokes the latest scanLoop.
+  useEffect(() => {
+    scanLoopRef.current = scanLoop;
+  }, [scanLoop]);
 
   const startCamera = useCallback(async () => {
     setStarting(true);

@@ -3,13 +3,29 @@
 import { useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
 import {
-  AlertTriangle, Plus, Loader2, UserPlus, History, Info,
-  CheckCircle2, XCircle, Search, X, CalendarRange,
-  ChevronLeft, ChevronRight, SlidersHorizontal, ShieldAlert,
+  AlertTriangle,
+  Plus,
+  Loader2,
+  UserPlus,
+  History,
+  Info,
+  CheckCircle2,
+  XCircle,
+  Search,
+  X,
+  CalendarRange,
+  ChevronLeft,
+  ChevronRight,
+  SlidersHorizontal,
+  ShieldAlert,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Card, CardContent, CardDescription, CardHeader, CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,19 +33,34 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
-  Tooltip, TooltipContent, TooltipTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import { EventCombobox } from "@/components/nexus/event-combobox";
 import { ConfirmDialog } from "@/components/nexus/confirm-dialog";
 import {
-  useEvents, useWhitelist, useEventAttendance, useCreateOverride,
-  useOverrides, type OverrideRow,
+  useEvents,
+  useWhitelist,
+  useEventAttendance,
+  useCreateOverride,
+  useOverrides,
+  type OverrideRow,
 } from "@/lib/api-client";
 import { useDebounce } from "@/hooks/use-debounce";
 import { toast } from "@/hooks/use-toast";
@@ -52,7 +83,8 @@ export function OverridesView() {
     formEventId ?? events[0]?.id ?? null;
   const event = events.find((e) => e.id === effectiveFormEventId);
 
-  const [selectedStudentId, setSelectedStudentId] = useState<string>(SELECT_NONE);
+  const [selectedStudentId, setSelectedStudentId] =
+    useState<string>(SELECT_NONE);
   const [reason, setReason] = useState(DEFAULT_REASON);
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -72,9 +104,16 @@ export function OverridesView() {
     program: event?.targetProgram || undefined,
     section: event?.targetSection || undefined,
     pageSize: 200,
+    // Only fetch once an event is selected (prevents fetching ALL students
+    // before the organizer picks an event, which was causing a race condition
+    // where the unfiltered list briefly replaced the filtered one).
+    enabled: effectiveFormEventId != null,
   });
   const whitelist = whitelistQ.data?.students ?? [];
-  const presenceQ = useEventAttendance(effectiveFormEventId);
+  // Disable 4s polling on the override page — we only need a snapshot of
+  // who's present, not live updates. Polling caused constant 403 errors
+  // for organizers viewing events they didn't own.
+  const presenceQ = useEventAttendance(effectiveFormEventId, { poll: false });
   const create = useCreateOverride();
 
   const presentIds = useMemo(
@@ -82,13 +121,13 @@ export function OverridesView() {
       new Set(
         (presenceQ.data?.attendances ?? [])
           .map((a) => a.account.studentId)
-          .filter((v): v is number => v != null)
+          .filter((v): v is number => v != null),
       ),
-    [presenceQ.data]
+    [presenceQ.data],
   );
   const missingStudents = useMemo(
     () => whitelist.filter((s) => !presentIds.has(s.studentId)),
-    [whitelist, presentIds]
+    [whitelist, presentIds],
   );
   // True only when the whitelist has LOADED and has students, but all are present.
   // NOT true when the whitelist is empty/loading (which would be a false positive).
@@ -99,7 +138,7 @@ export function OverridesView() {
     missingStudents.length === 0;
 
   const selectedStudent = missingStudents.find(
-    (s) => String(s.studentId) === selectedStudentId
+    (s) => String(s.studentId) === selectedStudentId,
   );
 
   // ============================================================
@@ -166,7 +205,9 @@ export function OverridesView() {
       return;
     }
     if (!reason.trim()) {
-      setFormError("Please add a short reason so there's a record of what happened.");
+      setFormError(
+        "Please add a short reason so there's a record of what happened.",
+      );
       return;
     }
     setConfirmOpen(true);
@@ -192,7 +233,7 @@ export function OverridesView() {
             description: e.message,
             variant: "destructive",
           }),
-      }
+      },
     );
   }
 
@@ -224,7 +265,9 @@ export function OverridesView() {
 
           {/* Event picker — searchable combobox (handles many events) */}
           <div className="space-y-1.5">
-            <Label htmlFor="ovr-event" className="text-xs">Event</Label>
+            <Label htmlFor="ovr-event" className="text-xs">
+              Event
+            </Label>
             <EventCombobox
               events={events}
               value={effectiveFormEventId}
@@ -245,7 +288,9 @@ export function OverridesView() {
 
           {/* Student picker */}
           <div className="space-y-1.5">
-            <Label htmlFor="ovr-student" className="text-xs">Student to add</Label>
+            <Label htmlFor="ovr-student" className="text-xs">
+              Student to add
+            </Label>
             <Select
               value={selectedStudentId}
               onValueChange={(v) => {
@@ -263,11 +308,13 @@ export function OverridesView() {
                     Loading students…
                   </SelectItem>
                 )}
-                {!whitelistQ.isLoading && missingStudents.length === 0 && !allPresent && (
-                  <SelectItem value={SELECT_NONE} disabled>
-                    No eligible students found
-                  </SelectItem>
-                )}
+                {!whitelistQ.isLoading &&
+                  missingStudents.length === 0 &&
+                  !allPresent && (
+                    <SelectItem value={SELECT_NONE} disabled>
+                      No eligible students found
+                    </SelectItem>
+                  )}
                 {allPresent && (
                   <SelectItem value={SELECT_NONE} disabled>
                     Everyone is already present
@@ -286,17 +333,23 @@ export function OverridesView() {
                 All eligible students are already present.
               </p>
             )}
-            {effectiveFormEventId != null && !whitelistQ.isLoading && !allPresent && whitelist.length === 0 && (
-              <p className="text-xs text-amber-600 flex items-center gap-1.5">
-                <Info className="h-3.5 w-3.5" />
-                No students found for this event's program/section. Import students first.
-              </p>
-            )}
+            {effectiveFormEventId != null &&
+              !whitelistQ.isLoading &&
+              !allPresent &&
+              whitelist.length === 0 && (
+                <p className="text-xs text-amber-600 flex items-center gap-1.5">
+                  <Info className="h-3.5 w-3.5" />
+                  No students found for this event's program/section. Import
+                  students first.
+                </p>
+              )}
           </div>
 
           {/* Reason */}
           <div className="space-y-1.5">
-            <Label htmlFor="ovr-reason" className="text-xs">Reason</Label>
+            <Label htmlFor="ovr-reason" className="text-xs">
+              Reason
+            </Label>
             <Textarea
               id="ovr-reason"
               value={reason}
@@ -465,126 +518,139 @@ export function OverridesView() {
             </div>
           )}
 
-          {!overridesQ.isLoading && !overridesQ.isError && overrides.length === 0 && (
-            <div className="p-10 text-center text-sm text-muted-foreground">
-              <Info className="h-6 w-6 mx-auto mb-2 opacity-50" />
-              {hasListFilters
-                ? "No manual entries match your filters."
-                : "No manual entries yet. Entries you create will appear here."}
-            </div>
-          )}
-
-          {!overridesQ.isLoading && !overridesQ.isError && overrides.length > 0 && (
-            <>
-              {/* Desktop / tablet: horizontal-scroll table */}
-              <div className="overflow-x-auto ng-scroll">
-                <Table>
-                  <TableHeader className="bg-card">
-                    <TableRow>
-                      <TableHead className="min-w-[12rem]">Student</TableHead>
-                      <TableHead className="min-w-[10rem]">Event</TableHead>
-                      <TableHead className="min-w-[14rem]">Reason</TableHead>
-                      <TableHead className="min-w-[9rem]">When</TableHead>
-                      <TableHead className="min-w-[9rem]">By</TableHead>
-                      <TableHead className="min-w-[6rem]">Source</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    <AnimatePresence initial={false}>
-                      {overrides.map((o) => (
-                        <motion.tr
-                          key={o.id}
-                          layout
-                          initial={{ opacity: 0, y: -8 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0 }}
-                          className="hover:bg-muted/40 min-h-[44px]"
-                        >
-                          <TableCell className="min-h-[44px] py-3">
-                            <div className="flex flex-col">
-                              <span className="text-sm font-medium">{o.student.fullName}</span>
-                              <span className="text-xs text-muted-foreground font-mono">
-                                ID #{o.student.studentId}
-                              </span>
-                              <span className="text-[11px] text-muted-foreground">
-                                {o.student.program} {o.student.section}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="py-3">
-                            <div className="flex flex-col">
-                              <span className="text-sm truncate max-w-[14rem]">
-                                {o.event.title}
-                              </span>
-                              <span className="text-[11px] text-muted-foreground">
-                                {format(parseISO(o.event.scheduledAt), "MMM d, yyyy")}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="py-3 max-w-[18rem]">
-                            <p className="text-sm text-muted-foreground line-clamp-2 italic">
-                              &ldquo;{o.reason}&rdquo;
-                            </p>
-                          </TableCell>
-                          <TableCell className="py-3 text-xs text-muted-foreground tabular-nums whitespace-nowrap">
-                            {format(parseISO(o.createdAt), "MMM d, HH:mm")}
-                          </TableCell>
-                          <TableCell className="py-3 text-xs text-muted-foreground truncate max-w-[8rem]">
-                            {o.admin?.fullName ?? "—"}
-                          </TableCell>
-                          <TableCell className="py-3">
-                            <Badge
-                              variant="outline"
-                              className="border-amber-500/40 text-amber-600 text-[10px] gap-1"
-                            >
-                              <AlertTriangle className="h-2.5 w-2.5" />
-                              Manual
-                            </Badge>
-                          </TableCell>
-                        </motion.tr>
-                      ))}
-                    </AnimatePresence>
-                  </TableBody>
-                </Table>
+          {!overridesQ.isLoading &&
+            !overridesQ.isError &&
+            overrides.length === 0 && (
+              <div className="p-10 text-center text-sm text-muted-foreground">
+                <Info className="h-6 w-6 mx-auto mb-2 opacity-50" />
+                {hasListFilters
+                  ? "No manual entries match your filters."
+                  : "No manual entries yet. Entries you create will appear here."}
               </div>
+            )}
 
-              {/* Pagination */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-4 py-3 border-t">
-                <p className="text-xs text-muted-foreground">
-                  {pagination
-                    ? `Page ${pagination.page} of ${pagination.totalPages} · ${pagination.total} entr${pagination.total === 1 ? "y" : "ies"} total`
-                    : "—"}
-                </p>
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-9 min-w-[44px]"
-                    disabled={!pagination || pagination.page <= 1}
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    aria-label="Previous page"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                    <span className="hidden sm:inline">Prev</span>
-                  </Button>
-                  <span className="text-xs text-muted-foreground px-2 tabular-nums">
-                    {pagination ? `${pagination.page} / ${pagination.totalPages}` : "—"}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-9 min-w-[44px]"
-                    disabled={!pagination || pagination.page >= pagination.totalPages}
-                    onClick={() => setPage((p) => p + 1)}
-                    aria-label="Next page"
-                  >
-                    <span className="hidden sm:inline">Next</span>
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
+          {!overridesQ.isLoading &&
+            !overridesQ.isError &&
+            overrides.length > 0 && (
+              <>
+                {/* Desktop / tablet: horizontal-scroll table */}
+                <div className="overflow-x-auto ng-scroll">
+                  <Table>
+                    <TableHeader className="bg-card">
+                      <TableRow>
+                        <TableHead className="min-w-[12rem]">Student</TableHead>
+                        <TableHead className="min-w-[10rem]">Event</TableHead>
+                        <TableHead className="min-w-[14rem]">Reason</TableHead>
+                        <TableHead className="min-w-[9rem]">When</TableHead>
+                        <TableHead className="min-w-[9rem]">By</TableHead>
+                        <TableHead className="min-w-[6rem]">Source</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      <AnimatePresence initial={false}>
+                        {overrides.map((o) => (
+                          <motion.tr
+                            key={o.id}
+                            layout
+                            initial={{ opacity: 0, y: -8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0 }}
+                            className="hover:bg-muted/40 min-h-[44px]"
+                          >
+                            <TableCell className="min-h-[44px] py-3">
+                              <div className="flex flex-col">
+                                <span className="text-sm font-medium">
+                                  {o.student.fullName}
+                                </span>
+                                <span className="text-xs text-muted-foreground font-mono">
+                                  ID #{o.student.studentId}
+                                </span>
+                                <span className="text-[11px] text-muted-foreground">
+                                  {o.student.program} {o.student.section}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-3">
+                              <div className="flex flex-col">
+                                <span className="text-sm truncate max-w-[14rem]">
+                                  {o.event.title}
+                                </span>
+                                <span className="text-[11px] text-muted-foreground">
+                                  {format(
+                                    parseISO(o.event.scheduledAt),
+                                    "MMM d, yyyy",
+                                  )}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-3 max-w-[18rem]">
+                              <p className="text-sm text-muted-foreground line-clamp-2 italic">
+                                &ldquo;{o.reason}&rdquo;
+                              </p>
+                            </TableCell>
+                            <TableCell className="py-3 text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                              {format(parseISO(o.createdAt), "MMM d, HH:mm")}
+                            </TableCell>
+                            <TableCell className="py-3 text-xs text-muted-foreground truncate max-w-[8rem]">
+                              {o.admin?.fullName ?? "—"}
+                            </TableCell>
+                            <TableCell className="py-3">
+                              <Badge
+                                variant="outline"
+                                className="border-amber-500/40 text-amber-600 text-[10px] gap-1"
+                              >
+                                <AlertTriangle className="h-2.5 w-2.5" />
+                                Manual
+                              </Badge>
+                            </TableCell>
+                          </motion.tr>
+                        ))}
+                      </AnimatePresence>
+                    </TableBody>
+                  </Table>
                 </div>
-              </div>
-            </>
-          )}
+
+                {/* Pagination */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-4 py-3 border-t">
+                  <p className="text-xs text-muted-foreground">
+                    {pagination
+                      ? `Page ${pagination.page} of ${pagination.totalPages} · ${pagination.total} entr${pagination.total === 1 ? "y" : "ies"} total`
+                      : "—"}
+                  </p>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-9 min-w-[44px]"
+                      disabled={!pagination || pagination.page <= 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      <span className="hidden sm:inline">Prev</span>
+                    </Button>
+                    <span className="text-xs text-muted-foreground px-2 tabular-nums">
+                      {pagination
+                        ? `${pagination.page} / ${pagination.totalPages}`
+                        : "—"}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-9 min-w-[44px]"
+                      disabled={
+                        !pagination || pagination.page >= pagination.totalPages
+                      }
+                      onClick={() => setPage((p) => p + 1)}
+                      aria-label="Next page"
+                    >
+                      <span className="hidden sm:inline">Next</span>
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
         </CardContent>
       </Card>
 

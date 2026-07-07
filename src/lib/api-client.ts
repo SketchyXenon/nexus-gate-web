@@ -256,6 +256,7 @@ export const useWhitelist = (params?: {
   section?: string;
   q?: string;
   sort?: WhitelistSort;
+  enabled?: boolean;
 }) => {
   const sp = new URLSearchParams();
   if (params?.page) sp.set("page", String(params.page));
@@ -276,6 +277,11 @@ export const useWhitelist = (params?: {
           totalPages: number;
         };
       }>(`/api/whitelist?${sp}`),
+    // Only fetch when explicitly enabled (prevents fetching ALL students
+    // before an event is selected on the override page).
+    enabled: params?.enabled !== false,
+    // Keep previous data while refetching (smoother UX when switching events).
+    placeholderData: (prev) => prev,
   });
 };
 
@@ -431,7 +437,10 @@ export const useEventsHistory = (scope?: string) => {
 };
 
 // ---------------- Attendance ----------------
-export const useEventAttendance = (eventId: number | null) =>
+export const useEventAttendance = (
+  eventId: number | null,
+  options?: { poll?: boolean },
+) =>
   useQuery({
     queryKey: ["attendance", eventId],
     queryFn: () =>
@@ -442,7 +451,9 @@ export const useEventAttendance = (eventId: number | null) =>
         attendances: AttendanceRow[];
       }>(`/api/events/${eventId}/attendance`),
     enabled: eventId != null,
-    refetchInterval: eventId != null ? 4000 : false,
+    // Only poll on the live attendance view (default). The override page
+    // passes poll=false to avoid 4s refetches that aren't needed there.
+    refetchInterval: eventId != null && options?.poll !== false ? 4000 : false,
   });
 
 export interface EventDetails {
