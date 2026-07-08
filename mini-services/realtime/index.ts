@@ -94,16 +94,18 @@ const httpServer = createServer(
     }
 
     // ---- Health check (no CORS needed — server-to-server) ----
-    if (req.method === "GET" && req.url === "/health") {
+    // Use startsWith instead of === to handle query params or trailing
+    // slashes that Render's health checker might add.
+    if (req.method === "GET" && req.url?.startsWith("/health")) {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(
-        JSON.stringify({
-          ok: true,
-          service: "nexus-gate-realtime",
-          clients: io.engine.clientsCount,
-          uptime: process.uptime(),
-        }),
-      );
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    // ---- Root endpoint (also serves as a simple health check) ----
+    if (req.method === "GET" && (req.url === "/" || req.url === "")) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, service: "nexus-gate-realtime" }));
       return;
     }
 
