@@ -454,10 +454,10 @@ export const useEventAttendance = (
     // Polling strategy:
     //   - Override page: poll=false (no polling)
     //   - Socket connected: no polling (socket.io pushes realtime updates)
-    //   - Socket disconnected: poll every 10s as fallback (was 4s)
+    //   - Socket disconnected: poll every 15s as fallback (was 4s, then 10s)
     refetchInterval:
       eventId != null && options?.poll !== false && !options?.socketConnected
-        ? 10_000
+        ? 15_000
         : false,
   });
 
@@ -812,7 +812,7 @@ export const useNotifications = (unreadOnly?: boolean) =>
       api<{ notifications: NotificationItem[]; unreadCount: number }>(
         `/api/notifications${unreadOnly ? "?unread=true" : ""}`,
       ),
-    refetchInterval: 30_000, // poll every 30 seconds
+    refetchInterval: 60_000, // poll every 60 seconds (reduced from 30s for scale)
   });
 
 export const useMarkNotificationsRead = () => {

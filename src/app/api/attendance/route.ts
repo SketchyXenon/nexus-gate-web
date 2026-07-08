@@ -25,6 +25,9 @@ import { notifyAttendance } from "@/lib/realtime";
 import { audit } from "@/lib/audit";
 import { getEventTimeWindows } from "@/lib/event-time";
 
+// Allow up to 30s for scan processing under high concurrency.
+export const maxDuration = 30;
+
 // ====================================================================
 // POST /api/attendance — scan QR token (v8 — signed certificate)
 // --------------------------------------------------------------------

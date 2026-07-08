@@ -7,6 +7,10 @@ import {
 import { badRequest, parseBody, requireAuth } from "@/lib/api";
 import { audit } from "@/lib/audit";
 
+// Allow up to 30s for large imports (up to 5000 students).
+// Vercel default is 10s which can timeout on the Hobby plan.
+export const maxDuration = 30;
+
 // ====================================================================
 // GET /api/whitelist (ORGANIZER+)
 // --------------------------------------------------------------------

@@ -4,6 +4,9 @@ import { parseFile } from "@/lib/file-parser";
 import { requireAuth } from "@/lib/api";
 import { audit } from "@/lib/audit";
 
+// Allow up to 30s for large file parsing (PDF/Excel with many rows).
+export const maxDuration = 30;
+
 // ====================================================================
 // POST /api/whitelist/import-file (ORGANIZER+)
 // --------------------------------------------------------------------
@@ -32,11 +35,15 @@ export async function POST(req: NextRequest) {
 
     // File size limit: 10MB
     if (file.size > 10 * 1024 * 1024) {
-      return NextResponse.json({ error: "File too large (max 10MB)" }, { status: 400 });
+      return NextResponse.json(
+        { error: "File too large (max 10MB)" },
+        { status: 400 },
+      );
     }
 
     // Sanitize filename: extract just the extension, ignore path components.
-    const safeName = (file.name || "").split("/").pop()?.split("\\").pop() || "upload";
+    const safeName =
+      (file.name || "").split("/").pop()?.split("\\").pop() || "upload";
 
     // ---- STRICT file extension validation (server-side, cannot be bypassed) ----
     // Only allow: .xlsx, .xls, .pdf, .docx, .csv
@@ -48,7 +55,7 @@ export async function POST(req: NextRequest) {
           error: `File type ".${ext}" is not allowed. Supported types: .xlsx, .xls, .pdf, .docx, .csv`,
           code: "INVALID_FILE_TYPE",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -68,7 +75,7 @@ export async function POST(req: NextRequest) {
           error: `MIME type "${file.type}" is not allowed.`,
           code: "INVALID_MIME_TYPE",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -98,7 +105,7 @@ export async function POST(req: NextRequest) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json(
       { error: `File processing failed: ${msg}`, code: "PARSE_ERROR" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 }
