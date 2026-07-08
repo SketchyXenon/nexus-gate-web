@@ -5,7 +5,8 @@
 // Supports:
 //   • Excel (.xlsx, .xls) — via exceljs library (replaces xlsx which
 //     had a prototype pollution vulnerability — CVSS 7.8)
-//   • PDF (.pdf) — via pdf-parse (extracts text, then parses rows)
+//   • PDF (.pdf) — via pdfjs-dist (pure JS, no native deps — works on
+//     Vercel serverless. Replaces pdf-parse which used @napi-rs/canvas)
 //   • DOCX (.docx) — via mammoth (extracts text, then parses rows)
 //   • CSV (.csv) — via papaparse (already supported)
 //
@@ -198,26 +199,59 @@ export async function parseExcel(buffer: Buffer): Promise<ParseResult> {
 }
 
 // ---- PDF parser (.pdf) ----
+// Uses pdfjs-dist (pure JavaScript, no native dependencies).
+// Works on Vercel serverless (unlike pdf-parse which needed @napi-rs/canvas).
 export async function parsePdf(buffer: Buffer): Promise<ParseResult> {
   try {
-    // pdf-parse v2 is ESM-only and exports { PDFParse } as a named class
-    // (no default export). Instantiate with { data } and call .getText().
-    const { PDFParse } = await import("pdf-parse");
-    const parser = new PDFParse({ data: new Uint8Array(buffer) });
-    const data = await parser.getText();
-    const text = data.text;
+    // pdfjs-dist needs a fake DOMMatrix/DOMRect polyfill in Node.
+    // We provide minimal stubs that pdfjs doesn't actually use for
+    // text-only extraction.
+    if (typeof globalThis.DOMMatrix === "undefined") {
+      (globalThis as Record<string, unknown>).DOMMatrix = class {
+        constructor() {}
+        scale() {
+          return this;
+        }
+        translate() {
+          return this;
+        }
+        rotate() {
+          return this;
+        }
+      };
+    }
+    if (typeof globalThis.DOMRect === "undefined") {
+      (globalThis as Record<string, unknown>).DOMRect = class {};
+    }
+
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const data = new Uint8Array(buffer);
+    const doc = await pdfjs.getDocument({ data }).promise;
+    let text = "";
+
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const content = await page.getTextContent();
+      // Join text items, inserting newlines for block-level breaks.
+      const pageText = content.items
+        .map((item) => {
+          if ("str" in item) {
+            return item.str + ("hasEOL" in item && item.hasEOL ? "\n" : " ");
+          }
+          return "";
+        })
+        .join("");
+      text += pageText + "\n";
+    }
+
     try {
-      await parser.destroy();
+      await doc.cleanup();
     } catch {
       // ignore cleanup errors
     }
 
-    // Try to detect tabular data in the PDF text
-    // PDFs often have rows separated by newlines, columns by spaces/tabs
+    // Try to detect tabular data in the PDF text.
     const lines = text.split("\n").filter((l) => l.trim());
-
-    // Try to detect columns by looking for patterns:
-    // 7-digit number, email, name, program, section
     const rows: unknown[][] = [];
     let headers: string[] | null = null;
 
@@ -225,18 +259,16 @@ export async function parsePdf(buffer: Buffer): Promise<ParseResult> {
       const trimmed = line.trim();
       if (!trimmed) continue;
 
-      // Try splitting by tabs first, then multiple spaces
+      // Try splitting by tabs first, then multiple spaces.
       let parts = trimmed.split("\t").map((p) => p.trim());
       if (parts.length < 3) {
         parts = trimmed.split(/\s{2,}/).map((p) => p.trim());
       }
       if (parts.length < 3) {
-        // Try comma separation
         parts = trimmed.split(",").map((p) => p.trim());
       }
 
       if (parts.length >= 3) {
-        // Check if this looks like a header row
         const normalized = parts.map((p) => normalizeHeader(p));
         if (normalized.some((n) => HEADER_MAP[n])) {
           headers = parts.map((p) => HEADER_MAP[normalizeHeader(p)] || p);
@@ -247,12 +279,10 @@ export async function parsePdf(buffer: Buffer): Promise<ParseResult> {
     }
 
     if (headers) {
-      // Re-parse with detected headers
       const dataWithHeaders = [headers, ...rows] as unknown[][];
       return parseRows(dataWithHeaders);
     }
 
-    // No headers detected — try default column order
     return parseRows(rows);
   } catch (e) {
     return {
