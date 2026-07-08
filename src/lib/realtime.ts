@@ -1,18 +1,14 @@
 // ====================================================================
-// Realtime bridge — server-side notifier for the socket.io mini-service.
-// Fire-and-forget; falls back silently if the mini-service is down.
+// Realtime bridge — publishes attendance events via Ably.
+// --------------------------------------------------------------------
+// Replaces the Render socket.io mini-service. Ably is a managed
+// realtime platform (free tier: 3M messages/month, 200 concurrent
+// connections). No server to maintain, no spin-down, no cold starts.
+//
+// ENV: ABLY_SERVER_KEY must be set (Ably server API key, NOT the
+// browser key — the server key can publish, the browser key can only
+// subscribe). Get both from the Ably dashboard.
 // ====================================================================
-
-// Normalize the REALTIME_URL: strip trailing slashes, ensure /emit path.
-// Accepts both "https://svc.onrender.com" and "https://svc.onrender.com/emit".
-function resolveRealtimeUrl(): string {
-  const raw = (process.env.REALTIME_URL || "http://localhost:3003/emit").trim();
-  const base = raw.replace(/\/+$/, ""); // strip trailing slash(es)
-  // If the URL already ends with /emit, use it as-is. Otherwise append.
-  return base.endsWith("/emit") ? base : `${base}/emit`;
-}
-
-const REALTIME_URL = resolveRealtimeUrl();
 
 export interface AttendanceEvent {
   id: number;
@@ -25,25 +21,42 @@ export interface AttendanceEvent {
   source: string;
 }
 
+// Publish an attendance event to the event's Ably channel.
+// Fire-and-forget — fails silently if Ably is not configured.
 export async function notifyAttendance(
   eventId: number,
   payload: AttendanceEvent,
 ): Promise<void> {
+  const serverKey = process.env.ABLY_SERVER_KEY;
+  if (!serverKey) return;
+
   try {
-    const emitSecret = process.env.EMIT_SECRET || "";
-    await fetch(REALTIME_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(emitSecret ? { "x-emit-secret": emitSecret } : {}),
+    const channel = `event:${eventId}`;
+    // Use Ably REST API directly (no SDK needed on server side).
+    // This avoids importing the Ably SDK in the serverless function.
+    const res = await fetch(
+      `https://rest.ably.io/channels/${encodeURIComponent(channel)}/publish`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Basic ${Buffer.from(serverKey).toString("base64")}`,
+        },
+        body: JSON.stringify({
+          name: "attendance",
+          data: payload,
+        }),
       },
-      body: JSON.stringify({
-        channel: "attendance",
-        roomId: `event:${eventId}`,
-        payload,
-      }),
-    });
-  } catch {
-    // Mini-service not running — non-fatal.
+    );
+    if (!res.ok) {
+      console.error(
+        "[realtime] Ably publish failed:",
+        res.status,
+        await res.text(),
+      );
+    }
+  } catch (e) {
+    // Non-fatal — attendance is still recorded in the DB.
+    console.error("[realtime] Ably publish error:", e);
   }
 }

@@ -71,7 +71,11 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       return forbidden("This event isn't available to you");
   }
 
-  return NextResponse.json(event);
+  return NextResponse.json(event, {
+    headers: {
+      "Cache-Control": "private, s-maxage=15, stale-while-revalidate=60",
+    },
+  });
 }
 
 // PATCH /api/events/[id]

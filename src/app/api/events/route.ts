@@ -184,18 +184,26 @@ export async function GET(req: NextRequest) {
     account.role === "USER" &&
     studentNeedsProfile(account.program, account.section);
 
-  return NextResponse.json({
-    events: eventsWithStatus,
-    needsProfile,
-    userProgram: account.program,
-    userSection: account.section,
-    pagination: {
-      page,
-      pageSize,
-      total: totalCount,
-      totalPages: Math.ceil(totalCount / pageSize),
+  return NextResponse.json(
+    {
+      events: eventsWithStatus,
+      needsProfile,
+      userProgram: account.program,
+      userSection: account.section,
+      pagination: {
+        page,
+        pageSize,
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / pageSize),
+      },
     },
-  });
+    {
+      headers: {
+        "Cache-Control":
+          "private, s-maxage=15, stale-while-revalidate=60",
+      },
+    },
+  );
 }
 
 // POST /api/events (ORGANIZER+)

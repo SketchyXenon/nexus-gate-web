@@ -168,15 +168,22 @@ export async function GET(req: NextRequest) {
     (page - 1) * pageSize + pageSize,
   );
 
-  return NextResponse.json({
-    students: paginated,
-    pagination: {
-      page,
-      pageSize,
-      total,
-      totalPages: Math.ceil(total / pageSize),
+  return NextResponse.json(
+    {
+      students: paginated,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
     },
-  });
+    {
+      headers: {
+        "Cache-Control": "private, s-maxage=30, stale-while-revalidate=120",
+      },
+    },
+  );
 }
 
 // ====================================================================

@@ -45,7 +45,8 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       enableTimeOut: true,
       status: true,
       ownerId: true,
-      delegatable: true, delegationEnabled: true,
+      delegatable: true,
+      delegationEnabled: true,
       checkInOpensAt: true,
       checkInClosesAt: true,
       timeOutOpensAt: true,
@@ -66,10 +67,14 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   if (account.role === "ORGANIZER" && event.ownerId !== account.id) {
     const organizerOrg = account.organizationName?.trim();
     if (!organizerOrg) {
-      return forbidden("You have no organization tag set. An administrator must set your organization tag before you can view other organizers' events.");
+      return forbidden(
+        "You have no organization tag set. An administrator must set your organization tag before you can view other organizers' events.",
+      );
     }
     if (!event.delegationEnabled) {
-      return forbidden("You can only view your own events. QR delegation is not enabled for this event.");
+      return forbidden(
+        "You can only view your own events. QR delegation is not enabled for this event.",
+      );
     }
     const owner = await db.account.findUnique({
       where: { id: event.ownerId },
@@ -77,7 +82,9 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     });
     const ownerOrg = owner?.organizationName?.trim();
     if (!ownerOrg || ownerOrg !== organizerOrg) {
-      return forbidden("You can only view events from the same organization with delegation enabled.");
+      return forbidden(
+        "You can only view events from the same organization with delegation enabled.",
+      );
     }
   }
   if (account.role === "USER") {
@@ -136,37 +143,44 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   });
 
   // ---- Never leak the eventSecret on this endpoint ----
-  return NextResponse.json({
-    id: event.id,
-    title: event.title,
-    description: event.description,
-    scope: event.scope,
-    targetProgram: event.targetProgram,
-    targetProgramLabel: event.targetProgram
-      ? getProgramLabel(event.targetProgram)
-      : null,
-    targetSection: event.targetSection,
-    scheduledAt: event.scheduledAt.toISOString(),
-    endsAt: event.endsAt ? event.endsAt.toISOString() : null,
-    enableTimeOut: event.enableTimeOut,
-    status: event.status,
-    attendanceCount: event._count.attendances,
-    myAttendance,
-    windows: {
-      checkIn: {
-        opensAt: windows.checkIn.opensAt.toISOString(),
-        closesAt: windows.checkIn.closesAt.toISOString(),
-        isLive: windows.checkIn.isLive,
-        isUpcoming: windows.checkIn.isUpcoming,
-        isEnded: windows.checkIn.isEnded,
-      },
-      timeOut: windows.timeOut
-        ? {
-            opensAt: windows.timeOut.opensAt.toISOString(),
-            closesAt: windows.timeOut.closesAt.toISOString(),
-            isLive: windows.timeOut.isLive,
-          }
+  return NextResponse.json(
+    {
+      id: event.id,
+      title: event.title,
+      description: event.description,
+      scope: event.scope,
+      targetProgram: event.targetProgram,
+      targetProgramLabel: event.targetProgram
+        ? getProgramLabel(event.targetProgram)
         : null,
+      targetSection: event.targetSection,
+      scheduledAt: event.scheduledAt.toISOString(),
+      endsAt: event.endsAt ? event.endsAt.toISOString() : null,
+      enableTimeOut: event.enableTimeOut,
+      status: event.status,
+      attendanceCount: event._count.attendances,
+      myAttendance,
+      windows: {
+        checkIn: {
+          opensAt: windows.checkIn.opensAt.toISOString(),
+          closesAt: windows.checkIn.closesAt.toISOString(),
+          isLive: windows.checkIn.isLive,
+          isUpcoming: windows.checkIn.isUpcoming,
+          isEnded: windows.checkIn.isEnded,
+        },
+        timeOut: windows.timeOut
+          ? {
+              opensAt: windows.timeOut.opensAt.toISOString(),
+              closesAt: windows.timeOut.closesAt.toISOString(),
+              isLive: windows.timeOut.isLive,
+            }
+          : null,
+      },
     },
-  });
+    {
+      headers: {
+        "Cache-Control": "private, s-maxage=15, stale-while-revalidate=60",
+      },
+    },
+  );
 }

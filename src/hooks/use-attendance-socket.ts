@@ -1,23 +1,21 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { io, type Socket } from "socket.io-client";
+import Ably from "ably";
 
 // ====================================================================
-// useAttendanceSocket — subscribes to a per-event live attendance room.
+// useAttendanceSocket — subscribes to a per-event live attendance channel.
 // --------------------------------------------------------------------
-// Production: connects to NEXT_PUBLIC_REALTIME_URL (e.g. Render service)
-// Sandbox: connects via the gateway: io("/socket.io/?XTransformPort=3003")
-// Falls back to 4-second polling if the realtime service is down.
+// Uses Ably (managed realtime, free tier: 200 concurrent connections,
+// 3M messages/month). Replaces the Render socket.io mini-service which
+// spun down after 15 min on the free tier.
 //
-// RENDER FREE-TIER NOTE:
-//   Render's free plan spins down services after 15 min of inactivity.
-//   The first request after spin-down takes ~30s to wake the service.
-//   WebSocket transport can't wake a sleeping service (the WS upgrade
-//   fails immediately). So we start with "polling" (HTTP) to wake the
-//   service, then let socket.io upgrade to WebSocket automatically.
-//   This is why transports is ["polling", "websocket"] (polling first),
-//   NOT ["websocket", "polling"].
+// Only organizers connect to Ably (students don't need realtime — they
+// scan and get an immediate result). At 200 concurrent users: ~10-20
+// Ably connections (well under the 200 free-tier limit).
+//
+// ENV: NEXT_PUBLIC_ABLY_KEY must be set (Ably API key from dashboard).
+// Falls back to polling if Ably is not configured.
 // ====================================================================
 
 export interface LiveAttendance {
@@ -34,49 +32,31 @@ export interface LiveAttendance {
 export function useAttendanceSocket(eventId: number | null) {
   const [connected, setConnected] = useState(false);
   const [latest, setLatest] = useState<LiveAttendance | null>(null);
-  const socketRef = useRef<Socket | null>(null);
+  const clientRef = useRef<Ably.Realtime | null>(null);
 
   useEffect(() => {
-    if (eventId == null) return;
+    const ablyKey = process.env.NEXT_PUBLIC_ABLY_KEY;
+    if (!ablyKey || eventId == null) return;
 
-    const rawUrl = process.env.NEXT_PUBLIC_REALTIME_URL;
-    // Strip trailing slash — socket.io-client adds "/socket.io/" itself.
-    // A trailing slash on the base URL causes "//socket.io/" (double slash).
-    const realtimeUrl = rawUrl ? rawUrl.replace(/\/+$/, "") : undefined;
+    const client = new Ably.Realtime({ key: ablyKey });
+    clientRef.current = client;
 
-    const socket = realtimeUrl
-      ? io(realtimeUrl, {
-          path: "/socket.io/",
-          // Polling FIRST — wakes up sleeping Render free-tier services
-          // via HTTP, then socket.io auto-upgrades to WebSocket.
-          transports: ["polling", "websocket"],
-          reconnection: true,
-          reconnectionAttempts: Infinity, // keep trying (Render may sleep)
-          reconnectionDelay: 2000,
-          reconnectionDelayMax: 10000, // cap backoff at 10s
-          timeout: 20000, // 20s connect timeout (Render cold start ~30s)
-        })
-      : io("/socket.io/?XTransformPort=3003", {
-          transports: ["polling", "websocket"],
-          reconnection: true,
-          reconnectionAttempts: Infinity,
-          reconnectionDelay: 2000,
-          reconnectionDelayMax: 10000,
-          timeout: 20000,
-        });
-    socketRef.current = socket;
+    const channel = client.channels.get(`event:${eventId}`);
 
-    socket.on("connect", () => setConnected(true));
-    socket.on("disconnect", () => setConnected(false));
-    socket.on("connect_error", () => setConnected(false));
-    socket.emit("subscribe", `event:${eventId}`);
-    socket.on("attendance", (payload: LiveAttendance) => {
+    channel.subscribe("attendance", (msg) => {
+      const payload = msg.data as LiveAttendance;
       setLatest(payload);
     });
 
+    client.connection.on("connected", () => setConnected(true));
+    client.connection.on("disconnected", () => setConnected(false));
+    client.connection.on("suspended", () => setConnected(false));
+    client.connection.on("failed", () => setConnected(false));
+
     return () => {
-      socket.disconnect();
-      socketRef.current = null;
+      channel.unsubscribe();
+      client.close();
+      clientRef.current = null;
       setConnected(false);
     };
   }, [eventId]);

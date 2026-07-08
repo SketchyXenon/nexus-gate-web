@@ -61,6 +61,7 @@ export async function GET(_req: NextRequest) {
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "Content-Disposition":
         'attachment; filename="nexus-gate-student-template.xlsx"',
+      "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400",
     },
   });
 }

@@ -21,15 +21,29 @@ export async function GET(req: NextRequest) {
 
   const [logs, total] = await Promise.all([
     db.auditLog.findMany({
-      where, orderBy: { createdAt: "desc" },
-      skip: (page - 1) * pageSize, take: pageSize,
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
       include: { actor: { select: { fullName: true, email: true } } },
     }),
     db.auditLog.count({ where }),
   ]);
 
-  return NextResponse.json({
-    logs,
-    pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
-  });
+  return NextResponse.json(
+    {
+      logs,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
+    },
+    {
+      headers: {
+        "Cache-Control": "private, s-maxage=30, stale-while-revalidate=120",
+      },
+    },
+  );
 }

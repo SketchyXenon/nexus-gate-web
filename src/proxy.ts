@@ -153,23 +153,12 @@ export async function proxy(request: NextRequest) {
     ? "frame-ancestors *"
     : "frame-ancestors 'none'";
 
-  // Derive the realtime service origins from NEXT_PUBLIC_REALTIME_URL.
-  // e.g. "https://nexus-gate-realtime.onrender.com"
-  //   → ["https://nexus-gate-realtime.onrender.com", "wss://nexus-gate-realtime.onrender.com"]
-  const realtimeUrl = process.env.NEXT_PUBLIC_REALTIME_URL;
-  const realtimeOrigins: string[] = [];
-  if (realtimeUrl) {
-    try {
-      const parsed = new URL(realtimeUrl);
-      realtimeOrigins.push(`${parsed.protocol}//${parsed.host}`);
-      // Also add the ws/wss variant (socket.io upgrades to WebSocket).
-      const wsProtocol = parsed.protocol === "https:" ? "wss:" : "ws:";
-      realtimeOrigins.push(`${wsProtocol}//${parsed.host}`);
-    } catch {
-      // Invalid URL — skip.
-    }
-  }
-  const connectSrc = ["'self'", ...realtimeOrigins].join(" ");
+  // connect-src: 'self' + Ably realtime endpoints.
+  // Ably uses WebSocket (wss://) and HTTPS for REST fallback.
+  // The Ably SDK connects to *.ably.io (e.g. main.ably-realtime.com).
+  const connectSrc = ["'self'", "https://*.ably.io", "wss://*.ably.io"].join(
+    " ",
+  );
 
   response.headers.set(
     "Content-Security-Policy",

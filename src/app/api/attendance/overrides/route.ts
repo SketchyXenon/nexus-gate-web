@@ -112,36 +112,43 @@ export async function GET(req: NextRequest) {
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  return NextResponse.json({
-    overrides: overrides.map((o) => ({
-      id: o.id,
-      eventId: o.eventId,
-      studentId: o.studentId,
-      reason: o.reason,
-      createdAt: o.createdAt.toISOString(),
-      event: {
-        id: o.event.id,
-        title: o.event.title,
-        scheduledAt: o.event.scheduledAt.toISOString(),
-        targetProgram: o.event.targetProgram,
-        targetSection: o.event.targetSection,
+  return NextResponse.json(
+    {
+      overrides: overrides.map((o) => ({
+        id: o.id,
+        eventId: o.eventId,
+        studentId: o.studentId,
+        reason: o.reason,
+        createdAt: o.createdAt.toISOString(),
+        event: {
+          id: o.event.id,
+          title: o.event.title,
+          scheduledAt: o.event.scheduledAt.toISOString(),
+          targetProgram: o.event.targetProgram,
+          targetSection: o.event.targetSection,
+        },
+        student: {
+          studentId: o.student.studentId,
+          fullName: o.student.fullName,
+          program: o.student.program,
+          section: o.student.section,
+          email: o.student.email,
+        },
+        admin: o.admin
+          ? { id: o.admin.id, fullName: o.admin.fullName, email: o.admin.email }
+          : null,
+      })),
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages,
       },
-      student: {
-        studentId: o.student.studentId,
-        fullName: o.student.fullName,
-        program: o.student.program,
-        section: o.student.section,
-        email: o.student.email,
-      },
-      admin: o.admin
-        ? { id: o.admin.id, fullName: o.admin.fullName, email: o.admin.email }
-        : null,
-    })),
-    pagination: {
-      page,
-      pageSize,
-      total,
-      totalPages,
     },
-  });
+    {
+      headers: {
+        "Cache-Control": "private, s-maxage=15, stale-while-revalidate=60",
+      },
+    },
+  );
 }
