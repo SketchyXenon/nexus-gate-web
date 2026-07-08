@@ -24,8 +24,7 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
     "Full system control: manage accounts, whitelist, audit logs, all events.",
   ORGANIZER:
     "Create and manage your own events, project QR tokens, view attendance, record overrides.",
-  USER:
-    "Scan QR tokens to check in to events. View your own attendance history.",
+  USER: "Scan QR tokens to check in to events. View your own attendance history.",
 };
 
 // Permission matrix — PoLP: each action maps to the minimum role required.
@@ -61,7 +60,10 @@ export const PERMISSIONS = {
 
 export type Permission = keyof typeof PERMISSIONS;
 
-export function hasPermission(role: Role | null, permission: Permission): boolean {
+export function hasPermission(
+  role: Role | null,
+  permission: Permission,
+): boolean {
   if (!role) return false;
   const required = PERMISSIONS[permission];
   return ROLE_HIERARCHY[role] >= ROLE_HIERARCHY[required];

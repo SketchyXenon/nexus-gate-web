@@ -30,8 +30,8 @@ export async function GET(req: NextRequest) {
     Math.max(
       1,
       Number(url.searchParams.get("pageSize") ?? String(DEFAULT_PAGE_SIZE)) ||
-        DEFAULT_PAGE_SIZE
-    )
+        DEFAULT_PAGE_SIZE,
+    ),
   );
   const eventIdParam = url.searchParams.get("eventId");
   const eventId = eventIdParam ? Number(eventIdParam) : undefined;

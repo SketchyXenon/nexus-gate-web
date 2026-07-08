@@ -168,6 +168,72 @@ const eventBaseSchema = z.object({
 });
 
 export const createEventSchema = eventBaseSchema
+  // Check-in open must be before close.
+  .refine(
+    (data) => {
+      if (data.checkInOpensAt && data.checkInClosesAt) {
+        return new Date(data.checkInOpensAt) < new Date(data.checkInClosesAt);
+      }
+      return true;
+    },
+    { message: "Check-in open time must be before close time" },
+  )
+  // End time must be after scheduled start.
+  .refine(
+    (data) => {
+      if (data.endsAt) {
+        return new Date(data.endsAt) > new Date(data.scheduledAt);
+      }
+      return true;
+    },
+    { message: "End time must be after the scheduled time" },
+  )
+  // Time-out validation: only when enableTimeOut is true.
+  // timeOutOpensAt must be after scheduledAt (can't time out before class starts).
+  .refine(
+    (data) => {
+      if (data.enableTimeOut && data.timeOutOpensAt) {
+        return new Date(data.timeOutOpensAt) > new Date(data.scheduledAt);
+      }
+      return true;
+    },
+    { message: "Time-out open time must be after the scheduled start time" },
+  )
+  // timeOutClosesAt must be after timeOutOpensAt.
+  .refine(
+    (data) => {
+      if (data.enableTimeOut && data.timeOutOpensAt && data.timeOutClosesAt) {
+        return new Date(data.timeOutOpensAt) < new Date(data.timeOutClosesAt);
+      }
+      return true;
+    },
+    { message: "Time-out close time must be after the open time" },
+  )
+  // checkInClosesAt must be before timeOutOpensAt (check-in ends before time-out begins).
+  .refine(
+    (data) => {
+      if (data.enableTimeOut && data.checkInClosesAt && data.timeOutOpensAt) {
+        return new Date(data.checkInClosesAt) <= new Date(data.timeOutOpensAt);
+      }
+      return true;
+    },
+    { message: "Check-in must close before time-out opens" },
+  )
+  // timeOutClosesAt must not exceed endsAt (if end time is set).
+  .refine(
+    (data) => {
+      if (data.enableTimeOut && data.timeOutClosesAt && data.endsAt) {
+        return new Date(data.timeOutClosesAt) <= new Date(data.endsAt);
+      }
+      return true;
+    },
+    { message: "Time-out close time must not exceed the event end time" },
+  );
+
+// Update schema: same time validations, but all fields are optional.
+// The refinements check only the fields that are present.
+export const updateEventSchema = eventBaseSchema
+  .partial()
   .refine(
     (data) => {
       if (data.checkInOpensAt && data.checkInClosesAt) {
@@ -179,15 +245,49 @@ export const createEventSchema = eventBaseSchema
   )
   .refine(
     (data) => {
-      if (data.endsAt) {
+      if (data.endsAt && data.scheduledAt) {
         return new Date(data.endsAt) > new Date(data.scheduledAt);
       }
       return true;
     },
     { message: "End time must be after the scheduled time" },
+  )
+  .refine(
+    (data) => {
+      if (data.enableTimeOut && data.timeOutOpensAt && data.scheduledAt) {
+        return new Date(data.timeOutOpensAt) > new Date(data.scheduledAt);
+      }
+      return true;
+    },
+    { message: "Time-out open time must be after the scheduled start time" },
+  )
+  .refine(
+    (data) => {
+      if (data.enableTimeOut && data.timeOutOpensAt && data.timeOutClosesAt) {
+        return new Date(data.timeOutOpensAt) < new Date(data.timeOutClosesAt);
+      }
+      return true;
+    },
+    { message: "Time-out close time must be after the open time" },
+  )
+  .refine(
+    (data) => {
+      if (data.enableTimeOut && data.checkInClosesAt && data.timeOutOpensAt) {
+        return new Date(data.checkInClosesAt) <= new Date(data.timeOutOpensAt);
+      }
+      return true;
+    },
+    { message: "Check-in must close before time-out opens" },
+  )
+  .refine(
+    (data) => {
+      if (data.enableTimeOut && data.timeOutClosesAt && data.endsAt) {
+        return new Date(data.timeOutClosesAt) <= new Date(data.endsAt);
+      }
+      return true;
+    },
+    { message: "Time-out close time must not exceed the event end time" },
   );
-
-export const updateEventSchema = eventBaseSchema.partial();
 
 // ---- Attendance (v8 — signed scan certificate) ----
 // The scan endpoint accepts a SIGNED scan certificate instead of a raw
