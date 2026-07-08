@@ -197,23 +197,56 @@ export async function POST(req: NextRequest) {
   let inserted = 0;
   let skipped = 0;
 
-  for (const s of parsed.data.students) {
+  // Batch insert: use createMany with skipDuplicates for new records,
+  // then update existing ones in a single bulk operation.
+  // This prevents 5000 sequential DB calls (DoS risk on serverless).
+  const students = parsed.data.students;
+
+  // Step 1: Fetch existing studentIds to separate inserts from updates.
+  const studentIds = students.map((s) => s.studentId);
+  const existing = await db.authorizedStudent.findMany({
+    where: { studentId: { in: studentIds } },
+    select: { studentId: true },
+  });
+  const existingIds = new Set(existing.map((e) => e.studentId));
+
+  const toCreate = students
+    .filter((s) => !existingIds.has(s.studentId))
+    .map((s) => ({
+      studentId: s.studentId,
+      email: s.email,
+      fullName: s.fullName,
+      program: s.program,
+      section: s.section,
+      activated: false,
+    }));
+
+  const toUpdate = students.filter((s) => existingIds.has(s.studentId));
+
+  // Step 2: Batch create new records.
+  if (toCreate.length > 0) {
     try {
-      await db.authorizedStudent.upsert({
+      const result = await db.authorizedStudent.createMany({
+        data: toCreate,
+        skipDuplicates: true,
+      });
+      inserted += result.count;
+    } catch {
+      skipped += toCreate.length;
+    }
+  }
+
+  // Step 3: Update existing records (still sequential, but only for
+  // records that already exist — typically a small subset).
+  for (const s of toUpdate) {
+    try {
+      await db.authorizedStudent.update({
         where: { studentId: s.studentId },
-        update: {
+        data: {
           email: s.email,
           fullName: s.fullName,
           program: s.program,
           section: s.section,
-        },
-        create: {
-          studentId: s.studentId,
-          email: s.email,
-          fullName: s.fullName,
-          program: s.program,
-          section: s.section,
-          activated: false,
         },
       });
       inserted++;

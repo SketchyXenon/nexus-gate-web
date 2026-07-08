@@ -16,6 +16,10 @@ import {
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
 
+// Brute-force protection constants.
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCK_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+
 // POST /api/auth/login
 // Signs in via Supabase Auth, then activates PENDING_VERIFICATION accounts.
 export async function POST(req: NextRequest) {
@@ -40,6 +44,22 @@ export async function POST(req: NextRequest) {
     }
     const { email, password } = parsed.data;
 
+    // ---- Pre-auth lockout check ----
+    // Check if the account is locked BEFORE calling Supabase auth.
+    // This prevents brute-force even if Supabase's own rate limit is bypassed.
+    const preCheck = await db.account.findUnique({ where: { email } });
+    if (preCheck?.lockedUntil && preCheck.lockedUntil > new Date()) {
+      const retryMs = preCheck.lockedUntil.getTime() - Date.now();
+      return NextResponse.json(
+        {
+          error: `Too many failed attempts. Please try again in ${Math.ceil(retryMs / 1000)} seconds.`,
+          code: "LOCKED",
+          retryAfterMs: retryMs,
+        },
+        { status: 423 },
+      );
+    }
+
     // Sign in via Supabase Auth (sets the session cookie).
     const supabase = await createSupabaseServerClient();
     const { data: authData, error: authError } =
@@ -47,7 +67,35 @@ export async function POST(req: NextRequest) {
         email,
         password,
       });
+
     if (authError || !authData.user) {
+      // ---- Increment failed login attempts ----
+      if (preCheck) {
+        const newAttempts = (preCheck.failedLoginAttempts ?? 0) + 1;
+        const shouldLock = newAttempts >= MAX_FAILED_ATTEMPTS;
+        await db.account
+          .update({
+            where: { id: preCheck.id },
+            data: {
+              failedLoginAttempts: newAttempts,
+              ...(shouldLock
+                ? { lockedUntil: new Date(Date.now() + LOCK_DURATION_MS) }
+                : {}),
+            },
+          })
+          .catch(() => {});
+        if (shouldLock) {
+          return NextResponse.json(
+            {
+              error: `Too many failed attempts. Your account is locked for 15 minutes.`,
+              code: "LOCKED",
+              retryAfterMs: LOCK_DURATION_MS,
+            },
+            { status: 423 },
+          );
+        }
+      }
+
       // Check for "Email not confirmed" error from Supabase.
       const errMsg = authError?.message ?? "";
       if (
@@ -66,8 +114,7 @@ export async function POST(req: NextRequest) {
       // Check if the account exists in the DB but the auth user was deleted
       // in Supabase Dashboard. If so, clean up the orphaned accounts row
       // so the user can re-register.
-      const dbAccount = await db.account.findUnique({ where: { email } });
-      if (dbAccount && !dbAccount.supabaseAuthUid) {
+      if (preCheck && !preCheck.supabaseAuthUid) {
         console.warn(
           `[login] ${email} exists in accounts but has no supabaseAuthUid - needs migration`,
         );
@@ -75,17 +122,17 @@ export async function POST(req: NextRequest) {
           "Your account needs to be migrated. Use 'Forgot password' to set a new password, or contact your administrator.",
         );
       }
-      if (dbAccount && dbAccount.supabaseAuthUid && isSupabaseConfigured()) {
+      if (preCheck?.supabaseAuthUid && isSupabaseConfigured()) {
         try {
           const admin = createSupabaseAdminClient();
           const { data: userData } = await admin.auth.admin.getUserById(
-            dbAccount.supabaseAuthUid,
+            preCheck.supabaseAuthUid,
           );
           if (!userData?.user) {
             console.log(
               `[login] cleaning orphaned accounts row for ${email} (auth user deleted)`,
             );
-            await db.account.delete({ where: { id: dbAccount.id } });
+            await db.account.delete({ where: { id: preCheck.id } });
             return unauthorized(
               "Your account no longer exists. Please register again.",
             );
@@ -108,20 +155,6 @@ export async function POST(req: NextRequest) {
       // Auth user exists but no accounts row - sign them out (inconsistent state).
       await supabase.auth.signOut();
       return unauthorized("Account not found. Contact your administrator.");
-    }
-
-    // Locked account check.
-    if (account.lockedUntil && account.lockedUntil > new Date()) {
-      const retryMs = account.lockedUntil.getTime() - Date.now();
-      await supabase.auth.signOut();
-      return NextResponse.json(
-        {
-          error: `Too many failed attempts. Please try again in ${Math.ceil(retryMs / 1000)} seconds.`,
-          code: "LOCKED",
-          retryAfterMs: retryMs,
-        },
-        { status: 423 },
-      );
     }
 
     // Activate PENDING_VERIFICATION accounts on first successful login.

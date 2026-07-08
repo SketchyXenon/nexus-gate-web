@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
   badRequest,
+  conflict,
   forbidden,
   notFound,
   parseBody,
@@ -86,17 +87,32 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const result = await db.$transaction(async (tx) => {
-    const override = await tx.attendanceOverride.create({
-      data: { eventId, adminId: account.id, studentId, reason },
+  let result;
+  try {
+    result = await db.$transaction(async (tx) => {
+      const override = await tx.attendanceOverride.create({
+        data: { eventId, adminId: account.id, studentId, reason },
+      });
+      const attendance = await tx.eventAttendance.upsert({
+        where: {
+          eventId_accountId: { eventId, accountId: studentAccount!.id },
+        },
+        update: {},
+        create: { eventId, accountId: studentAccount!.id, source: "override" },
+      });
+      return { override, attendance };
     });
-    const attendance = await tx.eventAttendance.upsert({
-      where: { eventId_accountId: { eventId, accountId: studentAccount!.id } },
-      update: {},
-      create: { eventId, accountId: studentAccount!.id, source: "override" },
-    });
-    return { override, attendance };
-  });
+  } catch (e) {
+    // P2002 = unique constraint violation (duplicate override).
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("Unique constraint")) {
+      return conflict(
+        "This student already has an override for this event.",
+        "ALREADY_OVERRIDDEN",
+      );
+    }
+    throw e;
+  }
 
   notifyAttendance(eventId, {
     id: result.attendance.id,

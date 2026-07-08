@@ -109,11 +109,19 @@ const httpServer = createServer(
       return;
     }
 
-    // ---- Emit bridge (server-to-server) ----
-    // The /emit endpoint is called by the Next.js server (not the browser),
-    // so CORS doesn't apply here. But we still validate the origin as
-    // defense-in-depth (reject browser-based requests with disallowed origins).
+    // ---- Emit bridge (server-to-server, authenticated) ----
+    // The /emit endpoint is called by the Next.js server (not the browser).
+    // Requires a shared secret in the x-emit-secret header to prevent
+    // unauthorized parties from broadcasting fake attendance notifications.
     if (req.method === "POST" && req.url?.startsWith("/emit")) {
+      // Verify the shared secret.
+      const emitSecret = process.env.EMIT_SECRET || "";
+      const providedSecret = req.headers["x-emit-secret"] || "";
+      if (!emitSecret || providedSecret !== emitSecret) {
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Unauthorized" }));
+        return;
+      }
       let body = "";
       for await (const chunk of req) body += chunk.toString();
       try {

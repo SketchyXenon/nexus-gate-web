@@ -3,7 +3,8 @@
 // ====================================================================
 // Parses uploaded files containing student roster data.
 // Supports:
-//   • Excel (.xlsx, .xls) — via xlsx library
+//   • Excel (.xlsx, .xls) — via exceljs library (replaces xlsx which
+//     had a prototype pollution vulnerability — CVSS 7.8)
 //   • PDF (.pdf) — via pdf-parse (extracts text, then parses rows)
 //   • DOCX (.docx) — via mammoth (extracts text, then parses rows)
 //   • CSV (.csv) — via papaparse (already supported)
@@ -16,7 +17,6 @@
 //   section                   → e.g. "2-B"
 // ====================================================================
 
-import * as XLSX from "xlsx";
 import { PROGRAM_CODES } from "./programs";
 
 export interface ParsedStudent {
@@ -36,7 +36,10 @@ export interface ParseResult {
 
 // ---- Column name normalization ----
 function normalizeHeader(h: string): string {
-  return h.toLowerCase().trim().replace(/[\s_-]+/g, "");
+  return h
+    .toLowerCase()
+    .trim()
+    .replace(/[\s_-]+/g, "");
 }
 
 const HEADER_MAP: Record<string, string> = {
@@ -89,7 +92,9 @@ function parseRows(data: unknown[][]): ParseResult {
   const requiredCols = ["studentId", "email", "fullName"];
   for (const req of requiredCols) {
     if (!headers.includes(req)) {
-      errors.push(`Missing required column: ${req}. Expected columns: studentId, email, fullName, program, section`);
+      errors.push(
+        `Missing required column: ${req}. Expected columns: studentId, email, fullName, program, section`,
+      );
       return { students, errors, totalRows: data.length - dataStart, skipped };
     }
   }
@@ -111,7 +116,9 @@ function parseRows(data: unknown[][]): ParseResult {
     const sidStr = (obj.studentId || "").replace(/\D/g, "");
     const studentId = parseInt(sidStr, 10);
     if (!studentId || studentId < 1000000 || studentId > 9999999) {
-      errors.push(`Row ${i + 1}: Invalid student ID "${obj.studentId}" (must be 7 digits)`);
+      errors.push(
+        `Row ${i + 1}: Invalid student ID "${obj.studentId}" (must be 7 digits)`,
+      );
       skipped++;
       continue;
     }
@@ -135,7 +142,9 @@ function parseRows(data: unknown[][]): ParseResult {
     // Parse program (optional — validate if provided)
     let program = (obj.program || "").trim();
     if (program && !PROGRAM_CODES.has(program)) {
-      errors.push(`Row ${i + 1}: Invalid program "${program}" (must be one of: ${[...PROGRAM_CODES].join(", ")})`);
+      errors.push(
+        `Row ${i + 1}: Invalid program "${program}" (must be one of: ${[...PROGRAM_CODES].join(", ")})`,
+      );
       skipped++;
       continue;
     }
@@ -150,16 +159,41 @@ function parseRows(data: unknown[][]): ParseResult {
 }
 
 // ---- Excel parser (.xlsx, .xls) ----
-export function parseExcel(buffer: Buffer): ParseResult {
+// Uses exceljs instead of xlsx (which had a prototype pollution CVE).
+export async function parseExcel(buffer: Buffer): Promise<ParseResult> {
   try {
-    const workbook = XLSX.read(buffer, { type: "buffer" });
-    const sheetName = workbook.SheetNames[0];
-    if (!sheetName) return { students: [], errors: ["No sheets found in Excel file"], totalRows: 0, skipped: 0 };
-    const sheet = workbook.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false }) as unknown[][];
+    const ExcelJS = await import("exceljs");
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer.buffer as ArrayBuffer);
+
+    const sheet = workbook.worksheets[0];
+    if (!sheet) {
+      return {
+        students: [],
+        errors: ["No sheets found in Excel file"],
+        totalRows: 0,
+        skipped: 0,
+      };
+    }
+
+    // Convert sheet rows to a 2D array for the shared parseRows function.
+    const data: unknown[][] = [];
+    sheet.eachRow((row) => {
+      const values = row.values as unknown[];
+      // exceljs uses 1-based indexing; slice(1) removes the leading null.
+      data.push(values.slice(1).map((v) => (v == null ? "" : v)));
+    });
+
     return parseRows(data);
   } catch (e) {
-    return { students: [], errors: [`Failed to parse Excel: ${e instanceof Error ? e.message : String(e)}`], totalRows: 0, skipped: 0 };
+    return {
+      students: [],
+      errors: [
+        `Failed to parse Excel: ${e instanceof Error ? e.message : String(e)}`,
+      ],
+      totalRows: 0,
+      skipped: 0,
+    };
   }
 }
 
@@ -221,7 +255,14 @@ export async function parsePdf(buffer: Buffer): Promise<ParseResult> {
     // No headers detected — try default column order
     return parseRows(rows);
   } catch (e) {
-    return { students: [], errors: [`Failed to parse PDF: ${e instanceof Error ? e.message : String(e)}`], totalRows: 0, skipped: 0 };
+    return {
+      students: [],
+      errors: [
+        `Failed to parse PDF: ${e instanceof Error ? e.message : String(e)}`,
+      ],
+      totalRows: 0,
+      skipped: 0,
+    };
   }
 }
 
@@ -266,30 +307,63 @@ export async function parseDocx(buffer: Buffer): Promise<ParseResult> {
 
     return parseRows(rows);
   } catch (e) {
-    return { students: [], errors: [`Failed to parse DOCX: ${e instanceof Error ? e.message : String(e)}`], totalRows: 0, skipped: 0 };
+    return {
+      students: [],
+      errors: [
+        `Failed to parse DOCX: ${e instanceof Error ? e.message : String(e)}`,
+      ],
+      totalRows: 0,
+      skipped: 0,
+    };
+  }
+}
+
+// ---- CSV parser (.csv) ----
+// Uses papaparse for reliable CSV parsing.
+export async function parseCsv(buffer: Buffer): Promise<ParseResult> {
+  try {
+    const Papa = (await import("papaparse")).default;
+    const text = buffer.toString("utf-8");
+    const result = Papa.parse(text, { skipEmptyLines: true });
+    const data = result.data as unknown[][];
+    return parseRows(data);
+  } catch (e) {
+    return {
+      students: [],
+      errors: [
+        `Failed to parse CSV: ${e instanceof Error ? e.message : String(e)}`,
+      ],
+      totalRows: 0,
+      skipped: 0,
+    };
   }
 }
 
 // ---- Main entry point: detect file type and parse ----
-export async function parseFile(buffer: Buffer, filename: string): Promise<ParseResult> {
+export async function parseFile(
+  buffer: Buffer,
+  filename: string,
+): Promise<ParseResult> {
   const ext = filename.toLowerCase().split(".").pop();
 
   switch (ext) {
     case "xlsx":
     case "xls":
-      return parseExcel(buffer);
+      return await parseExcel(buffer);
     case "pdf":
       return await parsePdf(buffer);
     case "docx":
       return await parseDocx(buffer);
     case "csv":
-      // CSV is handled by the existing papaparse flow on the client side
-      // But if we receive it server-side, parse with xlsx (it handles CSV too)
-      return parseExcel(buffer);
+      // CSV is handled by the existing papaparse flow on the client side.
+      // Server-side, use papaparse (synchronous parse).
+      return await parseCsv(buffer);
     default:
       return {
         students: [],
-        errors: [`Unsupported file type: .${ext}. Supported: .xlsx, .xls, .pdf, .docx, .csv`],
+        errors: [
+          `Unsupported file type: .${ext}. Supported: .xlsx, .xls, .pdf, .docx, .csv`,
+        ],
         totalRows: 0,
         skipped: 0,
       };

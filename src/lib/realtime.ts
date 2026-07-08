@@ -30,9 +30,13 @@ export async function notifyAttendance(
   payload: AttendanceEvent,
 ): Promise<void> {
   try {
+    const emitSecret = process.env.EMIT_SECRET || "";
     await fetch(REALTIME_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(emitSecret ? { "x-emit-secret": emitSecret } : {}),
+      },
       body: JSON.stringify({
         channel: "attendance",
         roomId: `event:${eventId}`,
