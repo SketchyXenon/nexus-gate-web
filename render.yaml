@@ -51,11 +51,12 @@ services:
       - key: NODE_ENV
         value: production
       - key: NEXT_PUBLIC_APP_URL
-        # Render exposes your service at https://<name>.onrender.com.
-        # Update this if you rename the service or add a custom domain.
-        value: https://nexus-gate-realtime.onrender.com
+        # This is the Next.js app URL, NOT the realtime service URL.
+        # If deploying on Render, use your Render service URL.
+        # If deploying on Vercel, use your Vercel URL.
+        value: https://nexus-gate-web.vercel.app
       - key: NEXTAUTH_URL
-        value: https://nexus-gate-realtime.onrender.com
+        value: https://nexus-gate-web.vercel.app
 
       # --- Secrets (set these in the Render dashboard) ---
       # DATABASE_URL: use the Supabase DIRECT connection (port 5432),

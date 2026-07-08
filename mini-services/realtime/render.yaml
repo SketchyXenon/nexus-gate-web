@@ -1,16 +1,26 @@
 services:
   - type: web
     name: nexus-gate-realtime
-    env: docker
+    # Use native Node runtime (not Docker) — simpler and more reliable.
+    # Docker was causing multiple issues (PORT override, missing build
+    # script, wrong start command inherited from root render.yaml).
+    runtime: node
     region: singapore
     plan: free
-    # Render needs to know where the Dockerfile is. If Render is connected
-    # to the whole repo (root), it looks for ./Dockerfile at the root —
-    # but our Dockerfile is in mini-services/realtime/. Set rootDir so
-    # Render cd's into mini-services/realtime/ before building.
+    # Render cd's into this directory before building/starting.
     rootDir: mini-services/realtime
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
+
+    # Install bun (Render's Node runtime doesn't include it), then
+    # install dependencies. No build step needed — the service is a
+    # single TypeScript file run directly by Bun.
+    buildCommand: npm install -g bun && bun install
+
+    # Start the realtime service. Bun runs TypeScript directly — no
+    # compilation needed. Render sets PORT automatically.
+    startCommand: bun index.ts
+
+    # Health check — Render polls this path; if it returns non-200,
+    # the deploy is marked failed and rolled back.
     healthCheckPath: /health
     autoDeploy: true
     envVars:
