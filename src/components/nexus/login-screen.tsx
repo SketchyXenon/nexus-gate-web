@@ -340,7 +340,18 @@ function AuthScreen({
     if (!fullName.trim()) e.fullName = "Enter your full name";
     if (!/^\d{7}$/.test(studentId.trim())) e.studentId = "Must be 7 digits";
     if (!email) e.email = "Enter your email";
-    if (password.length < 8) e.password = "At least 8 characters";
+    // Password: match backend passwordSchema rules.
+    if (password.length < 8) {
+      e.password = "At least 8 characters";
+    } else if (!/[A-Z]/.test(password)) {
+      e.password = "Include an uppercase letter";
+    } else if (!/[a-z]/.test(password)) {
+      e.password = "Include a lowercase letter";
+    } else if (!/[0-9]/.test(password)) {
+      e.password = "Include a number";
+    } else if (!/[^A-Za-z0-9]/.test(password)) {
+      e.password = "Include a special character (!@#$...)";
+    }
     if (password !== confirmPassword)
       e.confirmPassword = "Passwords don't match";
     setErrors(e);
@@ -349,7 +360,18 @@ function AuthScreen({
 
   function validateReset() {
     const e: Record<string, string> = {};
-    if (newPassword.length < 8) e.newPassword = "At least 8 characters";
+    // Password: match backend strongPasswordSchema rules.
+    if (newPassword.length < 8) {
+      e.newPassword = "At least 8 characters";
+    } else if (!/[A-Z]/.test(newPassword)) {
+      e.newPassword = "Include an uppercase letter";
+    } else if (!/[a-z]/.test(newPassword)) {
+      e.newPassword = "Include a lowercase letter";
+    } else if (!/[0-9]/.test(newPassword)) {
+      e.newPassword = "Include a number";
+    } else if (!/[^A-Za-z0-9]/.test(newPassword)) {
+      e.newPassword = "Include a special character (!@#$...)";
+    }
     if (newPassword !== confirmNewPassword)
       e.confirmNewPassword = "Passwords don't match";
     setErrors(e);
@@ -362,7 +384,11 @@ function AuthScreen({
     login.mutate(
       { email, password },
       {
-        onSuccess: () => toast({ title: "Welcome back!" }),
+        onSuccess: () =>
+          toast({
+            title: "Welcome back!",
+            description: "Loading your dashboard...",
+          }),
         onError: (err) => {
           toast({
             title: "Couldn't sign in",
@@ -833,6 +859,60 @@ function AuthScreen({
                             </button>
                           </div>
                           <PasswordStrengthMeter password={password} />
+                          {/* Realtime password requirement checklist */}
+                          {password && (
+                            <div className="text-[11px] space-y-0.5 mt-1">
+                              <p
+                                className={
+                                  password.length >= 8
+                                    ? "text-emerald-600"
+                                    : "text-muted-foreground"
+                                }
+                              >
+                                {password.length >= 8 ? "✓" : "○"} At least 8
+                                characters
+                              </p>
+                              <p
+                                className={
+                                  /[A-Z]/.test(password)
+                                    ? "text-emerald-600"
+                                    : "text-muted-foreground"
+                                }
+                              >
+                                {/[A-Z]/.test(password) ? "✓" : "○"} Uppercase
+                                letter
+                              </p>
+                              <p
+                                className={
+                                  /[a-z]/.test(password)
+                                    ? "text-emerald-600"
+                                    : "text-muted-foreground"
+                                }
+                              >
+                                {/[a-z]/.test(password) ? "✓" : "○"} Lowercase
+                                letter
+                              </p>
+                              <p
+                                className={
+                                  /[0-9]/.test(password)
+                                    ? "text-emerald-600"
+                                    : "text-muted-foreground"
+                                }
+                              >
+                                {/[0-9]/.test(password) ? "✓" : "○"} Number
+                              </p>
+                              <p
+                                className={
+                                  /[^A-Za-z0-9]/.test(password)
+                                    ? "text-emerald-600"
+                                    : "text-muted-foreground"
+                                }
+                              >
+                                {/[^A-Za-z0-9]/.test(password) ? "✓" : "○"}{" "}
+                                Special character
+                              </p>
+                            </div>
+                          )}
                           {errors.password && (
                             <p className="text-xs text-destructive">
                               {errors.password}
@@ -1076,6 +1156,60 @@ function AuthScreen({
                           </button>
                         </div>
                         <PasswordStrengthMeter password={newPassword} />
+                        {/* Realtime password requirement checklist */}
+                        {newPassword && (
+                          <div className="text-[11px] space-y-0.5 mt-1">
+                            <p
+                              className={
+                                newPassword.length >= 8
+                                  ? "text-emerald-600"
+                                  : "text-muted-foreground"
+                              }
+                            >
+                              {newPassword.length >= 8 ? "✓" : "○"} At least 8
+                              characters
+                            </p>
+                            <p
+                              className={
+                                /[A-Z]/.test(newPassword)
+                                  ? "text-emerald-600"
+                                  : "text-muted-foreground"
+                              }
+                            >
+                              {/[A-Z]/.test(newPassword) ? "✓" : "○"} Uppercase
+                              letter
+                            </p>
+                            <p
+                              className={
+                                /[a-z]/.test(newPassword)
+                                  ? "text-emerald-600"
+                                  : "text-muted-foreground"
+                              }
+                            >
+                              {/[a-z]/.test(newPassword) ? "✓" : "○"} Lowercase
+                              letter
+                            </p>
+                            <p
+                              className={
+                                /[0-9]/.test(newPassword)
+                                  ? "text-emerald-600"
+                                  : "text-muted-foreground"
+                              }
+                            >
+                              {/[0-9]/.test(newPassword) ? "✓" : "○"} Number
+                            </p>
+                            <p
+                              className={
+                                /[^A-Za-z0-9]/.test(newPassword)
+                                  ? "text-emerald-600"
+                                  : "text-muted-foreground"
+                              }
+                            >
+                              {/[^A-Za-z0-9]/.test(newPassword) ? "✓" : "○"}{" "}
+                              Special character
+                            </p>
+                          </div>
+                        )}
                         {errors.newPassword && (
                           <p className="text-xs text-destructive">
                             {errors.newPassword}

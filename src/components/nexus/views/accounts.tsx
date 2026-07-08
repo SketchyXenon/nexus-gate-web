@@ -305,7 +305,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
         onSuccess: () => {
           toast({
             title: "Account created",
-            description: `${newFullName} can now sign in.`,
+            description: `${newFullName} (${newRole === "ADMIN" ? "Administrator" : "Organizer"}) can now sign in with their email and password.`,
           });
           setCreateOpen(false);
           setNewEmail("");

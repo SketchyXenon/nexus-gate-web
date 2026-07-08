@@ -41,6 +41,7 @@ import { DiceBearAvatar } from "./dicebear-avatar";
 import { NexusLogo } from "./nexus-logo";
 import { NotificationBell } from "./notification-bell";
 import { useOnlineStatus } from "@/hooks/use-online-status";
+import { useSessionTimeout } from "@/hooks/use-session-timeout";
 import { DashboardView } from "./views/dashboard";
 import { WhitelistView } from "./views/whitelist";
 import { EventsView } from "./views/events";
@@ -149,6 +150,8 @@ export function AppShell({ user }: { user: Account }) {
   const [view, setView] = useState<ViewId>("dashboard");
   const logout = useLogout();
   const online = useOnlineStatus();
+  // Auto-logout after 30 min of inactivity (warning at 25 min).
+  useSessionTimeout(true);
 
   const allowedNav = useMemo(
     () => NAV.filter((n) => n.roles.includes(user.role)),
