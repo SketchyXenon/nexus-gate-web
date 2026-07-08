@@ -39,7 +39,7 @@ const PORT = Number(process.env.PORT || process.env.IO_PORT || 3003);
 // IMPORTANT: The Vercel app is at nexus-gate-WEB.vercel.app (with -web).
 const ALLOWED_ORIGINS: string[] = (
   process.env.ALLOWED_ORIGINS ||
-  "https://nexus-gate-web.vercel.app,https://nexus-gate.vercel.app,http://localhost:3000"
+  "https://nexus-gate-web.vercel.app"
 )
   .split(",")
   .map((s) => s.trim())
