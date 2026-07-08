@@ -1,45 +1,66 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api";
-import * as XLSX from "xlsx";
 
 // ====================================================================
 // GET /api/whitelist/template (ORGANIZER+)
 // --------------------------------------------------------------------
 // Downloads an Excel template (.xlsx) with the correct column headers
-// and a sample row, so admins/organizers know the expected format.
+// and sample rows, so admins/organizers know the expected format.
+// Uses exceljs instead of xlsx (which had a prototype pollution CVE).
 // ====================================================================
 export async function GET(_req: NextRequest) {
   const res = await requireAuth("ORGANIZER");
   if ("error" in res) return res.error;
 
-  // Create worksheet with headers + sample row
-  const data = [
-    ["studentId", "email", "fullName", "program", "section"],
-    [3240001, "jane.doe@ctu.edu.ph", "Jane Dela Cruz", "BSIT", "2-B"],
-    [3240002, "john.smith@ctu.edu.ph", "John Smith", "BSMx", "1-A"],
-    [3240003, "maria.garcia@ctu.edu.ph", "Maria Garcia", "BIT-CT", "3-C"],
+  const ExcelJS = await import("exceljs");
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("Students");
+
+  // Define columns with widths.
+  sheet.columns = [
+    { header: "studentId", key: "studentId", width: 12 },
+    { header: "email", key: "email", width: 28 },
+    { header: "fullName", key: "fullName", width: 22 },
+    { header: "program", key: "program", width: 10 },
+    { header: "section", key: "section", width: 10 },
   ];
 
-  const ws = XLSX.utils.aoa_to_sheet(data);
+  // Add sample rows.
+  sheet.addRows([
+    {
+      studentId: 3240001,
+      email: "jane.doe@ctu.edu.ph",
+      fullName: "Jane Dela Cruz",
+      program: "BSIT",
+      section: "2-B",
+    },
+    {
+      studentId: 3240002,
+      email: "john.smith@ctu.edu.ph",
+      fullName: "John Smith",
+      program: "BSMx",
+      section: "1-A",
+    },
+    {
+      studentId: 3240003,
+      email: "maria.garcia@ctu.edu.ph",
+      fullName: "Maria Garcia",
+      program: "BIT-CT",
+      section: "3-C",
+    },
+  ]);
 
-  // Set column widths
-  ws["!cols"] = [
-    { wch: 12 }, // studentId
-    { wch: 28 }, // email
-    { wch: 22 }, // fullName
-    { wch: 10 }, // program
-    { wch: 10 }, // section
-  ];
+  // Bold the header row.
+  sheet.getRow(1).font = { bold: true };
 
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Students");
+  const buffer = await workbook.xlsx.writeBuffer();
 
-  const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-
-  return new NextResponse(buffer, {
+  return new NextResponse(Buffer.from(buffer), {
     headers: {
-      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": 'attachment; filename="nexus-gate-student-template.xlsx"',
+      "Content-Type":
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "Content-Disposition":
+        'attachment; filename="nexus-gate-student-template.xlsx"',
     },
   });
 }
