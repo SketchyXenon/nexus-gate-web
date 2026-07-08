@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "bun --hot index.ts",
-    "start": "bun run index.ts"
+    "build": "echo 'No build step needed'",
+    "start": "bun index.ts"
   },
   "dependencies": {
     "socket.io": "^4.8.3"
