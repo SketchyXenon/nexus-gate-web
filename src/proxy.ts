@@ -141,24 +141,19 @@ export async function proxy(request: NextRequest) {
   }
 
   // Content Security Policy — prevents XSS, data injection
-  // SECURITY (v8): Removed 'unsafe-eval' (not needed, weakens XSS protection).
-  // connect-src: 'self' + the realtime service origin (if configured).
-  //   The realtime service runs on a separate host (e.g. Render), so the
-  //   browser needs both https:// (polling fallback) and wss:// (WebSocket)
-  //   origins in connect-src. Without this, the CSP blocks the socket.io
-  //   connection with "connect-src 'self' violates the following directive".
-  // In dev: relax frame-ancestors so preview panels work.
-  // In production: strict 'none' to prevent clickjacking.
+  // connect-src: 'self' + Ably realtime endpoints.
+  // Ably uses WebSocket (wss://) and HTTPS for REST fallback.
   const cspFrameAncestors = isDev
     ? "frame-ancestors *"
     : "frame-ancestors 'none'";
 
-  // connect-src: 'self' + Ably realtime endpoints.
-  // Ably uses WebSocket (wss://) and HTTPS for REST fallback.
-  // The Ably SDK connects to *.ably.io (e.g. main.ably-realtime.com).
-  const connectSrc = ["'self'", "https://*.ably.io", "wss://*.ably.io"].join(
-    " ",
-  );
+  const connectSrc = [
+    "'self'",
+    "https://*.ably.io",
+    "wss://*.ably.io",
+    "https://*.ably.net",
+    "wss://*.ably.net",
+  ].join(" ");
 
   response.headers.set(
     "Content-Security-Policy",
