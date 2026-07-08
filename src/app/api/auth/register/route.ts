@@ -103,11 +103,16 @@ export async function POST(req: NextRequest) {
     // If Supabase has email confirmation enabled (default), signUp creates
     // the user with email_confirmed=false and sends a confirmation link.
     // The user cannot log in until they click that link.
+    // emailRedirectTo: use NEXT_PUBLIC_APP_URL (production URL) with
+    // req.nextUrl.origin as fallback. Without this, Supabase uses its
+    // dashboard Site URL (often localhost:3000) as the redirect.
     const supabase = await createSupabaseServerClient();
+    const appUrl =
+      process.env.NEXT_PUBLIC_APP_URL?.trim() || req.nextUrl.origin;
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { fullName } },
+      options: { data: { fullName }, emailRedirectTo: appUrl },
     });
     if (authError || !authData.user) {
       const msg = authError?.message ?? "Registration failed";

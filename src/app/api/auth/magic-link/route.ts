@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const appUrl = req.nextUrl.origin;
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() || req.nextUrl.origin;
   const supabase = await createSupabaseServerClient();
   const { error } = await supabase.auth.signInWithOtp({
     email,
