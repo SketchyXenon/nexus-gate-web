@@ -3,29 +3,62 @@
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import {
-  ClipboardList, Download, Users, CheckCircle2, Clock, Activity,
-  Radio, FileDown, Loader2, Search, SlidersHorizontal,
-  ChevronLeft, ChevronRight, Filter, X, QrCode, Hand,
+  ClipboardList,
+  Download,
+  Users,
+  CheckCircle2,
+  Clock,
+  Activity,
+  Radio,
+  FileDown,
+  Loader2,
+  Search,
+  SlidersHorizontal,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  X,
+  QrCode,
+  Hand,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Card, CardContent, CardDescription, CardHeader, CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
-  Tooltip, TooltipContent, TooltipTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import { EventCombobox } from "@/components/nexus/event-combobox";
-import { useEvents, useEventAttendance, type AttendanceRow } from "@/lib/api-client";
+import {
+  useEvents,
+  useEventAttendance,
+  type AttendanceRow,
+} from "@/lib/api-client";
 import { useAttendanceSocket } from "@/hooks/use-attendance-socket";
 import { useDebounce } from "@/hooks/use-debounce";
 import { toast } from "@/hooks/use-toast";
@@ -68,9 +101,10 @@ export function AttendanceView() {
   // `userSelectedEventId` is null until the user picks an event explicitly;
   // until then we fall back to the first event in the list. Using derived
   // state avoids the "setState in effect" anti-pattern.
-  const [userSelectedEventId, setUserSelectedEventId] = useState<number | null>(null);
-  const eventId: number | null =
-    userSelectedEventId ?? events[0]?.id ?? null;
+  const [userSelectedEventId, setUserSelectedEventId] = useState<number | null>(
+    null,
+  );
+  const eventId: number | null = userSelectedEventId ?? events[0]?.id ?? null;
 
   // ---- Filter / sort / search state ----
   const [searchInput, setSearchInput] = useState("");
@@ -87,8 +121,13 @@ export function AttendanceView() {
     setPage(1);
   }
 
-  const presenceQ = useEventAttendance(eventId);
+  // Create the socket first so we can use its connected state to control polling.
   const socket = useAttendanceSocket(eventId);
+  // Poll only when the socket is disconnected (fallback). When connected,
+  // socket.io pushes realtime updates — no polling needed.
+  const presenceQ = useEventAttendance(eventId, {
+    socketConnected: socket.connected,
+  });
 
   // ---- Derived: programs/sections present in this event's attendance ----
   const allRows: AttendanceRow[] = presenceQ.data?.attendances ?? [];
@@ -119,8 +158,10 @@ export function AttendanceView() {
   const filtered = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
     return allRows.filter((r) => {
-      if (programFilter !== FILTER_ALL && r.account.program !== programFilter) return false;
-      if (sectionFilter !== FILTER_ALL && r.account.section !== sectionFilter) return false;
+      if (programFilter !== FILTER_ALL && r.account.program !== programFilter)
+        return false;
+      if (sectionFilter !== FILTER_ALL && r.account.section !== sectionFilter)
+        return false;
       if (sourceFilter !== FILTER_ALL) {
         const isOverride = r.source === "override";
         if (sourceFilter === "qr" && isOverride) return false;
@@ -128,7 +169,8 @@ export function AttendanceView() {
       }
       if (q) {
         const name = r.account.fullName.toLowerCase();
-        const sid = r.account.studentId != null ? String(r.account.studentId) : "";
+        const sid =
+          r.account.studentId != null ? String(r.account.studentId) : "";
         if (!name.includes(q) && !sid.includes(q)) return false;
       }
       return true;
@@ -139,25 +181,42 @@ export function AttendanceView() {
     const arr = [...filtered];
     arr.sort((a, b) => {
       switch (sortBy) {
-        case "name-asc": return a.account.fullName.localeCompare(b.account.fullName);
-        case "name-desc": return b.account.fullName.localeCompare(a.account.fullName);
-        case "time-asc": return new Date(a.scannedAt).getTime() - new Date(b.scannedAt).getTime();
-        case "time-desc": return new Date(b.scannedAt).getTime() - new Date(a.scannedAt).getTime();
+        case "name-asc":
+          return a.account.fullName.localeCompare(b.account.fullName);
+        case "name-desc":
+          return b.account.fullName.localeCompare(a.account.fullName);
+        case "time-asc":
+          return (
+            new Date(a.scannedAt).getTime() - new Date(b.scannedAt).getTime()
+          );
+        case "time-desc":
+          return (
+            new Date(b.scannedAt).getTime() - new Date(a.scannedAt).getTime()
+          );
         case "id-asc":
           return (a.account.studentId ?? 0) - (b.account.studentId ?? 0);
         case "id-desc":
           return (b.account.studentId ?? 0) - (a.account.studentId ?? 0);
         case "program-asc": {
-          const p = (a.account.program ?? "").localeCompare(b.account.program ?? "");
+          const p = (a.account.program ?? "").localeCompare(
+            b.account.program ?? "",
+          );
           if (p !== 0) return p;
-          return (a.account.section ?? "").localeCompare(b.account.section ?? "");
+          return (a.account.section ?? "").localeCompare(
+            b.account.section ?? "",
+          );
         }
         case "program-desc": {
-          const p = (b.account.program ?? "").localeCompare(a.account.program ?? "");
+          const p = (b.account.program ?? "").localeCompare(
+            a.account.program ?? "",
+          );
           if (p !== 0) return p;
-          return (b.account.section ?? "").localeCompare(a.account.section ?? "");
+          return (b.account.section ?? "").localeCompare(
+            a.account.section ?? "",
+          );
         }
-        default: return 0;
+        default:
+          return 0;
       }
     });
     return arr;
@@ -238,7 +297,10 @@ export function AttendanceView() {
     a.download = `attendance-event-${eventId}-${format(new Date(), "yyyy-MM-dd")}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    toast({ title: "CSV downloaded", description: `${sorted.length} rows exported.` });
+    toast({
+      title: "CSV downloaded",
+      description: `${sorted.length} rows exported.`,
+    });
   }
 
   return (
@@ -253,7 +315,8 @@ export function AttendanceView() {
                   Attendance Roster
                 </CardTitle>
                 <CardDescription>
-                  Live check-in list for the selected event. Filter, sort, search and export.
+                  Live check-in list for the selected event. Filter, sort,
+                  search and export.
                 </CardDescription>
               </div>
               <Tooltip>
@@ -278,7 +341,10 @@ export function AttendanceView() {
             {/* Event picker — searchable combobox, full-width on mobile */}
             <div className="flex flex-col sm:flex-row sm:items-end gap-2">
               <div className="flex-1 min-w-0 space-y-1.5">
-                <Label htmlFor="att-event" className="text-xs text-muted-foreground">
+                <Label
+                  htmlFor="att-event"
+                  className="text-xs text-muted-foreground"
+                >
                   Event
                 </Label>
                 <EventCombobox
@@ -309,14 +375,18 @@ export function AttendanceView() {
                 const isLive = status === "live";
                 const isUpcoming = status === "upcoming";
                 return (
-                  <div className={`rounded-lg p-3 flex items-center gap-2 text-sm ${
-                    isLive
-                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                      : isUpcoming
-                        ? "bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                        : "bg-muted text-muted-foreground"
-                  }`}>
-                    {isLive && <Radio className="h-4 w-4 animate-pulse shrink-0" />}
+                  <div
+                    className={`rounded-lg p-3 flex items-center gap-2 text-sm ${
+                      isLive
+                        ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                        : isUpcoming
+                          ? "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                          : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {isLive && (
+                      <Radio className="h-4 w-4 animate-pulse shrink-0" />
+                    )}
                     {(isUpcoming || status === "ended") && (
                       <Clock className="h-4 w-4 shrink-0" />
                     )}
@@ -398,19 +468,27 @@ export function AttendanceView() {
 
                   {/* Source filter */}
                   <Select value={sourceFilter} onValueChange={changeSource}>
-                    <SelectTrigger className="h-9 w-full" aria-label="Filter by source">
+                    <SelectTrigger
+                      className="h-9 w-full"
+                      aria-label="Filter by source"
+                    >
                       <SelectValue placeholder="All sources" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value={FILTER_ALL}>All sources</SelectItem>
                       <SelectItem value="qr">QR scan only</SelectItem>
-                      <SelectItem value="override">Manual override only</SelectItem>
+                      <SelectItem value="override">
+                        Manual override only
+                      </SelectItem>
                     </SelectContent>
                   </Select>
 
                   {/* Program filter */}
                   <Select value={programFilter} onValueChange={changeProgram}>
-                    <SelectTrigger className="h-9 w-full" aria-label="Filter by program">
+                    <SelectTrigger
+                      className="h-9 w-full"
+                      aria-label="Filter by program"
+                    >
                       <SelectValue placeholder="All programs" />
                     </SelectTrigger>
                     <SelectContent>
@@ -425,7 +503,10 @@ export function AttendanceView() {
 
                   {/* Section filter */}
                   <Select value={sectionFilter} onValueChange={changeSection}>
-                    <SelectTrigger className="h-9 w-full" aria-label="Filter by section">
+                    <SelectTrigger
+                      className="h-9 w-full"
+                      aria-label="Filter by section"
+                    >
                       <SelectValue placeholder="All sections" />
                     </SelectTrigger>
                     <SelectContent>
@@ -505,8 +586,19 @@ export function AttendanceView() {
                               <motion.tr
                                 key={a.id}
                                 layout
-                                initial={isNew ? { opacity: 0, backgroundColor: "rgba(245, 158, 11, 0.18)" } : false}
-                                animate={{ opacity: 1, backgroundColor: "rgba(245, 158, 11, 0)" }}
+                                initial={
+                                  isNew
+                                    ? {
+                                        opacity: 0,
+                                        backgroundColor:
+                                          "rgba(245, 158, 11, 0.18)",
+                                      }
+                                    : false
+                                }
+                                animate={{
+                                  opacity: 1,
+                                  backgroundColor: "rgba(245, 158, 11, 0)",
+                                }}
                                 transition={{ duration: 1.2 }}
                                 className="hover:bg-muted/40"
                               >
@@ -521,30 +613,46 @@ export function AttendanceView() {
                                 </TableCell>
                                 <TableCell>
                                   {a.account.program ? (
-                                    <Badge variant="outline" className="text-[10px]">
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[10px]"
+                                    >
                                       {a.account.program}
                                     </Badge>
                                   ) : (
-                                    <span className="text-muted-foreground">—</span>
+                                    <span className="text-muted-foreground">
+                                      —
+                                    </span>
                                   )}
                                 </TableCell>
                                 <TableCell>
                                   {a.account.section ? (
-                                    <Badge variant="outline" className="text-[10px]">
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[10px]"
+                                    >
                                       {a.account.section}
                                     </Badge>
                                   ) : (
-                                    <span className="text-muted-foreground">—</span>
+                                    <span className="text-muted-foreground">
+                                      —
+                                    </span>
                                   )}
                                 </TableCell>
                                 <TableCell>
                                   {isOverride ? (
-                                    <Badge variant="outline" className="border-amber-500/40 text-amber-600 text-[10px] gap-1">
+                                    <Badge
+                                      variant="outline"
+                                      className="border-amber-500/40 text-amber-600 text-[10px] gap-1"
+                                    >
                                       <Hand className="h-2.5 w-2.5" />
                                       Manual
                                     </Badge>
                                   ) : (
-                                    <Badge variant="outline" className="border-emerald-500/40 text-emerald-600 text-[10px] gap-1">
+                                    <Badge
+                                      variant="outline"
+                                      className="border-emerald-500/40 text-emerald-600 text-[10px] gap-1"
+                                    >
                                       <QrCode className="h-2.5 w-2.5" />
                                       QR
                                     </Badge>
@@ -556,10 +664,16 @@ export function AttendanceView() {
                                 <TableCell className="text-xs tabular-nums whitespace-nowrap">
                                   {a.timeOutAt ? (
                                     <span className="text-muted-foreground">
-                                      {format(new Date(a.timeOutAt), "HH:mm:ss")}
+                                      {format(
+                                        new Date(a.timeOutAt),
+                                        "HH:mm:ss",
+                                      )}
                                     </span>
                                   ) : (
-                                    <Badge variant="outline" className="border-amber-500/40 text-amber-600 text-[10px]">
+                                    <Badge
+                                      variant="outline"
+                                      className="border-amber-500/40 text-amber-600 text-[10px]"
+                                    >
                                       Still in
                                     </Badge>
                                   )}
@@ -582,8 +696,18 @@ export function AttendanceView() {
                           <motion.div
                             key={a.id}
                             layout
-                            initial={isNew ? { opacity: 0, backgroundColor: "rgba(245, 158, 11, 0.18)" } : false}
-                            animate={{ opacity: 1, backgroundColor: "rgba(245, 158, 11, 0)" }}
+                            initial={
+                              isNew
+                                ? {
+                                    opacity: 0,
+                                    backgroundColor: "rgba(245, 158, 11, 0.18)",
+                                  }
+                                : false
+                            }
+                            animate={{
+                              opacity: 1,
+                              backgroundColor: "rgba(245, 158, 11, 0)",
+                            }}
                             transition={{ duration: 1.2 }}
                             className="rounded-lg border p-3 space-y-2"
                           >
@@ -602,34 +726,60 @@ export function AttendanceView() {
                             </div>
                             <div className="flex items-center gap-1.5 flex-wrap">
                               {a.account.program && (
-                                <Badge variant="outline" className="text-[10px]">
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px]"
+                                >
                                   {a.account.program}
                                 </Badge>
                               )}
                               {a.account.section && (
-                                <Badge variant="outline" className="text-[10px]">
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px]"
+                                >
                                   {a.account.section}
                                 </Badge>
                               )}
                               {isOverride ? (
-                                <Badge variant="outline" className="border-amber-500/40 text-amber-600 text-[10px]">
+                                <Badge
+                                  variant="outline"
+                                  className="border-amber-500/40 text-amber-600 text-[10px]"
+                                >
                                   Manual
                                 </Badge>
                               ) : (
-                                <Badge variant="outline" className="border-emerald-500/40 text-emerald-600 text-[10px]">
+                                <Badge
+                                  variant="outline"
+                                  className="border-emerald-500/40 text-emerald-600 text-[10px]"
+                                >
                                   QR
                                 </Badge>
                               )}
                             </div>
                             <div className="flex items-center justify-between text-xs">
                               <span className="text-muted-foreground">
-                                In: <span className="tabular-nums">{format(new Date(a.scannedAt), "HH:mm:ss")}</span>
+                                In:{" "}
+                                <span className="tabular-nums">
+                                  {format(new Date(a.scannedAt), "HH:mm:ss")}
+                                </span>
                               </span>
                               <span className="text-muted-foreground">
                                 {a.timeOutAt ? (
-                                  <>Out: <span className="tabular-nums">{format(new Date(a.timeOutAt), "HH:mm:ss")}</span></>
+                                  <>
+                                    Out:{" "}
+                                    <span className="tabular-nums">
+                                      {format(
+                                        new Date(a.timeOutAt),
+                                        "HH:mm:ss",
+                                      )}
+                                    </span>
+                                  </>
                                 ) : (
-                                  <Badge variant="outline" className="border-amber-500/40 text-amber-600 text-[10px]">
+                                  <Badge
+                                    variant="outline"
+                                    className="border-amber-500/40 text-amber-600 text-[10px]"
+                                  >
                                     Still in
                                   </Badge>
                                 )}
@@ -644,8 +794,11 @@ export function AttendanceView() {
                   {/* Pagination */}
                   <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-1">
                     <p className="text-xs text-muted-foreground">
-                      Showing {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, sorted.length)} of {sorted.length}
-                      {sorted.length !== allRows.length && ` (filtered from ${allRows.length})`}
+                      Showing {pageStart + 1}–
+                      {Math.min(pageStart + PAGE_SIZE, sorted.length)} of{" "}
+                      {sorted.length}
+                      {sorted.length !== allRows.length &&
+                        ` (filtered from ${allRows.length})`}
                     </p>
                     <div className="flex items-center gap-1">
                       <Button
@@ -666,7 +819,9 @@ export function AttendanceView() {
                         size="sm"
                         className="h-9 min-w-[44px]"
                         disabled={currentPage >= totalPages}
-                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                        onClick={() =>
+                          setPage((p) => Math.min(totalPages, p + 1))
+                        }
                         aria-label="Next page"
                       >
                         <ChevronRight className="h-4 w-4" />

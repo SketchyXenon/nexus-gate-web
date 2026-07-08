@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { updateAccountSchema } from "@/lib/validation";
-import { badRequest, forbidden, notFound, parseBody, requireAuth } from "@/lib/api";
+import {
+  badRequest,
+  forbidden,
+  notFound,
+  parseBody,
+  requireAuth,
+} from "@/lib/api";
 import { audit } from "@/lib/audit";
+import { invalidateAccountCache } from "@/lib/supabase-session";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -15,7 +22,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 
   const body = await parseBody(req);
   const parsed = updateAccountSchema.safeParse(body);
-  if (!parsed.success) return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
+  if (!parsed.success)
+    return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
 
   const target = await db.account.findUnique({ where: { id } });
   if (!target) return notFound("Account not found");
@@ -33,19 +41,23 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   if (
     target.role === "ADMIN" &&
     ((parsed.data.role && parsed.data.role !== "ADMIN") ||
-     (parsed.data.status && parsed.data.status !== "ACTIVE"))
+      (parsed.data.status && parsed.data.status !== "ACTIVE"))
   ) {
     const adminCount = await db.account.count({
       where: { role: "ADMIN", status: "ACTIVE" },
     });
     if (adminCount <= 1) {
-      return forbidden("Cannot demote or suspend the last administrator account.");
+      return forbidden(
+        "Cannot demote or suspend the last administrator account.",
+      );
     }
   }
 
   // Check for email conflict if email is being changed
   if (parsed.data.email && parsed.data.email !== target.email) {
-    const emailExists = await db.account.findUnique({ where: { email: parsed.data.email } });
+    const emailExists = await db.account.findUnique({
+      where: { email: parsed.data.email },
+    });
     if (emailExists) {
       return badRequest("This email is already in use.", "EMAIL_TAKEN");
     }
@@ -58,15 +70,31 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       ...(parsed.data.status ? { status: parsed.data.status } : {}),
       ...(parsed.data.fullName ? { fullName: parsed.data.fullName } : {}),
       ...(parsed.data.email ? { email: parsed.data.email } : {}),
-      ...(parsed.data.program !== undefined ? { program: parsed.data.program } : {}),
-      ...(parsed.data.section !== undefined ? { section: parsed.data.section } : {}),
+      ...(parsed.data.program !== undefined
+        ? { program: parsed.data.program }
+        : {}),
+      ...(parsed.data.section !== undefined
+        ? { section: parsed.data.section }
+        : {}),
       ...(parsed.data.year !== undefined ? { year: parsed.data.year } : {}),
-      ...(parsed.data.organizationName !== undefined ? { organizationName: parsed.data.organizationName } : {}),
+      ...(parsed.data.organizationName !== undefined
+        ? { organizationName: parsed.data.organizationName }
+        : {}),
     },
     select: {
-      id: true, email: true, fullName: true, role: true, status: true,
-      studentId: true, program: true, section: true, year: true,
-      organizationName: true, lastLoginAt: true, createdAt: true,
+      id: true,
+      email: true,
+      fullName: true,
+      role: true,
+      status: true,
+      studentId: true,
+      program: true,
+      section: true,
+      year: true,
+      organizationName: true,
+      lastLoginAt: true,
+      createdAt: true,
+      supabaseAuthUid: true,
     },
   });
 
@@ -76,11 +104,19 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       where: { accountId: id, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+    // Invalidate the account cache so the change takes effect immediately.
+    if (updated.supabaseAuthUid) {
+      invalidateAccountCache(updated.supabaseAuthUid);
+    }
   }
 
   await audit({
-    actorId: admin.id, action: "account.update", targetType: "Account",
-    targetId: id, metadata: parsed.data, req,
+    actorId: admin.id,
+    action: "account.update",
+    targetType: "Account",
+    targetId: id,
+    metadata: parsed.data,
+    req,
   });
 
   return NextResponse.json(updated);

@@ -439,7 +439,7 @@ export const useEventsHistory = (scope?: string) => {
 // ---------------- Attendance ----------------
 export const useEventAttendance = (
   eventId: number | null,
-  options?: { poll?: boolean },
+  options?: { poll?: boolean; socketConnected?: boolean },
 ) =>
   useQuery({
     queryKey: ["attendance", eventId],
@@ -451,9 +451,14 @@ export const useEventAttendance = (
         attendances: AttendanceRow[];
       }>(`/api/events/${eventId}/attendance`),
     enabled: eventId != null,
-    // Only poll on the live attendance view (default). The override page
-    // passes poll=false to avoid 4s refetches that aren't needed there.
-    refetchInterval: eventId != null && options?.poll !== false ? 4000 : false,
+    // Polling strategy:
+    //   - Override page: poll=false (no polling)
+    //   - Socket connected: no polling (socket.io pushes realtime updates)
+    //   - Socket disconnected: poll every 10s as fallback (was 4s)
+    refetchInterval:
+      eventId != null && options?.poll !== false && !options?.socketConnected
+        ? 10_000
+        : false,
   });
 
 export interface EventDetails {

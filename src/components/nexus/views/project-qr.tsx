@@ -3,22 +3,49 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import {
-  QrCode, RefreshCw, Radio, Loader2, ShieldCheck, Users, CheckCircle2, Activity,
-  AlertTriangle, Clock, WifiOff, Maximize2, Minimize2,
+  QrCode,
+  RefreshCw,
+  Radio,
+  Loader2,
+  ShieldCheck,
+  Users,
+  CheckCircle2,
+  Activity,
+  AlertTriangle,
+  Clock,
+  WifiOff,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Card, CardContent, CardDescription, CardHeader, CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { useEvents, useEventSecret, useEventAttendance } from "@/lib/api-client";
+import {
+  useEvents,
+  useEventSecret,
+  useEventAttendance,
+} from "@/lib/api-client";
 import {
   generateQrPayload,
   msUntilNextBlock,
@@ -45,8 +72,13 @@ export function ProjectQrView() {
   const eventId = selectedEventId ?? events[0]?.id ?? null;
 
   const secretQ = useEventSecret(eventId);
-  const presenceQ = useEventAttendance(eventId);
+  // Create the socket first so we can use its connected state to control polling.
   const socket = useAttendanceSocket(eventId);
+  // Poll only when the socket is disconnected (fallback). When connected,
+  // socket.io pushes realtime updates — no polling needed.
+  const presenceQ = useEventAttendance(eventId, {
+    socketConnected: socket.connected,
+  });
 
   const [token, setToken] = useState<string>("");
   const [block, setBlock] = useState<number>(0);
@@ -118,8 +150,18 @@ export function ProjectQrView() {
     try {
       if (el.requestFullscreen) {
         await el.requestFullscreen({ navigationUI: "hide" });
-      } else if ((el as HTMLDivElement & { webkitRequestFullscreen?: () => Promise<void> }).webkitRequestFullscreen) {
-        await (el as HTMLDivElement & { webkitRequestFullscreen?: () => Promise<void> }).webkitRequestFullscreen?.();
+      } else if (
+        (
+          el as HTMLDivElement & {
+            webkitRequestFullscreen?: () => Promise<void>;
+          }
+        ).webkitRequestFullscreen
+      ) {
+        await (
+          el as HTMLDivElement & {
+            webkitRequestFullscreen?: () => Promise<void>;
+          }
+        ).webkitRequestFullscreen?.();
       }
     } catch {
       // Browser refused fullscreen (often because of user-activation rules).
@@ -131,8 +173,13 @@ export function ProjectQrView() {
     try {
       if (document.fullscreenElement) {
         await document.exitFullscreen();
-      } else if ((document as Document & { webkitExitFullscreen?: () => Promise<void> }).webkitExitFullscreen) {
-        await (document as Document & { webkitExitFullscreen?: () => Promise<void> }).webkitExitFullscreen?.();
+      } else if (
+        (document as Document & { webkitExitFullscreen?: () => Promise<void> })
+          .webkitExitFullscreen
+      ) {
+        await (
+          document as Document & { webkitExitFullscreen?: () => Promise<void> }
+        ).webkitExitFullscreen?.();
       }
     } catch {
       // ignore
@@ -192,8 +239,8 @@ export function ProjectQrView() {
     240,
     Math.min(
       720,
-      Math.floor(Math.min(viewportSize.w || 800, viewportSize.h || 600) * 0.7)
-    )
+      Math.floor(Math.min(viewportSize.w || 800, viewportSize.h || 600) * 0.7),
+    ),
   );
   const qrSize = isFullscreen ? fullscreenQrSize : normalQrSize;
 
@@ -262,10 +309,7 @@ export function ProjectQrView() {
                 className={pct < 25 ? "text-amber-400" : "text-primary"}
                 strokeDasharray={`${2 * Math.PI * ((qrSize + 40) / 2 - 4)}`}
                 strokeDashoffset={`${
-                  2 *
-                  Math.PI *
-                  ((qrSize + 40) / 2 - 4) *
-                  (1 - pct / 100)
+                  2 * Math.PI * ((qrSize + 40) / 2 - 4) * (1 - pct / 100)
                 }`}
                 style={{ transition: "stroke-dashoffset 100ms linear" }}
               />
@@ -414,7 +458,8 @@ export function ProjectQrView() {
                 </div>
               )}
 
-              {eventId != null && secretQ.isError && (
+              {eventId != null &&
+                secretQ.isError &&
                 (() => {
                   const err = secretQ.error as Error & {
                     code?: string;
@@ -461,10 +506,7 @@ export function ProjectQrView() {
                             )}
                           </p>
                           {opensInMinutes && opensInMinutes > 0 && (
-                            <Badge
-                              variant="outline"
-                              className="mt-3 gap-1.5"
-                            >
+                            <Badge variant="outline" className="mt-3 gap-1.5">
                               <Clock className="h-3 w-3" />
                               Opens in ~{opensInMinutes} min
                             </Badge>
@@ -489,8 +531,8 @@ export function ProjectQrView() {
                             Check-in closed
                           </p>
                           <p className="text-sm text-muted-foreground mt-1">
-                            This event&apos;s check-in window has ended. Students
-                            can no longer scan.
+                            This event&apos;s check-in window has ended.
+                            Students can no longer scan.
                           </p>
                         </div>
                       </motion.div>
@@ -508,8 +550,7 @@ export function ProjectQrView() {
                       </AlertDescription>
                     </Alert>
                   );
-                })()
-              )}
+                })()}
 
               {eventId != null && secretQ.data && (
                 <motion.div
@@ -544,9 +585,7 @@ export function ProjectQrView() {
                         stroke="currentColor"
                         strokeWidth="4"
                         strokeLinecap="round"
-                        className={
-                          pct < 25 ? "text-amber-500" : "text-primary"
-                        }
+                        className={pct < 25 ? "text-amber-500" : "text-primary"}
                         strokeDasharray={`${
                           2 * Math.PI * ((normalQrSize + 40) / 2 - 4)
                         }`}
@@ -590,8 +629,7 @@ export function ProjectQrView() {
                             }`}
                           />
                           <span className="text-xl sm:text-2xl font-bold tabular-nums">
-                            Code refreshes in{" "}
-                            {Math.ceil(expiresInMs / 1000)}
+                            Code refreshes in {Math.ceil(expiresInMs / 1000)}
                             <span className="text-sm font-normal text-muted-foreground">
                               s
                             </span>
@@ -634,9 +672,8 @@ export function ProjectQrView() {
                       {token || "generating…"}
                     </div>
                     <p className="text-[11px] text-center text-muted-foreground mt-2 flex items-center justify-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      A new code appears every 15 seconds — old codes stop
-                      working right away.
+                      <Clock className="h-3 w-3" />A new code appears every 15
+                      seconds — old codes stop working right away.
                     </p>
                   </div>
 
@@ -739,7 +776,9 @@ export function ProjectQrView() {
                               {a.account.studentId != null
                                 ? `ID ${a.account.studentId}`
                                 : "No student ID on file"}
-                              {a.account.program ? ` · ${a.account.program}` : ""}
+                              {a.account.program
+                                ? ` · ${a.account.program}`
+                                : ""}
                               {a.account.section ? ` ${a.account.section}` : ""}
                             </p>
                           </div>
