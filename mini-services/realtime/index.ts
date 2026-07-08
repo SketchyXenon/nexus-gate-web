@@ -38,8 +38,7 @@ const PORT = Number(process.env.PORT || process.env.IO_PORT || 3003);
 // If not set, defaults to the production URL + localhost dev.
 // IMPORTANT: The Vercel app is at nexus-gate-WEB.vercel.app (with -web).
 const ALLOWED_ORIGINS: string[] = (
-  process.env.ALLOWED_ORIGINS ||
-  "https://nexus-gate-web.vercel.app"
+  process.env.ALLOWED_ORIGINS || "https://nexus-gate-web.vercel.app"
 )
   .split(",")
   .map((s) => s.trim())
@@ -171,8 +170,11 @@ io.on("connection", (socket) => {
 });
 
 // ---------- start ----------
-httpServer.listen(PORT, () => {
-  console.log(`[nexus-gate-realtime] listening on port ${PORT}`);
+// Bind to 0.0.0.0 (all network interfaces) — Render requires this.
+// If we only pass PORT (no host), Node defaults to 0.0.0.0 on Linux,
+// but being explicit avoids issues on some container runtimes.
+httpServer.listen(PORT, "0.0.0.0", () => {
+  console.log(`[nexus-gate-realtime] listening on 0.0.0.0:${PORT}`);
   console.log(`  Allowed CORS origins: ${ALLOWED_ORIGINS.join(", ")}`);
   console.log(`  socket.io:  ws://*:${PORT}/socket.io/`);
   console.log(`  emit bridge: POST http://*:${PORT}/emit`);
