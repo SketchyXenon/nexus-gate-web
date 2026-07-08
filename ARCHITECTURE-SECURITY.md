@@ -12,43 +12,39 @@
 │  ┌─────┴──────────────┴──────────────┴───────────────┴─────┐ │
 │  │              API Client (React Query)                    │ │
 │  │  + IndexedDB (Ed25519 device key)                        │ │
-│  │  + localStorage (offline scan queue v2)                  │ │
+│  │  + localStorage (offline scan queue)                     │ │
+│  │  + Session timeout (30 min inactivity)                   │ │
 │  └───────────────────────┬──────────────────────────────────┘ │
 └──────────────────────────┼────────────────────────────────────┘
-                           │ HTTPS (relative URLs)
+                           │ HTTPS
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    CADDY GATEWAY (:81/:443)                  │
-│  - TLS termination                                           │
-│  - Body size limit (10MB)                                    │
-│  - Security headers                                          │
-│  - XTransformPort whitelist (port 3003 only)                 │
-└──────────────────────────┬────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  NEXT.JS APP (Port 3000)                     │
+│              VERCEL (Next.js 16, App Router)                  │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │  API Routes (App Router)                              │   │
-│  │  /api/auth/*        — login, register, refresh        │   │
-│  │  /api/events/*      — CRUD + eligibility filtering    │   │
+│  │  API Routes (43 routes)                               │   │
+│  │  /api/auth/*        — login, register, magic-link,    │   │
+│  │                        passkey, refresh, callback       │   │
+│  │  /api/events/*      — CRUD + eligibility + delegation │   │
 │  │  /api/attendance    — QR scan (certificate verified)  │   │
 │  │  /api/profile/*     — profile, password, device keys  │   │
 │  │  /api/accounts/*    — admin account management        │   │
 │  │  /api/whitelist/*   — student roster + file import    │   │
 │  │  /api/dashboard     — role-aware dashboard data       │   │
 │  │  /api/notifications — push notifications              │   │
-│  │  /api/cron/*        — Vercel Cron (reminders, cleanup)│   │
+│  │  /api/cron/*        — cron (reminders, cleanup)       │   │
 │  └────────────────────────┬─────────────────────────────┘   │
 │  ┌────────────────────────┴─────────────────────────────┐   │
 │  │  Middleware (proxy.ts)                                │   │
-│  │  - CSRF Origin/Referer check                          │   │
-│  │  - CSP / X-Frame-Options / HSTS                       │   │
-│  │  - Dev: relaxed frame-ancestors for preview panels    │   │
+│  │  - CSRF Origin/Referer check (mutations only)         │   │
+│  │  - CSP (connect-src: self + Ably)                     │   │
+│  │  - X-Frame-Options / HSTS / nosniff                   │   │
+│  │  - Cron routes exempt from CSRF                       │   │
 │  └────────────────────────┬─────────────────────────────┘   │
 │  ┌────────────────────────┴─────────────────────────────┐   │
 │  │  Security Layer                                       │   │
 │  │  - requireAuth() — session + role + status + rate     │   │
+│  │  - Account cache (30s TTL) — eliminates DB lookup     │   │
+│  │  - Brute-force lockout (5 attempts → 15 min lock)     │   │
 │  │  - Zod validation on every input                      │   │
 │  │  - Timing-safe HMAC comparison                        │   │
 │  │  - Password strength scorer (server-side)             │   │
@@ -62,16 +58,33 @@
 │   Prisma + DB    │ │  Rate Limiter  │ │  Audit Logger    │
 │  (SQLite / PG)   │ │ (Memory/Upstash)│ │  (DB-backed)     │
 │                  │ │                │ │                  │
-│  11 models:      │ │ Presets:       │ │ Every mutation   │
+│  11 models:      │ │ Per-IP:        │ │ Every mutation   │
 │  Account         │ │ login (5/min)  │ │ logged with      │
-│  Event           │ │ register(3/min)│ │ actor, IP, UA    │
-│  EventAttendance │ │ scan (30/min)  │ │                  │
-│  DeviceKey       │ │ api (120/min)  │ │                  │
-│  RefreshToken    │ │                │ │                  │
-│  AuditLog        │ │ Fail-closed    │ │                  │
-│  Notification    │ │ for sensitive  │ │                  │
-│  ...             │ │ presets        │ │                  │
+│  Event           │ │ register(5/min)│ │ actor, IP, UA    │
+│  EventAttendance │ │ Per-account:   │ │                  │
+│  DeviceKey       │ │ scan (30/min)  │ │                  │
+│  AuditLog        │ │ api (100/min)  │ │                  │
+│  Notification    │ │                │ │                  │
+│  ...             │ │                │ │                  │
 └──────────────────┘ └────────────────┘ └──────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                     ABLY (Realtime)                           │
+│  - Managed realtime (no server to maintain)                   │
+│  - Free tier: 3M messages/month, 200 connections              │
+│  - Only organizers connect (~10-20 concurrent)                │
+│  - Server publishes via REST API (ABLY_SERVER_KEY)            │
+│  - Browser subscribes via Ably SDK (NEXT_PUBLIC_ABLY_KEY)     │
+│  - Falls back to 15s polling if Ably is not configured        │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│              CLOUDFLARE (Optional, Free)                      │
+│  - Edge caching for GET /api/* responses (70-90% hit rate)   │
+│  - DDoS protection (unlimited, free)                          │
+│  - Requires custom domain for full caching                    │
+│  - Worker: cloudflare/worker.js (Service Worker format)       │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Anti-Cheating Architecture (QR Attendance)
@@ -96,41 +109,46 @@
 ## Security Layers
 
 ### 1. Authentication
-- JWT access tokens (15-min TTL) with issuer + audience + type discriminator
-- Refresh tokens (7-day TTL) with rotation + reuse detection (revokes all on reuse)
-- HMAC-SHA256 hashed refresh tokens (O(1) lookup via unique index)
+- Supabase Auth (cookie-based sessions via @supabase/ssr)
+- Email/password, magic link, and passkey (WebAuthn) support
+- PKCE flow for email redirects (server-side code exchange via /api/auth/callback)
+- Brute-force lockout: 5 failed attempts → 15-minute account lock
 - Cookies: `httpOnly`, `sameSite: lax`, `secure: true` in production
 
 ### 2. Authorization (RBAC)
 - Three roles: `ADMIN`, `ORGANIZER`, `USER`
 - `requireAuth(minimumRole)` on every API route
-- Account status re-checked from DB on every request (suspended = instant lockout)
+- Account status re-checked from DB (cached 30s) — suspended = instant lockout
+- Cache invalidated on role/status change
 - Maintenance mode blocks non-admins
+- Admin-only overrides (organizers cannot create manual attendance entries)
+- Admin-only delegation toggle (organizers can toggle on their own events)
 
 ### 3. Input Validation
 - Zod schemas on every API input
+- Event time validation: timeOut must be after scheduledAt, before endsAt
 - Strict file extension + MIME type validation on uploads
 - Program codes validated against `PROGRAM_CODES` set
-- Pagination capped at 100 per page
+- Whitelist pagination capped at 500 per page (for override dropdowns)
 
 ### 4. CSRF Defense
-- Origin/Referer check in middleware (proxy.ts)
+- Origin/Referer check in middleware (proxy.ts) for POST/PATCH/PUT/DELETE
+- Cron routes (`/api/cron/*`) exempt from CSRF (authenticated via CRON_SECRET)
 - SameSite=Lax cookies (primary defense)
 - Port-insensitive hostname comparison (handles gateway port differences)
-- X-Forwarded-Host support for reverse proxies
 
 ### 5. Rate Limiting
 - Per-IP for unauthenticated endpoints (login, register, forgot-password)
 - Per-account for authenticated endpoints (100/min default)
-- Fail-closed for sensitive presets (login, register, OTP) on Upstash errors
 - Scan endpoint: 30/min per account (not IP — correct for shared WiFi)
+- Fail-open on Upstash errors (avoids locking all users on serverless)
 
 ### 6. Cryptography
 - HMAC-SHA256 for QR token signing
 - Ed25519 for scan certificate signatures (Web Crypto API on client, Node crypto on server)
 - bcrypt (cost 12) for password hashing
-- HMAC-SHA256 (peppered with REFRESH_SECRET) for refresh token hashing
 - Timing-safe comparisons for all HMAC verifications
+- Device key fingerprint recomputed server-side (client can't fake it)
 
 ### 7. Database Security
 - Row-Level Security (RLS) on all 11 tables (Supabase)
@@ -139,53 +157,81 @@
 - CHECK constraints on all enum-like columns
 
 ### 8. HTTP Security Headers
-- Content-Security-Policy (no `unsafe-eval`, `object-src: none`)
+- Content-Security-Policy (no `unsafe-eval`, `connect-src: self + *.ably.io + *.ably.net`)
 - X-Frame-Options (DENY in prod, SAMEORIGIN in dev)
 - X-Content-Type-Options: nosniff
 - Strict-Transport-Security (HSTS with preload)
 - Permissions-Policy (camera=self, microphone=(), geolocation=())
 - X-XSS-Protection: 0 (modern browsers use CSP)
 
+### 9. Session Security
+- 30-minute inactivity timeout (auto-logout with warning at 25 min)
+- Account lookup cached 30s (in-memory, per serverless instance)
+- Cache invalidated on admin role/status changes
+- Realtime password validation checklist on registration + password reset forms
+
+### 10. File Upload Security
+- exceljs (replaces xlsx — prototype pollution CVE)
+- pdfjs-dist (replaces pdf-parse — DOMMatrix dependency)
+- File size limit (10MB via Caddyfile)
+- Strict file type validation (xlsx, xls, pdf, docx, csv only)
+
+## Realtime Architecture
+
+### Ably (Managed Realtime)
+- Server publishes attendance events via Ably REST API (`ABLY_SERVER_KEY`)
+- Browser subscribes via Ably SDK (`NEXT_PUBLIC_ABLY_KEY`)
+- Only organizers connect (students don't need realtime)
+- Falls back to 15s polling if Ably is not configured
+- CSP allows `*.ably.io` (REST) and `*.ably.net` (WebSocket)
+
+## Performance Optimizations
+
+### Caching
+- Account cache (30s TTL) — eliminates 1 DB query per request
+- Maintenance mode cache (10s TTL)
+- Browser caching via `Cache-Control: stale-while-revalidate` on 7 GET routes
+- Cloudflare Worker (optional) — 70-90% edge cache hit rate
+
+### Polling
+- Notifications: 60s interval (was 30s)
+- Attendance: disabled when Ably connected, 15s fallback (was 4s)
+- Event secret: 15s interval only when event is upcoming
+
+### Database
+- Batch whitelist import (`createMany` instead of sequential upserts)
+- Parallel queries via `Promise.all` on dashboard and events routes
+- 40 indexes covering all major query patterns
+- PgBouncer connection pooling (Supabase)
+
 ## Testing
 
-### Unit Tests (262 tests)
 ```bash
 bun run test
 ```
 
 | File | Tests | Coverage |
 |------|-------|----------|
-| `auth.test.ts` | 15 | Password hashing, JWT, refresh tokens |
+| `auth.test.ts` | 15 | Password hashing, HMAC |
 | `qr-token.test.ts` | 37 | v8 token generation, validation, sub-frame liveness |
 | `scan-certificate.test.ts` | 21 | Certificate creation, canonicalization, idempotency |
 | `scan-flow.integration.test.ts` | 24 | Full end-to-end scan flow, anti-cheat simulations |
-| `validation.test.ts` | 39 | Zod schemas, OTP removal verification |
+| `validation.test.ts` | 39 | Zod schemas, event time validation |
 | `password-strength.test.ts` | 34 | Password scoring |
 | `section-validation.test.ts` | 42 | Year/section consistency |
 | `event-visibility.test.ts` | 32 | Strict event filtering |
 | `cooldown.test.ts` | 18 | 30-day cooldown logic |
 
-### Lint
-```bash
-bun run lint
-```
-
-### E2E Testing (Agent Browser)
-- Registration → login → dashboard → scanner → profile flow
-- Admin: accounts, events, whitelist, attendance, overrides, audit logs
-- Organizer: events, project QR, attendance, overrides
-- Student: dashboard, scanner, profile, change password
-
-## Database Schema (v9)
+## Database Schema
 
 ### Models
 1. **Account** — users (admin, organizer, student)
 2. **AuthorizedStudent** — pre-approved student whitelist
-3. **VerificationToken** — OTP tokens (unused after OTP removal, kept for compatibility)
-4. **RefreshToken** — rotating session tokens (HMAC-SHA256 hashed)
-5. **Event** — attendance events with program/section targeting
+3. **VerificationToken** — verification tokens
+4. **RefreshToken** — rotating session tokens (legacy)
+5. **Event** — attendance events with program/section targeting + time-out windows
 6. **EventAttendance** — check-in records with certificate fields
-7. **AttendanceOverride** — manual check-ins (idempotent: `@@unique([eventId, studentId])`)
+7. **AttendanceOverride** — manual check-ins (admin-only, idempotent)
 8. **Notification** — user notifications
 9. **AuditLog** — immutable audit trail
 10. **DeviceKey** — Ed25519 public keys per device
@@ -193,20 +239,18 @@ bun run lint
 
 ### Key Indexes
 - `events`: `[status, scheduledAt]`, `[targetProgram, targetSection, status]`
-- `event_attendance`: `[accountId, scannedAt]`, `[eventId, scannedAt]`
+- `event_attendance`: `[accountId, scannedAt]`, `[eventId, scannedAt]`, `[deviceFingerprint]`
 - `notifications`: `[accountId, createdAt]`, `[accountId, readAt]`
 - `audit_logs`: `[actorId, createdAt]`, `[action, createdAt]`, `[targetType, targetId, createdAt]`
-- `refresh_tokens`: `[tokenHash]` (unique, O(1) lookup)
 - `device_keys`: `[fingerprint]` (unique), `[accountId, revokedAt]`
 
-## Supabase Migrations
+## Infrastructure ($0/month)
 
-| # | File | Description |
-|---|------|-------------|
-| 1 | `0001_init.sql` | Initial schema (tables, indexes, views) |
-| 2 | `0002_settings_and_views.sql` | Settings table + summary views |
-| 3 | `0003_strict_rls_indexes_v7.sql` | RLS on all tables + composite indexes + `is_admin()` function |
-| 4 | `0004_device_keys_certificates_v8.sql` | DeviceKey table + certificate fields on EventAttendance |
-| 5 | `0005_security_hardening_scalability_v8.sql` | RLS guard trigger, CHECK constraints, idempotent overrides, restricted `is_admin()` |
+| Service | Plan | Purpose | Limit |
+|---------|------|---------|-------|
+| Vercel | Hobby | Next.js hosting + API | 100GB bandwidth/mo |
+| Supabase | Free | PostgreSQL + Auth | 500MB DB, 50k MAU |
+| Ably | Free | Realtime attendance | 3M messages/mo, 200 conn |
+| Cloudflare | Free | Optional edge caching + DDoS | 100k Worker req/day |
 
-**Apply in order** via the Supabase SQL Editor.
+**Scalability:** Handles 2000-3000 users with 150-200 concurrent/min.

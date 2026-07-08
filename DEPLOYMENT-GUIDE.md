@@ -3,8 +3,9 @@
 ## Prerequisites
 
 - **Node.js** 18+ (or Bun 1.0+)
-- **PostgreSQL** 15+ (Supabase recommended)
-- **Caddy** 2.7+ (gateway/reverse proxy)
+- **Supabase** account (free tier — PostgreSQL + Auth)
+- **Ably** account (free tier — realtime)
+- **Vercel** account (free tier — hosting)
 
 ## Quick Start (Local Development)
 
@@ -13,14 +14,14 @@
 bun install
 
 # 2. Set up environment variables
-cp .env.example .env
-# Edit .env with your values
+cp example.env .env
+# Edit .env with your Supabase + Ably keys
 
 # 3. Create the first admin account
 bun run bootstrap:admin
 
-# 4. Push the database schema
-bun run db:push
+# 4. Push the database schema (SQLite for local dev)
+bun run db:push:sqlite
 
 # 5. Start the dev server
 bun run dev
@@ -28,160 +29,145 @@ bun run dev
 
 The app will be available at `http://localhost:3000`.
 
-## Production Deployment (Supabase + Vercel)
+## Production Deployment (Vercel + Supabase + Ably)
 
-### Step 1: Set Up Supabase
+### Step 1: Set Up Supabase (Free)
 
-1. Create a new project at [supabase.com](https://supabase.com)
-2. Go to **SQL Editor** and run the migrations in order:
-   - `supabase/migrations/0001_init.sql`
-   - `supabase/migrations/0002_settings_and_views.sql`
-   - `supabase/migrations/0003_strict_rls_indexes_v7.sql`
-   - `supabase/migrations/0004_device_keys_certificates_v8.sql`
-   - `supabase/migrations/0005_security_hardening_scalability_v8.sql`
-3. Note your connection strings:
-   - **Pooler URL** (port 6543): `postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&pool_timeout=20`
-   - **Direct URL** (port 5432): `postgresql://postgres.[ref]:[password]@aws-0-[region].supabase.com:5432/postgres`
+1. Go to [supabase.com](https://supabase.com) → New Project
+2. Name it `nexus-gate`, choose a region close to your users
+3. Wait for provisioning (~2 min)
+4. Go to **Settings → API**:
+   - Copy `Project URL` → this is your `NEXT_PUBLIC_SUPABASE_URL`
+   - Copy `anon public` key → this is your `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - Copy `service_role` key → this is your `SUPABASE_SERVICE_ROLE_KEY`
+5. Go to **Settings → Database → Connection string**:
+   - Copy the **Transaction** URL (port 6543) → this is your `DATABASE_URL`
+   - Copy the **Session** URL (port 5432) → this is your `DIRECT_URL`
+6. Go to **SQL Editor** → run the migration files from `supabase/migrations/` in order (0001 through 0010)
+7. Go to **Authentication → URL Configuration**:
+   - Set **Site URL** to your Vercel URL (e.g., `https://nexus-gate-web.vercel.app`)
+   - Add your Vercel URL to **Redirect URLs**
 
-### Step 2: Set Up Vercel
+### Step 2: Set Up Ably (Free)
 
-1. Push your code to GitHub/GitLab
-2. Go to [vercel.com](https://vercel.com) and import the repository
-3. Set the following environment variables in Vercel:
+1. Go to [ably.com](https://ably.com) → Sign up (free)
+2. Create a new app → name it `nexus-gate`
+3. Go to **Settings → API Keys**
+4. Copy the root API key
+5. This key is used for both `ABLY_SERVER_KEY` (server) and `NEXT_PUBLIC_ABLY_KEY` (browser)
 
-   | Variable | Required | Description |
-   |----------|----------|-------------|
-   | `DATABASE_URL` | ✅ | Supabase pooler connection string (port 6543) |
-   | `DIRECT_URL` | ✅ | Supabase direct connection string (port 5432) |
-   | `AUTH_SECRET` | ✅ | Random 32+ byte secret for JWT signing |
-   | `REFRESH_SECRET` | ✅ | Different random 32+ byte secret for refresh token hashing |
-   | `NEXTAUTH_SECRET` | ✅ | Different random 32+ byte secret for NextAuth |
-   | `NEXTAUTH_URL` | ✅ | Your production URL (e.g. `https://nexusgate.example.com`) |
-   | `NEXT_PUBLIC_APP_URL` | ✅ | Same as NEXTAUTH_URL |
-   | `CRON_SECRET` | ✅ | Random secret for cron endpoint protection |
-   | `SMTP_HOST` | ⚠️ | Gmail SMTP host (`smtp.gmail.com`) |
-   | `SMTP_PORT` | ⚠️ | Gmail SMTP port (`587`) |
-   | `SMTP_USER` | ⚠️ | Gmail account email |
-   | `SMTP_PASS` | ⚠️ | Gmail app password (NOT your regular password) |
-   | `SMTP_FROM` | ⚠️ | From email address |
-   | `SMTP_FROM_NAME` | ⚠️ | From display name (default: `Nexus Gate`) |
-   | `UPSTASH_REDIS_REST_URL` | ⚠️ | Upstash Redis URL for distributed rate limiting |
-   | `UPSTASH_REDIS_REST_TOKEN` | ⚠️ | Upstash Redis token |
-   | `GOOGLE_CLIENT_ID` | ⚠️ | Google OAuth client ID (optional) |
-   | `GOOGLE_CLIENT_SECRET` | ⚠️ | Google OAuth client secret (optional) |
-   | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | ⚠️ | Cloudflare Turnstile site key (optional) |
-   | `TURNSTILE_SECRET_KEY` | ⚠️ | Cloudflare Turnstile secret key (optional) |
-   | `SENTRY_DSN` | ⚠️ | Sentry DSN for error monitoring (optional) |
-   | `NEXT_PUBLIC_SENTRY_DSN` | ⚠️ | Public Sentry DSN (optional) |
+### Step 3: Deploy to Vercel (Free)
 
-   **Generate secrets with:** `openssl rand -base64 32`
+1. Go to [vercel.com](https://vercel.com) → New Project
+2. Import your GitHub repo (`nexus-gate-web`)
+3. Vercel auto-detects Next.js — no build config needed
+4. Set **Environment Variables**:
 
-4. Deploy. Vercel will automatically build and deploy.
-
-### Step 3: Set Up Caddy (Gateway)
-
-If using Caddy as a reverse proxy/gateway:
-
-1. Install Caddy on your server
-2. Copy the `Caddyfile` to `/etc/caddy/Caddyfile`
-3. Replace the `:81` listener with your domain
-4. Uncomment TLS directives (`tls internal` for dev, `tls your@email.com` for prod)
-5. Restart Caddy: `systemctl restart caddy`
-
-### Step 4: Create the First Admin
-
-After deployment, create the first admin account:
-
-```bash
-# If running locally with access to the DB:
-BOOTSTRAP_ADMIN_EMAIL="admin@yourschool.edu" \
-BOOTSTRAP_ADMIN_PASSWORD="StrongPassword123!" \
-BOOTSTRAP_ADMIN_NAME="System Administrator" \
-bun run bootstrap:admin
-
-# Or run the SQL directly in Supabase SQL Editor:
--- See scripts/bootstrap-admin.ts for the logic
+```
+DATABASE_URL=postgresql://postgres.[REF]:[PASS]@aws-0-[REGION].pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&pool_timeout=20
+NEXT_PUBLIC_SUPABASE_URL=https://[REF].supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=[your-anon-key]
+SUPABASE_SERVICE_ROLE_KEY=[your-service-role-key]
+NEXT_PUBLIC_APP_URL=https://nexus-gate-web.vercel.app
+ABLY_SERVER_KEY=[your-ably-key]
+NEXT_PUBLIC_ABLY_KEY=[your-ably-key]
+CRON_SECRET=[generate-with: openssl rand -base64 32]
 ```
 
-### Step 5: Set Up Cron Jobs (Vercel)
+5. Click **Deploy**
+6. Wait for the build to complete (~2 min)
 
-The `vercel.json` file defines two cron jobs:
-- `/api/cron/event-reminders` — sends event reminder notifications (runs every 5 minutes)
-- `/api/cron/cleanup` — cleans up expired tokens (runs daily at midnight)
+### Step 4: Create Admin Account
 
-Vercel automatically sends the `CRON_SECRET` as a Bearer token. No additional setup needed.
+After the first deploy, create the admin account:
 
-### Step 6: Set Up the Realtime Mini-Service (Optional)
+```bash
+# Set DATABASE_URL to your Supabase connection string
+DATABASE_URL="postgresql://..." bun run bootstrap:admin
+```
 
-For real-time attendance updates (WebSocket):
+Or use the Vercel CLI:
+```bash
+vercel env pull .env
+bun run bootstrap:admin
+```
 
-1. Deploy `mini-services/realtime/` to Render, Railway, or Fly.io
-2. Set `REALTIME_URL` in your main app to the deployed service URL
-3. Set `NEXT_PUBLIC_REALTIME_URL` for the client-side WebSocket connection
+### Step 5: Set Up Cron Jobs
 
-If not deployed, the app falls back to polling every 4 seconds.
+Go to your cron service (cron-job.org, Vercel Cron, etc.) and set up:
 
-## Post-Deployment Checklist
+**Event Reminders** (daily at 8 AM):
+```
+URL: https://nexus-gate-web.vercel.app/api/cron/event-reminders?secret=YOUR_CRON_SECRET
+Method: GET
+Schedule: 0 8 * * *
+```
 
-- [ ] All 5 Supabase migrations applied successfully
-- [ ] First admin account created and can log in
-- [ ] `AUTH_SECRET`, `REFRESH_SECRET`, `NEXTAUTH_SECRET` are all different random strings
-- [ ] `CRON_SECRET` is set and cron jobs are running
-- [ ] HTTPS is enforced (Caddy TLS or Vercel automatic HTTPS)
-- [ ] Rate limiting is working (test with rapid login attempts)
-- [ ] RLS is enabled on all tables (verify in Supabase dashboard)
-- [ ] The `is_admin()` function has `REVOKE ALL FROM PUBLIC` applied
-- [ ] Email notifications work (test forgot-password flow)
-- [ ] File upload works (test whitelist import with .xlsx, .pdf, .docx)
-- [ ] QR code scanning works (test with a real device)
-- [ ] Offline scan queue works (test by disabling WiFi mid-scan)
+**Cleanup** (daily at 3 AM):
+```
+URL: https://nexus-gate-web.vercel.app/api/cron/cleanup?secret=YOUR_CRON_SECRET
+Method: GET
+Schedule: 0 3 * * *
+```
 
-## Scaling Considerations
+### Step 6 (Optional): Cloudflare Edge Caching
 
-### Database
-- **Connection pooling**: Use Supabase's PgBouncer pooler (port 6543) for the app. Use the direct connection (port 5432) only for migrations.
-- **Indexes**: All composite indexes are defined in `prisma/schema.prisma` and mirrored in the Supabase migrations. No additional index tuning needed for <100k students.
-- **Partitioning**: For >100k attendance records, consider partitioning `event_attendance` by month. This requires raw SQL (Prisma doesn't natively support partitioning).
+For reduced bandwidth and faster response times:
 
-### Rate Limiting
-- **In-memory** (default): Works for single-instance deployments. State is lost on restart.
-- **Upstash Redis** (recommended for production): Distributed rate limiting across multiple instances. Set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`.
+1. Buy a custom domain (~$1-10/year)
+2. Add it to Cloudflare (free)
+3. Point DNS to Vercel
+4. Deploy the Worker from `cloudflare/worker.js`:
+   - Go to Cloudflare Dashboard → Workers & Pages → Create
+   - Paste the contents of `cloudflare/worker.js`
+   - Deploy
+   - Set route: `yourdomain.com/api/*` → the Worker
+5. Add the custom domain to Vercel → Settings → Domains
 
-### Realtime
-- The mini-service (`mini-services/realtime/`) handles WebSocket connections for live attendance updates.
-- If not deployed, the app falls back to polling every 4 seconds.
-- For high-traffic events (>500 concurrent viewers), deploy the realtime service on a dedicated instance.
+## Environment Variables Reference
 
-## Backup
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Yes | Supabase PostgreSQL connection (pooler, port 6543) |
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon/public key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Supabase service role key (server-only) |
+| `NEXT_PUBLIC_APP_URL` | Yes | Your production URL |
+| `ABLY_SERVER_KEY` | Yes | Ably API key (server-side, can publish) |
+| `NEXT_PUBLIC_ABLY_KEY` | Yes | Ably API key (browser-side, can subscribe) |
+| `CRON_SECRET` | Yes | Secret for cron endpoint authentication |
+| `SENTRY_DSN` | No | Error monitoring (Sentry) |
+| `SMTP_HOST` | No | Email server (for password reset) |
+| `SMTP_PORT` | No | Email server port |
+| `SMTP_USER` | No | Email server username |
+| `SMTP_PASS` | No | Email server password |
+| `SMTP_FROM` | No | Sender email address |
+| `UPSTASH_REDIS_REST_URL` | No | Distributed rate limiting (Redis) |
+| `UPSTASH_REDIS_REST_TOKEN` | No | Distributed rate limiting (Redis) |
 
-### Database Backup
-- Supabase: Automatic daily backups on Pro plan and above.
-- Self-hosted: Use `pg_dump` nightly.
+## Cost Summary
 
-### Code Backup
-- Git repository (GitHub/GitLab).
-
-## Monitoring
-
-- **Sentry**: Set `SENTRY_DSN` and `NEXT_PUBLIC_SENTRY_DSN` for error monitoring.
-- **Supabase Dashboard**: Monitor query performance and connection pool usage.
-- **Vercel Dashboard**: Monitor function execution time and deployment status.
+| Service | Plan | Cost |
+|---------|------|------|
+| Vercel | Hobby | $0/mo |
+| Supabase | Free | $0/mo |
+| Ably | Free | $0/mo |
+| Cloudflare | Free | $0/mo |
+| **Total** | | **$0/mo** |
 
 ## Troubleshooting
 
-### "Invalid `db.setting.findMany()` invocation" error
-- Ensure `DATABASE_URL` starts with `file:` for SQLite (dev) or `postgresql://` for PostgreSQL (prod).
-- Run `bun run db:push` to sync the schema.
+### Build fails with "Cannot find module 'xlsx'"
+Run `bun install` to install dependencies. The `xlsx` package was replaced with `exceljs`.
 
-### Rate limit not working
-- If using Upstash, verify `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are set.
-- The app falls back to in-memory rate limiting if Upstash is not configured.
+### Magic link redirects to localhost:3000
+Set `NEXT_PUBLIC_APP_URL` on Vercel to your production URL. The register route uses this for the `emailRedirectTo` parameter.
 
-### CORS errors
-- The app uses relative API paths (`/api/...`). No CORS configuration needed.
-- If the realtime mini-service has CORS issues, set `ALLOWED_ORIGINS` in the mini-service environment.
+### CSP blocks Ably WebSocket
+The CSP allows `*.ably.io` and `*.ably.net`. If Ably uses a different domain, add it to `connect-src` in `src/proxy.ts`.
 
-### QR code not scanning
-- Ensure the projector's device clock is synced (NTP).
-- The QR refreshes every 500ms — the scanner must capture 3+ consecutive frames.
-- Check that `eventSecret` is not exposed to students (it should only be in ORGANIZER/ADMIN API responses).
+### Cron returns 401
+Set `CRON_SECRET` on Vercel. Pass it via `?secret=YOUR_SECRET` in the cron URL, or via `Authorization: Bearer YOUR_SECRET` header.
+
+### Scanner shows "key is not extractable"
+Clear your browser data for the site. The old non-extractable keypair is regenerated on next visit.

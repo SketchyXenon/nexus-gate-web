@@ -13,7 +13,10 @@ Nexus Gate is a production-ready attendance tracking system designed for educati
 - **Strict Event Visibility**: Students see only events for their exact course + section (or open-to-all events).
 - **30-Day Cooldowns**: Profile updates and password changes are limited to once every 30 days.
 - **Server-Side Password Strength**: Passwords are scored server-side — clients can't bypass the strength requirement.
-- **Row-Level Security**: All database tables have strict RLS policies (Supabase).
+- **Realtime Password Validation**: Registration form shows a live checklist of password requirements as the user types.
+- **Session Timeout**: Auto-logout after 30 minutes of inactivity with a warning at 25 minutes.
+- **Brute-Force Lockout**: Account locks for 15 minutes after 5 failed login attempts.
+- **Admin-Only Overrides**: Manual attendance overrides restricted to administrators for integrity.
 - **Role-Based Access**: Admin, Organizer, and Student roles with server-enforced authorization.
 
 ## Tech Stack
@@ -23,9 +26,10 @@ Nexus Gate is a production-ready attendance tracking system designed for educati
 - **Database**: Prisma ORM (SQLite dev / PostgreSQL prod via Supabase)
 - **UI**: Tailwind CSS 4 + shadcn/ui (New York)
 - **State**: TanStack Query (server) + Zustand (client)
-- **Auth**: Custom JWT (email/password) + NextAuth (Google OAuth optional)
-- **Realtime**: Socket.io (optional mini-service)
-- **Testing**: Vitest (262 tests)
+- **Auth**: Supabase Auth (email/password + Google OAuth + magic link + passkey)
+- **Realtime**: Ably (managed realtime, free tier: 3M messages/month)
+- **File Parsing**: exceljs (Excel), pdfjs-dist (PDF), mammoth (DOCX), papaparse (CSV)
+- **Testing**: Vitest (250+ tests)
 
 ## Quick Start
 
@@ -35,7 +39,7 @@ bun install
 
 # Set up environment
 cp example.env .env
-# Edit .env with your values
+# Edit .env with your values (DATABASE_URL, Supabase keys, Ably keys)
 
 # Create the first admin account
 bun run bootstrap:admin
@@ -61,7 +65,7 @@ After running `bun run bootstrap:admin`:
 |--------|-------------|
 | `bun run dev` | Start dev server (port 3000) |
 | `bun run lint` | Run ESLint |
-| `bun run test` | Run all 262 unit + integration tests |
+| `bun run test` | Run all unit + integration tests |
 | `bun run test:watch` | Run tests in watch mode |
 | `bun run bootstrap:admin` | Create the first admin account |
 | `bun run seed:events` | Seed test events for development |
@@ -70,9 +74,8 @@ After running `bun run bootstrap:admin`:
 
 ## Documentation
 
-- [Deployment Guide](./DEPLOYMENT-GUIDE.md) — Step-by-step Supabase + Vercel + Caddy setup
-- [Environment Variables](./ENV-VARIABLES.md) — Complete env var reference
-- [Architecture & Security](./ARCHITECTURE-SECURITY.md) — System diagram + 8 security layers
+- [Deployment Guide](./DEPLOYMENT-GUIDE.md) — Step-by-step Supabase + Vercel setup
+- [Architecture & Security](./ARCHITECTURE-SECURITY.md) — System diagram + security layers
 - [Full Documentation](./DOCUMENTATION.md) — Comprehensive feature + API reference
 
 ## Testing
@@ -89,16 +92,25 @@ bunx vitest run src/lib/qr-token.test.ts
 
 | File | Tests | What it covers |
 |------|-------|----------------|
-| `auth.test.ts` | 15 | Password hashing, JWT, refresh tokens |
+| `auth.test.ts` | 15 | Password hashing, HMAC |
 | `qr-token.test.ts` | 37 | v8 token generation, validation, sub-frame liveness |
 | `scan-certificate.test.ts` | 21 | Certificate creation, canonicalization, idempotency |
 | `scan-flow.integration.test.ts` | 24 | Full end-to-end scan flow, anti-cheat simulations |
-| `validation.test.ts` | 39 | Zod schemas, OTP removal verification |
+| `validation.test.ts` | 39 | Zod schemas, event time validation |
 | `password-strength.test.ts` | 34 | Password scoring |
 | `section-validation.test.ts` | 42 | Year/section consistency |
 | `event-visibility.test.ts` | 32 | Strict event filtering |
 | `cooldown.test.ts` | 18 | 30-day cooldown logic |
 
+## Infrastructure ($0/month)
+
+| Service | Plan | Purpose |
+|---------|------|---------|
+| Vercel | Hobby (free) | Next.js hosting + API routes |
+| Supabase | Free | PostgreSQL database + Auth |
+| Ably | Free | Realtime attendance updates (3M messages/mo) |
+| Cloudflare | Free | Optional edge caching + DDoS protection |
+
 ## License
 
-MIT — See [LICENSE.md](./LICENSE.md)
+MIT — See [LICENSE](./LICENSE)

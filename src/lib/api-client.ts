@@ -453,7 +453,7 @@ export const useEventAttendance = (
     enabled: eventId != null,
     // Polling strategy:
     //   - Override page: poll=false (no polling)
-    //   - Socket connected: no polling (socket.io pushes realtime updates)
+    //   - Socket connected: no polling (Ably pushes realtime updates)
     //   - Socket disconnected: poll every 15s as fallback (was 4s, then 10s)
     refetchInterval:
       eventId != null && options?.poll !== false && !options?.socketConnected

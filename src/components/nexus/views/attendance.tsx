@@ -124,7 +124,7 @@ export function AttendanceView() {
   // Create the socket first so we can use its connected state to control polling.
   const socket = useAttendanceSocket(eventId);
   // Poll only when the socket is disconnected (fallback). When connected,
-  // socket.io pushes realtime updates — no polling needed.
+  // Ably pushes realtime updates — no polling needed.
   const presenceQ = useEventAttendance(eventId, {
     socketConnected: socket.connected,
   });
