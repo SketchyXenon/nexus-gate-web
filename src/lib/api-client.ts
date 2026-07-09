@@ -226,6 +226,30 @@ export const useResetPassword = () =>
       }),
   });
 
+// Pre-registration availability check for email and/or student ID.
+// Debounced 400ms via enabled flag — only fires when inputs are format-valid.
+export const useCheckAvailability = (
+  email: string | null,
+  studentId: string | null,
+) =>
+  useQuery({
+    queryKey: ["auth-check", email, studentId],
+    queryFn: () =>
+      api<{ emailTaken?: boolean; studentIdTaken?: boolean }>(
+        "/api/auth/check",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            ...(email ? { email } : {}),
+            ...(studentId ? { studentId } : {}),
+          }),
+        },
+      ),
+    enabled: Boolean(email || studentId),
+    staleTime: 30_000,
+    retry: false,
+  });
+
 export const useLogout = () => {
   const qc = useQueryClient();
   return useMutation({

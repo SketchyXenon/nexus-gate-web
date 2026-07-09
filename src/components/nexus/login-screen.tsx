@@ -12,6 +12,7 @@ import {
   Mail,
   MailCheck,
   CheckCircle2,
+  XCircle,
   Hash,
   HelpCircle,
   FileText,
@@ -52,6 +53,7 @@ import {
   useRegister,
   useForgotPassword,
   useResetPassword,
+  useCheckAvailability,
 } from "@/lib/api-client";
 import { toast } from "@/hooks/use-toast";
 import { ROLE_LABELS, ROLE_DESCRIPTIONS, type Role } from "@/lib/rbac";
@@ -248,6 +250,39 @@ function AuthScreen({
     if (mode !== "register") setRegStep(1);
   }, [mode]);
 
+  // ---- Debounced availability check for registration ----
+  // Only check when email/studentId are format-valid. 400ms debounce.
+  const [debouncedEmail, setDebouncedEmail] = useState<string | null>(null);
+  const [debouncedStudentId, setDebouncedStudentId] = useState<string | null>(
+    null,
+  );
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      setDebouncedEmail(
+        mode === "register" && emailValid ? email.toLowerCase() : null,
+      );
+      const sidValid = /^\d{7}$/.test(studentId.trim());
+      setDebouncedStudentId(
+        mode === "register" && sidValid ? studentId.trim() : null,
+      );
+    }, 400);
+    return () => clearTimeout(t);
+  }, [email, studentId, mode]);
+
+  const availability = useCheckAvailability(debouncedEmail, debouncedStudentId);
+  const emailTaken =
+    availability.data?.emailTaken === true && !availability.isError;
+  const studentIdTaken =
+    availability.data?.studentIdTaken === true && !availability.isError;
+  const emailChecking = !!debouncedEmail && availability.isLoading;
+  const studentIdChecking = !!debouncedStudentId && availability.isLoading;
+  // When the check fails (rate limited or network error), don't claim available.
+  const emailCheckFailed =
+    !!debouncedEmail && !availability.isLoading && availability.isError;
+  const studentIdCheckFailed =
+    !!debouncedStudentId && !availability.isLoading && availability.isError;
+
   // ---- Magic link (passwordless email login) ----
   const [magicLinkSending, setMagicLinkSending] = useState(false);
   const [magicLinkSent, setMagicLinkSent] = useState(false);
@@ -348,6 +383,8 @@ function AuthScreen({
     const e: Record<string, string> = {};
     if (step === 1) {
       if (!email) e.email = "Enter your email";
+      else if (emailTaken) e.email = "This email is already registered";
+      else if (emailChecking) e.email = "Checking email availability…";
       if (password.length < 8) {
         e.password = "At least 8 characters";
       } else if (!/[A-Z]/.test(password)) {
@@ -364,6 +401,10 @@ function AuthScreen({
     } else if (step === 2) {
       if (!fullName.trim()) e.fullName = "Enter your full name";
       if (!/^\d{7}$/.test(studentId.trim())) e.studentId = "Must be 7 digits";
+      else if (studentIdTaken)
+        e.studentId = "This student ID is already registered";
+      else if (studentIdChecking)
+        e.studentId = "Checking student ID availability…";
     }
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -779,15 +820,51 @@ function AuthScreen({
                                   placeholder="yourname@gmail.com"
                                   value={email}
                                   onChange={(e) => setEmail(e.target.value)}
-                                  className="pl-9"
+                                  className={`pl-9 pr-10 ${
+                                    emailTaken
+                                      ? "border-destructive focus-visible:ring-destructive"
+                                      : debouncedEmail &&
+                                          !emailChecking &&
+                                          !emailTaken
+                                        ? "border-emerald-500/50 focus-visible:ring-emerald-500/50"
+                                        : ""
+                                  }`}
                                   autoFocus
                                 />
+                                {/* Inline availability indicator */}
+                                {debouncedEmail && (
+                                  <span className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center">
+                                    {emailChecking ? (
+                                      <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
+                                    ) : emailTaken ? (
+                                      <XCircle className="h-4 w-4 text-destructive" />
+                                    ) : emailCheckFailed ? (
+                                      <Info className="h-4 w-4 text-muted-foreground" />
+                                    ) : (
+                                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                                    )}
+                                  </span>
+                                )}
                               </div>
-                              {errors.email && (
-                                <p className="text-xs text-destructive">
+                              {errors.email ? (
+                                <p
+                                  className={`text-xs ${emailTaken ? "text-destructive" : "text-muted-foreground"}`}
+                                >
                                   {errors.email}
                                 </p>
-                              )}
+                              ) : emailTaken ? (
+                                <p className="text-xs text-destructive">
+                                  This email is already registered
+                                </p>
+                              ) : emailCheckFailed ? (
+                                <p className="text-xs text-muted-foreground">
+                                  Couldn&apos;t verify — try again
+                                </p>
+                              ) : debouncedEmail && !emailChecking ? (
+                                <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                                  Email is available
+                                </p>
+                              ) : null}
                             </div>
                             <div className="space-y-1.5">
                               <div className="flex items-center gap-1.5">
@@ -839,21 +916,47 @@ function AuthScreen({
                               <Label htmlFor="confirmPass">
                                 Confirm password
                               </Label>
-                              <Input
-                                id="confirmPass"
-                                type="password"
-                                placeholder="••••••••"
-                                value={confirmPassword}
-                                onChange={(e) =>
-                                  setConfirmPassword(e.target.value)
-                                }
-                                autoComplete="new-password"
-                              />
-                              {errors.confirmPassword && (
+                              <div className="relative">
+                                <Input
+                                  id="confirmPass"
+                                  type="password"
+                                  placeholder="••••••••"
+                                  value={confirmPassword}
+                                  onChange={(e) =>
+                                    setConfirmPassword(e.target.value)
+                                  }
+                                  className={`pr-10 ${
+                                    confirmPassword &&
+                                    confirmPassword === password
+                                      ? "border-emerald-500/50 focus-visible:ring-emerald-500/50"
+                                      : confirmPassword &&
+                                          confirmPassword !== password
+                                        ? "border-destructive/50 focus-visible:ring-destructive/50"
+                                        : ""
+                                  }`}
+                                  autoComplete="new-password"
+                                />
+                                {/* Real-time match indicator */}
+                                {confirmPassword && (
+                                  <span className="absolute right-3 top-1/2 -translate-y-1/2">
+                                    {confirmPassword === password ? (
+                                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                                    ) : (
+                                      <XCircle className="h-4 w-4 text-destructive/60" />
+                                    )}
+                                  </span>
+                                )}
+                              </div>
+                              {errors.confirmPassword ? (
                                 <p className="text-xs text-destructive">
                                   {errors.confirmPassword}
                                 </p>
-                              )}
+                              ) : confirmPassword &&
+                                confirmPassword === password ? (
+                                <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                                  Passwords match
+                                </p>
+                              ) : null}
                             </div>
                             <Button
                               type="button"
@@ -926,14 +1029,50 @@ function AuthScreen({
                                         .slice(0, 7),
                                     )
                                   }
-                                  className="pl-9 font-heading"
+                                  className={`pl-9 pr-10 font-heading ${
+                                    studentIdTaken
+                                      ? "border-destructive focus-visible:ring-destructive"
+                                      : debouncedStudentId &&
+                                          !studentIdChecking &&
+                                          !studentIdTaken
+                                        ? "border-emerald-500/50 focus-visible:ring-emerald-500/50"
+                                        : ""
+                                  }`}
                                 />
+                                {/* Inline availability indicator */}
+                                {debouncedStudentId && (
+                                  <span className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center">
+                                    {studentIdChecking ? (
+                                      <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
+                                    ) : studentIdTaken ? (
+                                      <XCircle className="h-4 w-4 text-destructive" />
+                                    ) : studentIdCheckFailed ? (
+                                      <Info className="h-4 w-4 text-muted-foreground" />
+                                    ) : (
+                                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                                    )}
+                                  </span>
+                                )}
                               </div>
-                              {errors.studentId && (
-                                <p className="text-xs text-destructive">
+                              {errors.studentId ? (
+                                <p
+                                  className={`text-xs ${studentIdTaken ? "text-destructive" : "text-muted-foreground"}`}
+                                >
                                   {errors.studentId}
                                 </p>
-                              )}
+                              ) : studentIdTaken ? (
+                                <p className="text-xs text-destructive">
+                                  This student ID is already registered
+                                </p>
+                              ) : studentIdCheckFailed ? (
+                                <p className="text-xs text-muted-foreground">
+                                  Couldn&apos;t verify — try again
+                                </p>
+                              ) : debouncedStudentId && !studentIdChecking ? (
+                                <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                                  Student ID is available
+                                </p>
+                              ) : null}
                             </div>
                             <div className="flex gap-2">
                               <Button
