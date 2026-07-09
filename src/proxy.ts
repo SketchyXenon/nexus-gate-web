@@ -9,6 +9,13 @@ import { NextResponse, type NextRequest } from "next/server";
 export async function proxy(request: NextRequest) {
   const response = NextResponse.next();
   const path = request.nextUrl.pathname;
+  const method = request.method.toUpperCase();
+
+  // OPTIONS preflight — return 204 immediately with security headers.
+  // Skip CSRF check (no body) and skip the rest of the middleware.
+  if (method === "OPTIONS") {
+    return new NextResponse(null, { status: 204, headers: response.headers });
+  }
 
   // ---- CSRF Defense-in-Depth: Origin/Referer check for mutations ----
   // SameSite=Lax cookies are the primary CSRF defense. This Origin/Referer
@@ -35,7 +42,6 @@ export async function proxy(request: NextRequest) {
   //   ORIGINAL client Host. We trust this header (it's set by our own
   //   gateway, not user-controlled) so the preview-panel domain is
   //   recognized as same-origin.
-  const method = request.method.toUpperCase();
   const isDev = process.env.NODE_ENV !== "production";
 
   // Skip CSRF check for cron endpoints — they're authenticated via

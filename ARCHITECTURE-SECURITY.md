@@ -80,10 +80,8 @@
 
 ┌─────────────────────────────────────────────────────────────┐
 │              CLOUDFLARE (Optional, Free)                      │
-│  - Edge caching for GET /api/* responses (70-90% hit rate)   │
 │  - DDoS protection (unlimited, free)                          │
-│  - Requires custom domain for full caching                    │
-│  - Worker: cloudflare/worker.js (Service Worker format)       │
+│  - Requires custom domain for edge caching                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -190,8 +188,7 @@
 ### Caching
 - Account cache (30s TTL) — eliminates 1 DB query per request
 - Maintenance mode cache (10s TTL)
-- Browser caching via `Cache-Control: stale-while-revalidate` on 7 GET routes
-- Cloudflare Worker (optional) — 70-90% edge cache hit rate
+- Browser caching via `Cache-Control: stale-while-revalidate` on all GET routes
 
 ### Polling
 - Notifications: 60s interval (was 30s)

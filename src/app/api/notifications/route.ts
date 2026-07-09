@@ -33,10 +33,13 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  return NextResponse.json({
-    notifications,
-    unreadCount,
-  });
+  return NextResponse.json(
+    {
+      notifications,
+      unreadCount,
+    },
+    { headers: { "Cache-Control": "private, no-cache" } },
+  );
 }
 
 // ====================================================================

@@ -2,51 +2,112 @@
 # --------------------------------------------------------------------
 # Security hardening:
 #   - Body size limit (10MB) to prevent OOM via large uploads.
-#   - Request rate limiting (100 req/min per IP for /api routes).
+#   - Tiered rate limiting: strict for auth, normal for general API.
+#   - Response compression (zstd > gzip) to cut bandwidth ~70%.
+#   - Reverse proxy health checks + connection limits for stability.
 #   - Access logging in JSON format for forensics.
-#   - TLS enabled (use `tls internal` for dev, ACME for prod).
+#   - TLS: use `tls internal` for dev, ACME (Let's Encrypt) for prod.
 #   - Realtime is handled by Ably (no local socket.io service needed).
 # --------------------------------------------------------------------
 
-# Production domain — replace with your actual domain
-#:80 {
-# For dev/preview, listen on port 81 without TLS
+# ====================================================================
+# PRODUCTION — serves on port 80 (HTTP).
+# Without a custom domain, Caddy cannot issue Let's Encrypt TLS certs.
+# For HTTPS, either: (a) add a domain below for auto-TLS, or
+# (b) put Caddy behind a TLS terminator (e.g. Vercel, nginx, Cloudflare proxy).
+# To enable auto-TLS: replace :80 with your domain (e.g. nexus.example.com).
+# ====================================================================
+:80 {
+        encode zstd gzip
+        header {
+                -Server
+                X-Content-Type-Options nosniff
+                X-Frame-Options SAMEORIGIN
+                Referrer-Policy strict-origin-when-cross-origin
+        }
+        request_body { max_size 10MB }
+
+        # Auth endpoints — strict limit to block brute force.
+        @auth path /api/auth/login /api/auth/register /api/auth/forgot-password /api/auth/magic-link /api/auth/reset-password /api/auth/passkey/*
+        rate_limit @auth 5r/m
+
+        # Scan endpoint — allow bursts for legitimate students.
+        @scan path /api/attendance
+        rate_limit @scan 60r/m
+
+        # General API — 100 req/min per IP.
+        @api path /api/*
+        rate_limit @api 100r/m
+
+        reverse_proxy localhost:3000 {
+                header_up Host {host}
+                header_up X-Forwarded-For {remote_host}
+                header_up X-Forwarded-Proto {scheme}
+                header_up X-Real-IP {remote_host}
+                health_uri /api/health
+                health_interval 30s
+                health_timeout 5s
+                transport http {
+                        keepalive 30s
+                        keepalive_idle_conns 100
+                }
+        }
+        log {
+                output file /tmp/caddy-nexusgate.log
+                format json
+        }
+}
+
+# ====================================================================
+# DEV / PREVIEW (port 81, no TLS)
+# ====================================================================
 :81 {
+        # Compression — zstd preferred, gzip fallback.
+        encode zstd gzip
+
         # Security headers
         header {
-                # Hide Caddy version
                 -Server
-                # Prevent MIME sniffing
                 X-Content-Type-Options nosniff
-                # Clickjacking protection (supplement to CSP frame-ancestors)
                 X-Frame-Options SAMEORIGIN
-                # Referrer policy
                 Referrer-Policy strict-origin-when-cross-origin
         }
 
-        # Body size limit — prevents OOM via large uploads
+        # Body size limit — prevents OOM via large uploads.
         request_body {
                 max_size 10MB
         }
 
-        # Rate limiting for API routes (100 req/min per IP)
-        # @api path /api/*
-        # rate_limit @api 100r/m
+        # Auth endpoints — strict limit to block brute force.
+        @auth path /api/auth/login /api/auth/register /api/auth/forgot-password /api/auth/magic-link /api/auth/reset-password /api/auth/passkey/*
+        rate_limit @auth 5r/m
 
-        # Realtime is now handled by Ably (no local socket.io service).
-        # The XTransformPort whitelist for port 3003 has been removed.
+        # Scan endpoint — allow bursts for legitimate students.
+        @scan path /api/attendance
+        rate_limit @scan 60r/m
 
-        # Default: proxy to the Next.js app (port 3000)
-        handle {
-                reverse_proxy localhost:3000 {
-                        header_up Host {host}
-                        header_up X-Forwarded-For {remote_host}
-                        header_up X-Forwarded-Proto {scheme}
-                        header_up X-Real-IP {remote_host}
+        # General API — 100 req/min per IP.
+        @api path /api/*
+        rate_limit @api 100r/m
+
+        # Realtime is handled by Ably (no local socket.io service).
+
+        # Reverse proxy to Next.js with health checks + keepalive.
+        reverse_proxy localhost:3000 {
+                header_up Host {host}
+                header_up X-Forwarded-For {remote_host}
+                header_up X-Forwarded-Proto {scheme}
+                header_up X-Real-IP {remote_host}
+                health_uri /api/health
+                health_interval 30s
+                health_timeout 5s
+                transport http {
+                        keepalive 30s
+                        keepalive_idle_conns 100
                 }
         }
 
-        # Access logging (JSON format for easy parsing)
+        # Access logging (JSON format for easy parsing).
         log {
                 output file /tmp/caddy-nexusgate.log
                 format json

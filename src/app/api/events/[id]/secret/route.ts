@@ -50,10 +50,19 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   const event = await db.event.findUnique({
     where: { id: Number(id) },
     select: {
-      id: true, title: true, eventSecret: true, scheduledAt: true,
-      endsAt: true, checkInOpensAt: true, checkInClosesAt: true,
-      targetProgram: true, targetSection: true, scope: true,
-      ownerId: true, status: true, delegatable: true,
+      id: true,
+      title: true,
+      eventSecret: true,
+      scheduledAt: true,
+      endsAt: true,
+      checkInOpensAt: true,
+      checkInClosesAt: true,
+      targetProgram: true,
+      targetSection: true,
+      scope: true,
+      ownerId: true,
+      status: true,
+      delegatable: true,
       delegationEnabled: true,
     },
   });
@@ -79,14 +88,14 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     const organizerOrg = account.organizationName?.trim();
     if (!organizerOrg) {
       return forbidden(
-        "QR delegation is disabled for your account because you have no organization tag. An administrator must set your organization tag before you can project another organizer's QR code."
+        "QR delegation is disabled for your account because you have no organization tag. An administrator must set your organization tag before you can project another organizer's QR code.",
       );
     }
 
     // CHECK 2: The event's delegationEnabled flag must be true.
     if (!event.delegationEnabled) {
       return forbidden(
-        "QR delegation is not enabled for this event. Only the event creator or an administrator can project this QR code."
+        "QR delegation is not enabled for this event. Only the event creator or an administrator can project this QR code.",
       );
     }
 
@@ -98,7 +107,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     const ownerOrg = owner?.organizationName?.trim();
     if (!ownerOrg) {
       return forbidden(
-        "QR delegation is blocked because the event creator has no organization tag. The administrator must set the event creator's organization tag before delegation can be used."
+        "QR delegation is blocked because the event creator has no organization tag. The administrator must set the event creator's organization tag before delegation can be used.",
       );
     }
 
@@ -107,7 +116,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     // There is NO exception for open-to-all events.
     if (ownerOrg !== organizerOrg) {
       return forbidden(
-        `You can only delegate QR projection within the same organization. The event creator is tagged "${ownerOrg}" but you are tagged "${organizerOrg}". Contact your administrator if this is incorrect.`
+        `You can only delegate QR projection within the same organization. The event creator is tagged "${ownerOrg}" but you are tagged "${organizerOrg}". Contact your administrator if this is incorrect.`,
       );
     }
 
@@ -153,7 +162,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         opensAt: window.opensAt.toISOString(),
         closesAt: window.closesAt.toISOString(),
       },
-      { status: 403 }
+      { status: 403 },
     );
   }
 
@@ -164,23 +173,30 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         code: "ENDED",
         closesAt: window.closesAt.toISOString(),
       },
-      { status: 403 }
+      { status: 403 },
     );
   }
 
   // Event is live — return the secret
-  return NextResponse.json({
-    id: event.id, title: event.title, eventSecret: event.eventSecret,
-    scheduledAt: event.scheduledAt, endsAt: event.endsAt,
-    checkInOpensAt: event.checkInOpensAt,
-    checkInClosesAt: event.checkInClosesAt,
-    targetProgram: event.targetProgram,
-    targetSection: event.targetSection, scope: event.scope,
-    windowOpensAt: window.opensAt,
-    windowClosesAt: window.closesAt,
-    isDelegated,
-    delegatable: event.delegatable,
-    delegationEnabled: event.delegationEnabled,
-    delegationMode,
-  });
+  return NextResponse.json(
+    {
+      id: event.id,
+      title: event.title,
+      eventSecret: event.eventSecret,
+      scheduledAt: event.scheduledAt,
+      endsAt: event.endsAt,
+      checkInOpensAt: event.checkInOpensAt,
+      checkInClosesAt: event.checkInClosesAt,
+      targetProgram: event.targetProgram,
+      targetSection: event.targetSection,
+      scope: event.scope,
+      windowOpensAt: window.opensAt,
+      windowClosesAt: window.closesAt,
+      isDelegated,
+      delegatable: event.delegatable,
+      delegationEnabled: event.delegationEnabled,
+      delegationMode,
+    },
+    { headers: { "Cache-Control": "private, no-cache" } },
+  );
 }

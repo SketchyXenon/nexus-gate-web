@@ -37,5 +37,7 @@ export async function GET() {
       { error: "Unauthorized", code: "UNAUTHORIZED" },
       { status: 401 },
     );
-  return NextResponse.json(account);
+  return NextResponse.json(account, {
+    headers: { "Cache-Control": "private, no-cache" },
+  });
 }

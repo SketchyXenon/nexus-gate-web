@@ -79,10 +79,13 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     }),
   ]);
 
-  return NextResponse.json({
-    event,
-    presentCount: attendances.length,
-    eligibleCount,
-    attendances,
-  });
+  return NextResponse.json(
+    {
+      event,
+      presentCount: attendances.length,
+      eligibleCount,
+      attendances,
+    },
+    { headers: { "Cache-Control": "private, no-cache" } },
+  );
 }

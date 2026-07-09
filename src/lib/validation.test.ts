@@ -17,7 +17,7 @@ import {
 describe("registerSchema", () => {
   const validInput = {
     email: "student@example.com",
-    password: "StrongPass1",
+    password: "StrongPass1!",
     fullName: "Jane Doe",
     studentId: 1234567,
     program: "BSIT",
@@ -39,17 +39,26 @@ describe("registerSchema", () => {
   });
 
   it("rejects an invalid program code", () => {
-    const result = registerSchema.safeParse({ ...validInput, program: "INVALID" });
+    const result = registerSchema.safeParse({
+      ...validInput,
+      program: "INVALID",
+    });
     expect(result.success).toBe(false);
   });
 
   it("rejects a weak password (no number)", () => {
-    const result = registerSchema.safeParse({ ...validInput, password: "WeakPassword" });
+    const result = registerSchema.safeParse({
+      ...validInput,
+      password: "WeakPassword",
+    });
     expect(result.success).toBe(false);
   });
 
   it("rejects a weak password (no uppercase)", () => {
-    const result = registerSchema.safeParse({ ...validInput, password: "weakpass1" });
+    const result = registerSchema.safeParse({
+      ...validInput,
+      password: "weakpass1",
+    });
     expect(result.success).toBe(false);
   });
 
@@ -59,7 +68,10 @@ describe("registerSchema", () => {
   });
 
   it("rejects an invalid email", () => {
-    const result = registerSchema.safeParse({ ...validInput, email: "not-an-email" });
+    const result = registerSchema.safeParse({
+      ...validInput,
+      email: "not-an-email",
+    });
     expect(result.success).toBe(false);
   });
 
@@ -69,12 +81,18 @@ describe("registerSchema", () => {
   });
 
   it("rejects a name with numbers", () => {
-    const result = registerSchema.safeParse({ ...validInput, fullName: "Jane Doe 123" });
+    const result = registerSchema.safeParse({
+      ...validInput,
+      fullName: "Jane Doe 123",
+    });
     expect(result.success).toBe(false);
   });
 
   it("lowercases the email on parse", () => {
-    const result = registerSchema.safeParse({ ...validInput, email: "STUDENT@EXAMPLE.COM" });
+    const result = registerSchema.safeParse({
+      ...validInput,
+      email: "STUDENT@EXAMPLE.COM",
+    });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.email).toBe("student@example.com");
@@ -82,7 +100,14 @@ describe("registerSchema", () => {
   });
 
   it("accepts all valid program codes", () => {
-    for (const program of ["BSIT", "BSMx", "BIT-CT", "BIT-DT", "BIT-ET", "BIT-ELT"]) {
+    for (const program of [
+      "BSIT",
+      "BSMx",
+      "BIT-CT",
+      "BIT-DT",
+      "BIT-ET",
+      "BIT-ELT",
+    ]) {
       const result = registerSchema.safeParse({ ...validInput, program });
       expect(result.success).toBe(true);
     }
@@ -137,24 +162,40 @@ describe("updateProfileSchema", () => {
   });
 
   it("accepts a name + valid program update", () => {
-    const result = updateProfileSchema.safeParse({ ...validInput, program: "BSIT" });
+    const result = updateProfileSchema.safeParse({
+      ...validInput,
+      program: "BSIT",
+    });
     expect(result.success).toBe(true);
   });
 
   it("rejects an INVALID program code (must come from the dropdown)", () => {
     // This enforces server-side that the program comes from the dropdown,
     // not a free-text input.
-    const result = updateProfileSchema.safeParse({ ...validInput, program: "HACKED" });
+    const result = updateProfileSchema.safeParse({
+      ...validInput,
+      program: "HACKED",
+    });
     expect(result.success).toBe(false);
   });
 
   it("accepts an empty program string (clearing the course)", () => {
-    const result = updateProfileSchema.safeParse({ ...validInput, program: "" });
+    const result = updateProfileSchema.safeParse({
+      ...validInput,
+      program: "",
+    });
     expect(result.success).toBe(true);
   });
 
   it("accepts all valid program codes", () => {
-    for (const program of ["BSIT", "BSMx", "BIT-CT", "BIT-DT", "BIT-ET", "BIT-ELT"]) {
+    for (const program of [
+      "BSIT",
+      "BSMx",
+      "BIT-CT",
+      "BIT-DT",
+      "BIT-ET",
+      "BIT-ELT",
+    ]) {
       const result = updateProfileSchema.safeParse({ ...validInput, program });
       expect(result.success).toBe(true);
     }
@@ -168,27 +209,43 @@ describe("updateProfileSchema", () => {
   });
 
   it("rejects an invalid year (0 or 7+)", () => {
-    expect(updateProfileSchema.safeParse({ ...validInput, year: 0 }).success).toBe(false);
-    expect(updateProfileSchema.safeParse({ ...validInput, year: 7 }).success).toBe(false);
+    expect(
+      updateProfileSchema.safeParse({ ...validInput, year: 0 }).success,
+    ).toBe(false);
+    expect(
+      updateProfileSchema.safeParse({ ...validInput, year: 7 }).success,
+    ).toBe(false);
   });
 
   it("accepts a valid section (number-letter format)", () => {
-    const result = updateProfileSchema.safeParse({ ...validInput, section: "2-B" });
+    const result = updateProfileSchema.safeParse({
+      ...validInput,
+      section: "2-B",
+    });
     expect(result.success).toBe(true);
   });
 
   it("rejects an invalid section (letter only, no number)", () => {
-    const result = updateProfileSchema.safeParse({ ...validInput, section: "A" });
+    const result = updateProfileSchema.safeParse({
+      ...validInput,
+      section: "A",
+    });
     expect(result.success).toBe(false);
   });
 
   it("rejects an invalid section (number only, no letter)", () => {
-    const result = updateProfileSchema.safeParse({ ...validInput, section: "2" });
+    const result = updateProfileSchema.safeParse({
+      ...validInput,
+      section: "2",
+    });
     expect(result.success).toBe(false);
   });
 
   it("rejects a name that's too short", () => {
-    const result = updateProfileSchema.safeParse({ ...validInput, fullName: "A" });
+    const result = updateProfileSchema.safeParse({
+      ...validInput,
+      fullName: "A",
+    });
     expect(result.success).toBe(false);
   });
 });
@@ -228,7 +285,7 @@ describe("programSchema", () => {
 
 describe("passwordSchema", () => {
   it("accepts a strong password", () => {
-    expect(passwordSchema.safeParse("StrongPass1").success).toBe(true);
+    expect(passwordSchema.safeParse("StrongPass1!").success).toBe(true);
   });
 
   it("rejects a password without a number", () => {
@@ -248,7 +305,7 @@ describe("passwordSchema", () => {
   });
 
   it("rejects a password longer than 128 characters", () => {
-    const long = "Aa1" + "x".repeat(126);
+    const long = "Aa1!" + "x".repeat(125);
     expect(passwordSchema.safeParse(long).success).toBe(false);
   });
 });

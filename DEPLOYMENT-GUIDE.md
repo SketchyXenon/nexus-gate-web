@@ -110,19 +110,15 @@ Method: GET
 Schedule: 0 3 * * *
 ```
 
-### Step 6 (Optional): Cloudflare Edge Caching
+### Step 6: Self-Hosting with Caddy (Optional)
 
-For reduced bandwidth and faster response times:
+If you're self-hosting instead of deploying to Vercel, use the included
+`Caddyfile` as a reverse proxy in front of the Next.js app (port 3000).
 
-1. Buy a custom domain (~$1-10/year)
-2. Add it to Cloudflare (free)
-3. Point DNS to Vercel
-4. Deploy the Worker from `cloudflare/worker.js`:
-   - Go to Cloudflare Dashboard → Workers & Pages → Create
-   - Paste the contents of `cloudflare/worker.js`
-   - Deploy
-   - Set route: `yourdomain.com/api/*` → the Worker
-5. Add the custom domain to Vercel → Settings → Domains
+The Caddyfile includes a production block (port 80) and a dev block (port 81).
+Edit the production block to add your domain for automatic TLS via Let's
+Encrypt. Without a custom domain, Caddy serves HTTP only — use a TLS
+terminator or deploy on Vercel for HTTPS.
 
 ## Environment Variables Reference
 

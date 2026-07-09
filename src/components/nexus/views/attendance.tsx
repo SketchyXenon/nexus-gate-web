@@ -94,7 +94,8 @@ const SORT_LABELS: Record<SortKey, string> = {
 const FILTER_ALL = "ALL";
 
 export function AttendanceView() {
-  const { data: eventsData } = useEvents();
+  // Include ended events so organizers can view attendance for past classes.
+  const { data: eventsData } = useEvents({ includeEnded: true });
   const events = eventsData?.events ?? [];
 
   // ---- Event picker state (searchable combobox for large event lists) ----

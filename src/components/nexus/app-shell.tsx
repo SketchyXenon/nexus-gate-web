@@ -146,8 +146,14 @@ const NAV: NavItem[] = [
   },
 ];
 
-export function AppShell({ user }: { user: Account }) {
-  const [view, setView] = useState<ViewId>("dashboard");
+export function AppShell({
+  user,
+  initialView,
+}: {
+  user: Account;
+  initialView?: ViewId;
+}) {
+  const [view, setView] = useState<ViewId>(initialView ?? "dashboard");
   const logout = useLogout();
   const online = useOnlineStatus();
   // Auto-logout after 30 min of inactivity (warning at 25 min).

@@ -29,9 +29,9 @@ export const passwordSchema = z
     "Include at least one special character (!@#$%^&*...)",
   );
 
-// STRONG password schema — used by the CHANGE PASSWORD route.
-// Runs the shared scorePassword() scorer on the SERVER and rejects
-// any password scoring below MIN_PASSWORD_SCORE (4).
+// STRONG password schema — used by register, reset-password, change-password,
+// and admin-create-account routes. Runs the shared scorePassword() scorer on
+// the SERVER and rejects any password scoring below MIN_PASSWORD_SCORE (4).
 export const strongPasswordSchema = passwordSchema.refine(
   (pw) => scorePassword(pw).passes,
   {
@@ -92,7 +92,7 @@ export const sectionSchema = z
 
 export const registerSchema = z.object({
   email: emailSchema,
-  password: passwordSchema,
+  password: strongPasswordSchema,
   fullName: fullNameSchema,
   studentId: studentIdSchema,
   program: programSchema,
@@ -118,7 +118,7 @@ export const forgotPasswordSchema = z.object({
 
 export const resetPasswordSchema = z.object({
   token: z.string().optional(),
-  password: passwordSchema,
+  password: strongPasswordSchema,
 });
 
 // ---- Whitelist ----
@@ -351,7 +351,7 @@ export const updateAccountSchema = z.object({
 // Admin creates an account (for organizer/admin roles)
 export const adminCreateAccountSchema = z.object({
   email: emailSchema,
-  password: passwordSchema,
+  password: strongPasswordSchema,
   fullName: fullNameSchema,
   role: z.enum(["ADMIN", "ORGANIZER"]),
   program: z.string().trim().max(50).optional().nullable(),

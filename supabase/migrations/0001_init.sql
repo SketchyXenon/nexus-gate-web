@@ -305,9 +305,10 @@ ON CONFLICT (key) DO NOTHING;
 -- ====================================================================
 -- BOOTSTRAP ADMIN ACCOUNT
 -- --------------------------------------------------------------------
--- Email:    admin@ctu.edu.ph
--- Password: nexus123  (CHANGE IMMEDIATELY after first login)
--- Hash:     bcrypt, 12 rounds (compatible with src/lib/auth.ts hashPassword)
+-- A seed admin so the system is usable immediately after migration.
+-- CHANGE THE PASSWORD on first login (or delete this row and use
+-- `bun run bootstrap:admin` with your own credentials instead).
+-- Hash: bcrypt, 12 rounds (compatible with src/lib/auth.ts hashPassword)
 -- ====================================================================
 INSERT INTO accounts (
     id, email, password_hash, full_name, role, status, last_login_at

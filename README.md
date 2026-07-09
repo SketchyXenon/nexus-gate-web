@@ -55,9 +55,17 @@ Open `http://localhost:3000` in your browser.
 
 ## Admin Credentials (Dev)
 
-After running `bun run bootstrap:admin`:
-- **Email**: `admin@nexusgate.dev`
-- **Password**: `AdminPass123!`
+Create your own admin account via the bootstrap script (uses env vars or
+prompts — never ships with hardcoded credentials):
+
+```bash
+bun run bootstrap:admin
+```
+
+Set `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD`, and
+`BOOTSTRAP_ADMIN_NAME` in `.env` first (see `example.env`), or pass them
+inline. The migration `0001_init.sql` also inserts a seed admin
+(`admin@ctu.edu.ph`) — change its password immediately on first login.
 
 ## Scripts
 

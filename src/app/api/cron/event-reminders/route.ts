@@ -118,7 +118,10 @@ export async function GET(req: NextRequest) {
   const denied = authorizeCron(req);
   if (denied) return denied;
   const result = await runEventReminders();
-  return NextResponse.json({ ok: true, ...result });
+  return NextResponse.json(
+    { ok: true, ...result },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(req: NextRequest) {

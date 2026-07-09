@@ -44,6 +44,7 @@ import { CookieConsent } from "./cookie-consent";
 import { InfoModals, openInfoModal } from "./info-modals";
 import { LandingPage } from "./landing-page";
 import { PasswordStrengthMeter } from "./password-meter";
+import { NexusLogo } from "./nexus-logo";
 
 import { PROGRAMS } from "@/lib/programs";
 import {
@@ -223,6 +224,8 @@ function AuthScreen({
   const [showRegPassword, setShowRegPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
+  // Multi-step registration wizard: 1=Account, 2=Identity, 3=Program.
+  const [regStep, setRegStep] = useState(1);
   // New-password fields for the reset flow.
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
@@ -239,6 +242,11 @@ function AuthScreen({
   const register = useRegister();
   const forgotPassword = useForgotPassword();
   const resetPassword = useResetPassword();
+
+  // Reset the registration wizard when leaving register mode.
+  useEffect(() => {
+    if (mode !== "register") setRegStep(1);
+  }, [mode]);
 
   // ---- Magic link (passwordless email login) ----
   const [magicLinkSending, setMagicLinkSending] = useState(false);
@@ -335,25 +343,28 @@ function AuthScreen({
     return Object.keys(e).length === 0;
   }
 
-  function validateRegister() {
+  // Validate one step of the registration wizard.
+  function validateRegStep(step: number) {
     const e: Record<string, string> = {};
-    if (!fullName.trim()) e.fullName = "Enter your full name";
-    if (!/^\d{7}$/.test(studentId.trim())) e.studentId = "Must be 7 digits";
-    if (!email) e.email = "Enter your email";
-    // Password: match backend passwordSchema rules.
-    if (password.length < 8) {
-      e.password = "At least 8 characters";
-    } else if (!/[A-Z]/.test(password)) {
-      e.password = "Include an uppercase letter";
-    } else if (!/[a-z]/.test(password)) {
-      e.password = "Include a lowercase letter";
-    } else if (!/[0-9]/.test(password)) {
-      e.password = "Include a number";
-    } else if (!/[^A-Za-z0-9]/.test(password)) {
-      e.password = "Include a special character (!@#$...)";
+    if (step === 1) {
+      if (!email) e.email = "Enter your email";
+      if (password.length < 8) {
+        e.password = "At least 8 characters";
+      } else if (!/[A-Z]/.test(password)) {
+        e.password = "Include an uppercase letter";
+      } else if (!/[a-z]/.test(password)) {
+        e.password = "Include a lowercase letter";
+      } else if (!/[0-9]/.test(password)) {
+        e.password = "Include a number";
+      } else if (!/[^A-Za-z0-9]/.test(password)) {
+        e.password = "Include a special character (!@#$...)";
+      }
+      if (password !== confirmPassword)
+        e.confirmPassword = "Passwords don't match";
+    } else if (step === 2) {
+      if (!fullName.trim()) e.fullName = "Enter your full name";
+      if (!/^\d{7}$/.test(studentId.trim())) e.studentId = "Must be 7 digits";
     }
-    if (password !== confirmPassword)
-      e.confirmPassword = "Passwords don't match";
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -402,7 +413,22 @@ function AuthScreen({
 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault();
-    if (!validateRegister()) return;
+    // Guard: if the user pressed Enter on step 1 or 2, advance instead of submit.
+    if (regStep === 1) {
+      if (validateRegStep(1)) {
+        setErrors({});
+        setRegStep(2);
+      }
+      return;
+    }
+    if (regStep === 2) {
+      if (validateRegStep(2)) {
+        setErrors({});
+        setRegStep(3);
+      }
+      return;
+    }
+    // Step 3: program/section are optional, so just submit.
     // Translate the "— Not specified —" sentinel back to empty/null for the API.
     const programValue = program === NO_PROGRAM ? "" : program;
     register.mutate(
@@ -705,7 +731,7 @@ function AuthScreen({
                     </div>
                   )}
 
-                  {/* REGISTER */}
+                  {/* REGISTER — multi-step wizard */}
                   {mode === "register" && (
                     <div className="space-y-4">
                       <div className="relative">
@@ -714,239 +740,301 @@ function AuthScreen({
                           create an account
                         </span>
                       </div>
+
+                      {/* Step indicator */}
+                      <div className="flex items-center gap-2">
+                        {[1, 2, 3].map((s) => (
+                          <div
+                            key={s}
+                            className="flex-1 flex items-center gap-2"
+                          >
+                            <div
+                              className={`flex-1 h-1.5 rounded-full transition-colors duration-300 ${
+                                s <= regStep ? "bg-primary" : "bg-muted"
+                              }`}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-center text-[11px] text-muted-foreground -mt-1">
+                        Step {regStep} of 3 —{" "}
+                        {regStep === 1
+                          ? "Account"
+                          : regStep === 2
+                            ? "Identity"
+                            : "Program"}
+                      </p>
+
                       <form onSubmit={handleRegister} className="space-y-3">
-                        <div className="space-y-1.5">
-                          <Label htmlFor="fullName">Full name</Label>
-                          <Input
-                            id="fullName"
-                            placeholder="Juan Dela Cruz"
-                            value={fullName}
-                            onChange={(e) =>
-                              setFullName(e.target.value.replace(/[0-9]/g, ""))
-                            }
-                          />
-                          {errors.fullName ? (
-                            <p className="text-xs text-destructive">
-                              {errors.fullName}
-                            </p>
-                          ) : (
-                            <p className="text-xs text-muted-foreground">
-                              Letters only — no numbers
-                            </p>
-                          )}
-                        </div>
-                        <div className="space-y-1.5">
-                          <div className="flex items-center gap-1.5">
-                            <Label htmlFor="studentId">Student ID</Label>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  7-digit number on your ID card or registration
-                                  form
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
-                          <div className="relative">
-                            <Hash className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                              id="studentId"
-                              inputMode="numeric"
-                              placeholder="3240001"
-                              value={studentId}
-                              onChange={(e) =>
-                                setStudentId(
-                                  e.target.value.replace(/\D/g, "").slice(0, 7),
-                                )
-                              }
-                              className="pl-9 font-heading"
-                            />
-                          </div>
-                          {errors.studentId && (
-                            <p className="text-xs text-destructive">
-                              {errors.studentId}
-                            </p>
-                          )}
-                        </div>
-                        {/* Program + Section — stack on mobile, two-up on small+ screens */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div className="space-y-1.5">
-                            <Label htmlFor="program">Program</Label>
-                            <Select value={program} onValueChange={setProgram}>
-                              <SelectTrigger id="program" className="w-full">
-                                <SelectValue placeholder="Select a program" />
-                              </SelectTrigger>
-                              <SelectContent className="max-w-[calc(100vw-1.5rem)]">
-                                <SelectItem value={NO_PROGRAM}>
-                                  — Not specified —
-                                </SelectItem>
-                                {PROGRAMS.map((p) => (
-                                  <SelectItem key={p.code} value={p.code}>
-                                    {p.code} — {p.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label htmlFor="section">Section</Label>
-                            <Input
-                              id="section"
-                              placeholder="e.g. 2-A, 3-B"
-                              value={section}
-                              onChange={(e) => setSection(e.target.value)}
-                            />
-                          </div>
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="regEmail">Email</Label>
-                          <div className="relative">
-                            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                              id="regEmail"
-                              type="email"
-                              placeholder="yourname@gmail.com"
-                              value={email}
-                              onChange={(e) => setEmail(e.target.value)}
-                              className="pl-9"
-                            />
-                          </div>
-                          {errors.email && (
-                            <p className="text-xs text-destructive">
-                              {errors.email}
-                            </p>
-                          )}
-                        </div>
-                        <div className="space-y-1.5">
-                          <div className="flex items-center gap-1.5">
-                            <Label htmlFor="regPass">Password</Label>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  Min 8 chars: uppercase, lowercase, number
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
-                          <div className="relative">
-                            <Input
-                              id="regPass"
-                              type={showRegPassword ? "text" : "password"}
-                              placeholder="••••••••"
-                              value={password}
-                              onChange={(e) => setPassword(e.target.value)}
-                              className="pr-10"
-                              autoComplete="new-password"
-                            />
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setShowRegPassword(!showRegPassword)
-                              }
-                              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                            >
-                              {showRegPassword ? (
-                                <EyeOff className="h-4 w-4" />
-                              ) : (
-                                <Eye className="h-4 w-4" />
+                        {/* Step 1: Account (email + password + confirm) */}
+                        {regStep === 1 && (
+                          <div className="space-y-3 animate-in fade-in duration-200">
+                            <div className="space-y-1.5">
+                              <Label htmlFor="regEmail">Email</Label>
+                              <div className="relative">
+                                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                  id="regEmail"
+                                  type="email"
+                                  placeholder="yourname@gmail.com"
+                                  value={email}
+                                  onChange={(e) => setEmail(e.target.value)}
+                                  className="pl-9"
+                                  autoFocus
+                                />
+                              </div>
+                              {errors.email && (
+                                <p className="text-xs text-destructive">
+                                  {errors.email}
+                                </p>
                               )}
-                            </button>
-                          </div>
-                          <PasswordStrengthMeter password={password} />
-                          {/* Realtime password requirement checklist */}
-                          {password && (
-                            <div className="text-[11px] space-y-0.5 mt-1">
-                              <p
-                                className={
-                                  password.length >= 8
-                                    ? "text-emerald-600"
-                                    : "text-muted-foreground"
-                                }
-                              >
-                                {password.length >= 8 ? "✓" : "○"} At least 8
-                                characters
-                              </p>
-                              <p
-                                className={
-                                  /[A-Z]/.test(password)
-                                    ? "text-emerald-600"
-                                    : "text-muted-foreground"
-                                }
-                              >
-                                {/[A-Z]/.test(password) ? "✓" : "○"} Uppercase
-                                letter
-                              </p>
-                              <p
-                                className={
-                                  /[a-z]/.test(password)
-                                    ? "text-emerald-600"
-                                    : "text-muted-foreground"
-                                }
-                              >
-                                {/[a-z]/.test(password) ? "✓" : "○"} Lowercase
-                                letter
-                              </p>
-                              <p
-                                className={
-                                  /[0-9]/.test(password)
-                                    ? "text-emerald-600"
-                                    : "text-muted-foreground"
-                                }
-                              >
-                                {/[0-9]/.test(password) ? "✓" : "○"} Number
-                              </p>
-                              <p
-                                className={
-                                  /[^A-Za-z0-9]/.test(password)
-                                    ? "text-emerald-600"
-                                    : "text-muted-foreground"
-                                }
-                              >
-                                {/[^A-Za-z0-9]/.test(password) ? "✓" : "○"}{" "}
-                                Special character
-                              </p>
                             </div>
-                          )}
-                          {errors.password && (
-                            <p className="text-xs text-destructive">
-                              {errors.password}
+                            <div className="space-y-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <Label htmlFor="regPass">Password</Label>
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      Min 8 chars: uppercase, lowercase, number,
+                                      special
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              </div>
+                              <div className="relative">
+                                <Input
+                                  id="regPass"
+                                  type={showRegPassword ? "text" : "password"}
+                                  placeholder="••••••••"
+                                  value={password}
+                                  onChange={(e) => setPassword(e.target.value)}
+                                  className="pr-10"
+                                  autoComplete="new-password"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setShowRegPassword(!showRegPassword)
+                                  }
+                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                                >
+                                  {showRegPassword ? (
+                                    <EyeOff className="h-4 w-4" />
+                                  ) : (
+                                    <Eye className="h-4 w-4" />
+                                  )}
+                                </button>
+                              </div>
+                              <PasswordStrengthMeter password={password} />
+                              {errors.password && (
+                                <p className="text-xs text-destructive">
+                                  {errors.password}
+                                </p>
+                              )}
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label htmlFor="confirmPass">
+                                Confirm password
+                              </Label>
+                              <Input
+                                id="confirmPass"
+                                type="password"
+                                placeholder="••••••••"
+                                value={confirmPassword}
+                                onChange={(e) =>
+                                  setConfirmPassword(e.target.value)
+                                }
+                                autoComplete="new-password"
+                              />
+                              {errors.confirmPassword && (
+                                <p className="text-xs text-destructive">
+                                  {errors.confirmPassword}
+                                </p>
+                              )}
+                            </div>
+                            <Button
+                              type="button"
+                              className="w-full h-10"
+                              onClick={() => {
+                                if (validateRegStep(1)) {
+                                  setErrors({});
+                                  setRegStep(2);
+                                }
+                              }}
+                            >
+                              Continue
+                              <ArrowRight className="h-4 w-4 ml-1" />
+                            </Button>
+                          </div>
+                        )}
+
+                        {/* Step 2: Identity (full name + student ID) */}
+                        {regStep === 2 && (
+                          <div className="space-y-3 animate-in fade-in duration-200">
+                            <div className="space-y-1.5">
+                              <Label htmlFor="fullName">Full name</Label>
+                              <Input
+                                id="fullName"
+                                placeholder="Juan Dela Cruz"
+                                value={fullName}
+                                onChange={(e) =>
+                                  setFullName(
+                                    e.target.value.replace(/[0-9]/g, ""),
+                                  )
+                                }
+                                autoFocus
+                              />
+                              {errors.fullName ? (
+                                <p className="text-xs text-destructive">
+                                  {errors.fullName}
+                                </p>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">
+                                  Letters only — no numbers
+                                </p>
+                              )}
+                            </div>
+                            <div className="space-y-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <Label htmlFor="studentId">Student ID</Label>
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      7-digit number on your ID card or
+                                      registration form
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              </div>
+                              <div className="relative">
+                                <Hash className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                  id="studentId"
+                                  inputMode="numeric"
+                                  placeholder="3240001"
+                                  value={studentId}
+                                  onChange={(e) =>
+                                    setStudentId(
+                                      e.target.value
+                                        .replace(/\D/g, "")
+                                        .slice(0, 7),
+                                    )
+                                  }
+                                  className="pl-9 font-heading"
+                                />
+                              </div>
+                              {errors.studentId && (
+                                <p className="text-xs text-destructive">
+                                  {errors.studentId}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-10"
+                                onClick={() => {
+                                  setErrors({});
+                                  setRegStep(1);
+                                }}
+                              >
+                                <ArrowLeft className="h-4 w-4 mr-1" />
+                                Back
+                              </Button>
+                              <Button
+                                type="button"
+                                className="flex-1 h-10"
+                                onClick={() => {
+                                  if (validateRegStep(2)) {
+                                    setErrors({});
+                                    setRegStep(3);
+                                  }
+                                }}
+                              >
+                                Continue
+                                <ArrowRight className="h-4 w-4 ml-1" />
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Step 3: Program (optional) + submit */}
+                        {regStep === 3 && (
+                          <div className="space-y-3 animate-in fade-in duration-200">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div className="space-y-1.5">
+                                <Label htmlFor="program">Program</Label>
+                                <Select
+                                  value={program}
+                                  onValueChange={setProgram}
+                                >
+                                  <SelectTrigger
+                                    id="program"
+                                    className="w-full"
+                                  >
+                                    <SelectValue placeholder="Select a program" />
+                                  </SelectTrigger>
+                                  <SelectContent className="max-w-[calc(100vw-1.5rem)]">
+                                    <SelectItem value={NO_PROGRAM}>
+                                      — Not specified —
+                                    </SelectItem>
+                                    {PROGRAMS.map((p) => (
+                                      <SelectItem key={p.code} value={p.code}>
+                                        {p.code} — {p.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label htmlFor="section">Section</Label>
+                                <Input
+                                  id="section"
+                                  placeholder="e.g. 2-A, 3-B"
+                                  value={section}
+                                  onChange={(e) => setSection(e.target.value)}
+                                />
+                              </div>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              Program and section are optional — you can set
+                              them later in your profile.
                             </p>
-                          )}
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="confirmPass">Confirm</Label>
-                          <Input
-                            id="confirmPass"
-                            type="password"
-                            placeholder="••••••••"
-                            value={confirmPassword}
-                            onChange={(e) => setConfirmPassword(e.target.value)}
-                            autoComplete="new-password"
-                          />
-                          {errors.confirmPassword && (
-                            <p className="text-xs text-destructive">
-                              {errors.confirmPassword}
-                            </p>
-                          )}
-                        </div>
-                        <Button
-                          type="submit"
-                          className="w-full h-10 transition-all hover:scale-[1.01]"
-                          disabled={register.isPending}
-                        >
-                          {register.isPending ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <UserPlus className="h-4 w-4" />
-                          )}
-                          Create account
-                        </Button>
+                            <div className="flex gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-10"
+                                onClick={() => {
+                                  setErrors({});
+                                  setRegStep(2);
+                                }}
+                              >
+                                <ArrowLeft className="h-4 w-4 mr-1" />
+                                Back
+                              </Button>
+                              <Button
+                                type="submit"
+                                className="flex-1 h-10"
+                                disabled={register.isPending}
+                              >
+                                {register.isPending ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <UserPlus className="h-4 w-4" />
+                                )}
+                                Create account
+                              </Button>
+                            </div>
+                          </div>
+                        )}
                       </form>
                       <div className="text-center text-sm">
                         <button
@@ -954,6 +1042,7 @@ function AuthScreen({
                           onClick={() => {
                             setMode("login");
                             setErrors({});
+                            setRegStep(1);
                           }}
                           className="text-muted-foreground hover:underline"
                         >
@@ -1392,55 +1481,4 @@ function AuthBackground() {
   );
 }
 
-// ---- Nexus Gate Logo (matches favicon) ----
-function NexusLogo({ className }: { className?: string }) {
-  return (
-    <div
-      className={`${className} grid place-items-center rounded-lg bg-primary text-primary-foreground ng-glow`}
-    >
-      <svg
-        viewBox="0 0 192 192"
-        className="w-3/5 h-3/5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="12"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M96 32 L152 52 V96 C152 128 128 152 96 160 C64 152 40 128 40 96 V52 Z" />
-        <rect
-          x="72"
-          y="72"
-          width="14"
-          height="14"
-          fill="currentColor"
-          stroke="none"
-        />
-        <rect
-          x="106"
-          y="72"
-          width="14"
-          height="14"
-          fill="currentColor"
-          stroke="none"
-        />
-        <rect
-          x="72"
-          y="106"
-          width="14"
-          height="14"
-          fill="currentColor"
-          stroke="none"
-        />
-        <rect
-          x="106"
-          y="106"
-          width="14"
-          height="14"
-          fill="currentColor"
-          stroke="none"
-        />
-      </svg>
-    </div>
-  );
-}
+// NexusLogo is imported from ./nexus-logo (shared with app-shell).

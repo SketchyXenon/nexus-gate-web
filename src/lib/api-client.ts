@@ -461,6 +461,37 @@ export const useEventAttendance = (
         : false,
   });
 
+// Recent attendance records across all events (admin/organizer dashboard).
+export interface RecentAttendanceRecord {
+  id: number;
+  scannedAt: string;
+  source: string;
+  event: {
+    id: number;
+    title: string;
+    scheduledAt: string;
+    targetProgram: string | null;
+    targetSection: string | null;
+  };
+  account: {
+    id: string;
+    fullName: string;
+    studentId: number | null;
+    program: string | null;
+    section: string | null;
+  };
+}
+
+export const useRecentAttendance = (limit = 20) =>
+  useQuery({
+    queryKey: ["recent-attendance", limit],
+    queryFn: () =>
+      api<{ records: RecentAttendanceRecord[] }>(
+        `/api/attendance/recent?limit=${limit}`,
+      ),
+    staleTime: 30_000,
+  });
+
 export interface EventDetails {
   id: number;
   title: string;

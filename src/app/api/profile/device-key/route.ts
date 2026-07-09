@@ -50,7 +50,10 @@ export async function POST(req: NextRequest) {
   const { computeFingerprint } = await import("@/lib/device-key-server");
   const expectedFingerprint = await computeFingerprint(publicKeyJwk);
   if (expectedFingerprint !== fingerprint) {
-    return badRequest("Fingerprint does not match the public key.", "FINGERPRINT_MISMATCH");
+    return badRequest(
+      "Fingerprint does not match the public key.",
+      "FINGERPRINT_MISMATCH",
+    );
   }
 
   // ---- DoS defense: cap active devices per account ----
@@ -60,7 +63,7 @@ export async function POST(req: NextRequest) {
   if (existingCount >= MAX_DEVICES_PER_ACCOUNT) {
     return forbidden(
       `Maximum ${MAX_DEVICES_PER_ACCOUNT} active devices per account. Revoke an old device first.`,
-      "DEVICE_LIMIT"
+      "DEVICE_LIMIT",
     );
   }
 
@@ -112,5 +115,8 @@ export async function GET(_req: NextRequest) {
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json({ deviceKeys });
+  return NextResponse.json(
+    { deviceKeys },
+    { headers: { "Cache-Control": "private, no-cache" } },
+  );
 }
