@@ -76,14 +76,14 @@ export async function POST(req: NextRequest) {
   });
 
   // Store both the full credential JSON and the extracted credential ID
-  // for O(log N) lookup during login (was O(N) scan + N crypto ops).
-  await db.account.update({
-    where: { id: account.id },
-    data: {
-      passkeyCredential: stored,
-      passkeyCredentialId: credential.id,
-    },
-  });
+  // for O(log N) lookup during login. Uses raw SQL to avoid Prisma client
+  // type issues on Vercel's cached builds.
+  await db.$executeRaw`
+    UPDATE accounts
+    SET passkey_credential = ${stored},
+        passkey_credential_id = ${credential.id}
+    WHERE id = ${account.id}
+  `;
 
   await audit({
     actorId: account.id,

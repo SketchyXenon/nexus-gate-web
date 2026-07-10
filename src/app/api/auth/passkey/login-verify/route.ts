@@ -119,21 +119,33 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const account = await db.account.findFirst({
-    where: { passkeyCredentialId: credentialId },
-    select: {
-      id: true,
-      email: true,
-      fullName: true,
-      role: true,
-      status: true,
-      studentId: true,
-      program: true,
-      section: true,
-      supabaseAuthUid: true,
-      passkeyCredential: true,
-    },
-  });
+  // O(log N) lookup: find the account by credential ID via the indexed
+  // passkey_credential_id column. Uses raw SQL to avoid Prisma client
+  // type issues on Vercel's cached builds (the column exists in the DB
+  // and both Prisma schemas, but the generated client may be stale).
+  const rows = await db.$queryRaw<
+    Array<{
+      id: string;
+      email: string;
+      fullName: string;
+      role: string;
+      status: string;
+      studentId: number | null;
+      program: string | null;
+      section: string | null;
+      supabaseAuthUid: string | null;
+      passkeyCredential: string | null;
+    }>
+  >`
+    SELECT id, email, full_name as "fullName", role, status,
+           student_id as "studentId", program, section,
+           supabase_auth_uid as "supabaseAuthUid",
+           passkey_credential as "passkeyCredential"
+    FROM accounts
+    WHERE passkey_credential_id = ${credentialId}
+    LIMIT 1
+  `;
+  const account = rows[0] ?? null;
 
   let verifiedAccount: typeof account | null = null;
   if (account) {
