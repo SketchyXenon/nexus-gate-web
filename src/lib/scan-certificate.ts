@@ -112,33 +112,52 @@ export interface CertificateValidationResult {
 }
 
 /** Maximum allowed clock skew between client and server (ms). */
-export const MAX_CLOCK_SKEW_MS = 60_000; // 60 seconds
+export const MAX_CLOCK_SKEW_MS = 60_000; // 60 seconds forward (client clock ahead)
+/** Grace period: 60-120s forward skew is accepted with a logged warning. */
+export const CLOCK_SKEW_GRACE_MS = 120_000; // 120 seconds hard reject
+
+/**
+ * Maximum allowed sync delay (ms). A scan certificate must be synced to the
+ * server within this window. 15 minutes is generous enough for "scan in a
+ * WiFi dead zone, walk to WiFi, sync" but NOT enough for "photograph the QR,
+ * go home, scan the photo 3 hours later." The previous 24h window enabled
+ * offline clock-manipulation attacks.
+ */
+export const MAX_SYNC_DELAY_MS = 15 * 60 * 1000; // 15 minutes
 
 /**
  * Validate the certificate's timestamp against the current server time.
  *
  * Checks:
- *   1. scannedAt is not in the future (beyond MAX_CLOCK_SKEW_MS).
- *   2. Clock skew (|now - scannedAt|) is within MAX_CLOCK_SKEW_MS.
+ *   1. scannedAt is not too far in the future (>120s hard reject, 60-120s
+ *      accepted with a warning log).
+ *   2. scannedAt is not too old (beyond MAX_SYNC_DELAY_MS = 15 min).
  *
  * This does NOT validate the token HMAC — that's done separately by
  * validateQrPayload() using the certificate's scannedAt as the reference
- * time (so offline scans are accepted).
+ * time (so offline scans are accepted within the 15-min window).
  */
 export function validateCertificateTimestamp(
   cert: ScanCertificate,
-  now: number = Date.now()
+  now: number = Date.now(),
 ): CertificateValidationResult {
   const driftMs = now - cert.scannedAt;
 
-  // Allow up to MAX_CLOCK_SKEW_MS in the future (client clock slightly ahead)
-  if (driftMs < -MAX_CLOCK_SKEW_MS) {
+  // Forward skew: client clock is ahead of server.
+  // 0-60s: normal NTP drift, accept silently.
+  // 60-120s: accept with a warning (prevents cryptic rejection at exactly 61s).
+  // >120s: hard reject (likely deliberate clock manipulation).
+  if (driftMs < -CLOCK_SKEW_GRACE_MS) {
     return { ok: false, reason: "scanned_in_future", driftMs };
   }
+  if (driftMs < -MAX_CLOCK_SKEW_MS) {
+    // 60-120s forward skew — log a warning but accept.
+    console.warn(
+      `[scan-certificate] clock skew warning: client is ${Math.abs(driftMs)}ms ahead`,
+    );
+  }
 
-  // Reject if the scan is too old (beyond the idempotency window)
-  // We use 24 hours as the max sync delay (matches IDEMPOTENCY_TTL_HOURS)
-  const MAX_SYNC_DELAY_MS = 24 * 60 * 60 * 1000;
+  // Reject if the scan is too old (beyond the sync window).
   if (driftMs > MAX_SYNC_DELAY_MS) {
     return { ok: false, reason: "clock_skew_too_large", driftMs };
   }
@@ -152,7 +171,7 @@ export function validateCertificateTimestamp(
  */
 export function validateCertificateEventMatch(
   cert: ScanCertificate,
-  tokenEventId: number
+  tokenEventId: number,
 ): CertificateValidationResult {
   if (cert.eventId !== tokenEventId) {
     return { ok: false, reason: "token_event_mismatch" };
@@ -203,7 +222,9 @@ export function generateNonce(): string {
   if (typeof crypto !== "undefined" && crypto.getRandomValues) {
     const bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);
-    return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+    return Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
   }
   // Fallback (shouldn't happen in modern browsers/Node)
   return crypto.randomUUID().replace(/-/g, "");

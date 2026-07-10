@@ -289,11 +289,12 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
       }
 
       // ---- Create the signed scan certificate ----
-      // Ensure the device key is registered before signing
+      // Ensure the device key is registered before signing.
+      // Pass user.id so the key is scoped to this account (shared-device safety).
       scanInFlightRef.current = true;
       try {
-        await getOrCreateDeviceKeyPair();
-        const fingerprint = await getDeviceFingerprint();
+        await getOrCreateDeviceKeyPair(user.id);
+        const fingerprint = await getDeviceFingerprint(user.id);
         if (!fingerprint) {
           throw new Error(
             "Couldn't access device key. Please refresh the page.",
@@ -316,13 +317,13 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
           subFrames: subFrameCaptures,
         });
 
-        const signed = await signCertificate(cert);
+        const signed = await signCertificate(cert, user.id);
 
         // Enqueue the signed certificate
         queue.enqueueSigned(tokenEventId, signed);
 
         // Register the device key in the background (non-blocking)
-        registerDeviceKeyWithServer().catch(() => {});
+        registerDeviceKeyWithServer(user.id).catch(() => {});
 
         // Lock scanning for 1.5 seconds to prevent duplicate scans.
         // Reduced from 3s — 1.5s is enough for the QR to rotate to a new

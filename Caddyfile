@@ -1,4 +1,4 @@
-# Nexus Gate — Caddyfile
+ Nexus Gate — Caddyfile
 # --------------------------------------------------------------------
 # Security hardening:
 #   - Body size limit (10MB) to prevent OOM via large uploads.
@@ -27,9 +27,10 @@
         }
         request_body { max_size 10MB }
 
-        # Auth endpoints — strict limit to block brute force.
-        @auth path /api/auth/login /api/auth/register /api/auth/forgot-password /api/auth/magic-link /api/auth/reset-password /api/auth/passkey/*
-        rate_limit @auth 5r/m
+        # NOTE: No per-IP auth rate limit — would block NAT'd campuses where
+        # 200+ students share one IP. The app layer rate-limits by EMAIL
+        # (5/min per account) + DB lockout (5 fails → 15-min). This is the
+        # correct defense for shared-IP environments.
 
         # Scan endpoint — allow bursts for legitimate students.
         @scan path /api/attendance

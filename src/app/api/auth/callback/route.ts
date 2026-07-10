@@ -1,3 +1,6 @@
+// Allow up to 15s for Supabase PKCE code exchange.
+export const maxDuration = 15;
+
 import { NextRequest, NextResponse } from "next/server";
 import {
   createSupabaseServerClient,
@@ -75,11 +78,16 @@ export async function GET(req: NextRequest) {
     const payload = decodeJwtPayload(sessionData.session.access_token) as {
       amr?: Array<{ method: string }>;
     };
-    const isRecovery = payload.amr?.some((entry) => entry.method === "recovery");
+    const isRecovery = payload.amr?.some(
+      (entry) => entry.method === "recovery",
+    );
     if (isRecovery) {
       resolvedType = "recovery";
     }
   }
 
-  return NextResponse.json({ ok: true, type: resolvedType });
+  return NextResponse.json(
+    { ok: true, type: resolvedType },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

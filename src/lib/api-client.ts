@@ -850,6 +850,38 @@ export const useChangePassword = () =>
       }),
   });
 
+// ---------------- Device Keys (self-service management) ----------------
+export interface DeviceKeyItem {
+  id: string;
+  fingerprint: string;
+  label: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+}
+
+export const useDeviceKeys = () =>
+  useQuery({
+    queryKey: ["device-keys"],
+    queryFn: () =>
+      api<{ deviceKeys: DeviceKeyItem[] }>("/api/profile/device-key"),
+    staleTime: 30_000,
+  });
+
+export const useRevokeDeviceKey = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (keyId: string) =>
+      api<{ ok: boolean }>(
+        `/api/profile/device-key?keyId=${encodeURIComponent(keyId)}`,
+        {
+          method: "DELETE",
+        },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["device-keys"] }),
+  });
+};
+
 // ---------------- Notifications ----------------
 export interface NotificationItem {
   id: number;

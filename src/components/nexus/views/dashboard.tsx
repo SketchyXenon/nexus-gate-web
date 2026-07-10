@@ -69,14 +69,28 @@ const safeMax = (arr: number[], fallback = 1): number =>
   arr.length === 0 ? fallback : arr.reduce((a, b) => (b > a ? b : a), fallback);
 
 export function DashboardView({ user, onNavigate }: Props) {
-  const { data, isLoading } = useDashboard();
+  const { data, isLoading, isError, refetch } = useDashboard();
 
-  if (isLoading || !data) {
+  if (isLoading) {
     return (
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
           <Skeleton key={i} className="h-28 rounded-xl" />
         ))}
+      </div>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+        <AlertCircle className="h-8 w-8 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">
+          Couldn&apos;t load your dashboard. Please try again.
+        </p>
+        <Button variant="outline" size="sm" onClick={() => refetch()}>
+          Retry
+        </Button>
       </div>
     );
   }

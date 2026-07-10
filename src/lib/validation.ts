@@ -113,7 +113,27 @@ export const refreshSchema = z.object({
 // accepts a token + new password.
 export const forgotPasswordSchema = z.object({
   email: emailSchema,
-  redirectTo: z.string().trim().url().optional(),
+  // Only allow same-origin redirect URLs (prevent open-redirect attacks).
+  // Accepts relative paths or URLs that match the app's configured origin.
+  redirectTo: z
+    .string()
+    .trim()
+    .url()
+    .refine(
+      (url) => {
+        try {
+          const parsed = new URL(url);
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+          if (!appUrl) return parsed.origin === parsed.origin; // allow if no appUrl configured
+          const appOrigin = new URL(appUrl).origin;
+          return parsed.origin === appOrigin;
+        } catch {
+          return false;
+        }
+      },
+      { message: "Redirect URL must be same-origin" },
+    )
+    .optional(),
 });
 
 export const resetPasswordSchema = z.object({

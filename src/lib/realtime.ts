@@ -46,6 +46,8 @@ export async function notifyAttendance(
           name: "attendance",
           data: payload,
         }),
+        // 5s timeout — prevents Ably from hanging the serverless function.
+        signal: AbortSignal.timeout(5000),
       },
     );
     if (!res.ok) {

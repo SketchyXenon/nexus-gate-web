@@ -1,3 +1,6 @@
+// Allow up to 30s for bulk cleanup deletes.
+export const maxDuration = 30;
+
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { checkCronAuth, checkBodySecret } from "@/lib/cron-auth";
@@ -52,7 +55,7 @@ async function runCleanup() {
 }
 
 function authorizeCron(req: NextRequest): NextResponse | null {
-  const result = checkCronAuth(req);
+  const result = checkCronAuth(req, "cleanup");
   if (result.ok) return null;
   const cronSecretSet = Boolean((process.env.CRON_SECRET || "").trim());
   console.warn(
@@ -84,14 +87,14 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   // Try header/query auth first.
-  const headerResult = checkCronAuth(req);
+  const headerResult = checkCronAuth(req, "cleanup");
   if (!headerResult.ok) {
     // Fallback: try reading secret from JSON body.
     const contentType = req.headers.get("content-type") || "";
     if (contentType.includes("application/json")) {
       try {
         const body = await req.json();
-        if (checkBodySecret(body)) {
+        if (checkBodySecret(body, "cleanup")) {
           const result = await runCleanup();
           return NextResponse.json({ ok: true, ...result });
         }

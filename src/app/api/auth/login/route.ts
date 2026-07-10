@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { loginSchema } from "@/lib/validation";
 import {
   badRequest,
-  checkRateLimit,
+  checkRateLimitByEmail,
   parseBody,
   unauthorized,
   dbUnavailable,
@@ -37,15 +37,20 @@ export async function POST(req: NextRequest) {
         { status: 503 },
       );
     }
-    const rl = await checkRateLimit(req, "login");
-    if (rl) return rl;
 
+    // Parse body FIRST so we can rate-limit by email (not IP).
+    // Per-IP limiting blocks NAT'd campuses where 200+ students share one IP.
     const body = await parseBody(req);
     const parsed = loginSchema.safeParse(body);
     if (!parsed.success) {
       return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
     }
     const { email, password } = parsed.data;
+
+    // Per-email rate limit (5/min). The DB lockout (5 fails → 15-min) is
+    // the primary brute-force defense; this prevents enumeration attempts.
+    const rl = await checkRateLimitByEmail(email, "login");
+    if (rl) return rl;
 
     // ---- Pre-auth lockout check ----
     // Check if the account is locked BEFORE calling Supabase auth.

@@ -14,8 +14,12 @@ import { getAppUrl } from "@/lib/app-url";
 
 // ---- HTML escaping for user-supplied content in emails (XSS defense) ----
 function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!)
+  return s.replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ]!,
   );
 }
 
@@ -69,7 +73,7 @@ export function isEmailConfigured(): boolean {
 // ---- Send verification code email ----
 export async function sendVerificationEmail(
   to: string,
-  code: string
+  code: string,
 ): Promise<{ ok: boolean; error?: string }> {
   const config = getEmailConfig();
   if (!config) {
@@ -123,7 +127,7 @@ export async function sendVerificationEmail(
 // ---- Send welcome email (after verification) ----
 export async function sendWelcomeEmail(
   to: string,
-  fullName: string
+  fullName: string,
 ): Promise<void> {
   const config = getEmailConfig();
   if (!config) return;
@@ -148,7 +152,7 @@ export async function sendWelcomeEmail(
             Your account is now active. You can sign in and start checking in to your classes.
           </p>
           <div style="text-align: center; margin: 24px 0;">
-            <a href="${appUrl}" style="display: inline-block; background: #b45309; color: #fff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">
+            <a href="${escapeHtml(appUrl)}" style="display: inline-block; background: #b45309; color: #fff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">
               Sign in
             </a>
           </div>
@@ -168,7 +172,7 @@ export async function sendWelcomeEmail(
 // the reset link to the console as a dev fallback.
 export async function sendPasswordResetEmail(
   to: string,
-  resetUrl: string
+  resetUrl: string,
 ): Promise<{ ok: boolean; error?: string }> {
   const config = getEmailConfig();
   if (!config) {
@@ -199,7 +203,7 @@ export async function sendPasswordResetEmail(
             This link expires in 30 minutes.
           </p>
           <div style="text-align: center; margin: 24px 0;">
-            <a href="${resetUrl}" style="display: inline-block; background: #b45309; color: #fff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">
+            <a href="${escapeHtml(resetUrl)}" style="display: inline-block; background: #b45309; color: #fff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">
               Reset password
             </a>
           </div>

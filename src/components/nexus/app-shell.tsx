@@ -52,6 +52,7 @@ import { OverridesView } from "./views/overrides";
 import { AccountsView } from "./views/accounts";
 import { AuditLogsView } from "./views/audit-logs";
 import { ProfileView } from "./views/profile";
+import { CardErrorBoundary } from "./error-boundary";
 
 type ViewId =
   | "dashboard"
@@ -314,20 +315,24 @@ export function AppShell({
 
           <main className="flex-1 overflow-y-auto ng-scroll">
             <div className="p-4 sm:p-6 max-w-7xl mx-auto w-full">
-              {activeView === "dashboard" && (
-                <DashboardView user={user} onNavigate={setView} />
-              )}
-              {activeView === "whitelist" && <WhitelistView />}
-              {activeView === "events" && <EventsView />}
-              {activeView === "project-qr" && <ProjectQrView />}
-              {activeView === "scanner" && (
-                <ScannerView user={user} onNavigate={setView} />
-              )}
-              {activeView === "attendance" && <AttendanceView />}
-              {activeView === "overrides" && <OverridesView />}
-              {activeView === "accounts" && <AccountsView currentUser={user} />}
-              {activeView === "audit-logs" && <AuditLogsView />}
-              {activeView === "profile" && <ProfileView />}
+              <CardErrorBoundary>
+                {activeView === "dashboard" && (
+                  <DashboardView user={user} onNavigate={setView} />
+                )}
+                {activeView === "whitelist" && <WhitelistView />}
+                {activeView === "events" && <EventsView />}
+                {activeView === "project-qr" && <ProjectQrView />}
+                {activeView === "scanner" && (
+                  <ScannerView user={user} onNavigate={setView} />
+                )}
+                {activeView === "attendance" && <AttendanceView />}
+                {activeView === "overrides" && <OverridesView />}
+                {activeView === "accounts" && (
+                  <AccountsView currentUser={user} />
+                )}
+                {activeView === "audit-logs" && <AuditLogsView />}
+                {activeView === "profile" && <ProfileView />}
+              </CardErrorBoundary>
             </div>
           </main>
         </div>

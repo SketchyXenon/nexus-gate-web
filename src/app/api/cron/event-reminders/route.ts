@@ -1,3 +1,6 @@
+// Allow up to 30s for bulk reminder creation.
+export const maxDuration = 30;
+
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { checkCronAuth, checkBodySecret } from "@/lib/cron-auth";
@@ -144,7 +147,7 @@ async function runEventReminders() {
 
 // Shared auth check with detailed logging (no secret values logged).
 function authorizeCron(req: NextRequest): NextResponse | null {
-  const result = checkCronAuth(req);
+  const result = checkCronAuth(req, "reminders");
   if (result.ok) return null;
 
   // Log the failure reason + which method was attempted (no secret value).
@@ -190,7 +193,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   // Try header/query auth first.
-  const headerResult = checkCronAuth(req);
+  const headerResult = checkCronAuth(req, "reminders");
   if (!headerResult.ok) {
     // Fallback: try reading secret from JSON body (some cron services
     // send the secret in the request body rather than headers/URL).
@@ -198,7 +201,7 @@ export async function POST(req: NextRequest) {
     if (contentType.includes("application/json")) {
       try {
         const body = await req.json();
-        if (checkBodySecret(body)) {
+        if (checkBodySecret(body, "reminders")) {
           const result = await runEventReminders();
           return NextResponse.json({ ok: true, ...result });
         }

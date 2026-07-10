@@ -58,7 +58,7 @@ export function msUntilNextSubFrame(now: number = Date.now()): number {
 export function computeTokenHmac(
   eventSecret: string,
   eventId: number,
-  timeBlock: number
+  timeBlock: number,
 ): string {
   return hmacSha256(eventSecret, `${eventId}:${timeBlock}`);
 }
@@ -68,7 +68,7 @@ export function computeSubFrameHmac(
   eventSecret: string,
   eventId: number,
   timeBlock: number,
-  subFrame: number
+  subFrame: number,
 ): string {
   return hmacSha256(eventSecret, `${eventId}:${timeBlock}:${subFrame}`);
 }
@@ -92,7 +92,7 @@ export interface ProjectedToken {
 export function generateQrPayload(
   eventId: number,
   eventSecret: string,
-  now: number = Date.now()
+  now: number = Date.now(),
 ): ProjectedToken {
   const timeBlock = currentTimeBlock(now);
   const subFrame = currentSubFrame(now);
@@ -141,7 +141,7 @@ export interface ValidationResult {
 export function validateQrPayload(
   raw: string,
   eventSecret: string,
-  now: number = Date.now()
+  now: number = Date.now(),
 ): ValidationResult {
   const parts = raw.split(".");
   if (parts.length !== 4 && parts.length !== 3) {
@@ -151,7 +151,11 @@ export function validateQrPayload(
   const eventIdNum = Number(parts[0]);
   const timeBlockNum = Number(parts[1]);
 
-  if (!Number.isFinite(eventIdNum) || !Number.isFinite(timeBlockNum) || eventIdNum <= 0) {
+  if (
+    !Number.isFinite(eventIdNum) ||
+    !Number.isFinite(timeBlockNum) ||
+    eventIdNum <= 0
+  ) {
     return { ok: false, reason: "malformed" };
   }
 
@@ -159,10 +163,22 @@ export function validateQrPayload(
   const drift = timeBlockNum - current;
 
   if (drift > TOKEN_TOLERANCE) {
-    return { ok: false, reason: "future_block", eventId: eventIdNum, timeBlock: timeBlockNum, drift };
+    return {
+      ok: false,
+      reason: "future_block",
+      eventId: eventIdNum,
+      timeBlock: timeBlockNum,
+      drift,
+    };
   }
   if (drift < -TOKEN_TOLERANCE) {
-    return { ok: false, reason: "expired", eventId: eventIdNum, timeBlock: timeBlockNum, drift };
+    return {
+      ok: false,
+      reason: "expired",
+      eventId: eventIdNum,
+      timeBlock: timeBlockNum,
+      drift,
+    };
   }
 
   // ---- v8 format: 4 parts with sub-frame ----
@@ -170,17 +186,46 @@ export function validateQrPayload(
     const subFrameNum = Number(parts[2]);
     const hmac = parts[3];
 
-    if (!Number.isFinite(subFrameNum) || subFrameNum < 0 || subFrameNum >= SUB_FRAMES_PER_BLOCK) {
-      return { ok: false, reason: "malformed", eventId: eventIdNum, timeBlock: timeBlockNum };
+    if (
+      !Number.isFinite(subFrameNum) ||
+      subFrameNum < 0 ||
+      subFrameNum >= SUB_FRAMES_PER_BLOCK
+    ) {
+      return {
+        ok: false,
+        reason: "malformed",
+        eventId: eventIdNum,
+        timeBlock: timeBlockNum,
+      };
     }
     if (!hmac) return { ok: false, reason: "malformed" };
 
-    const expected = computeSubFrameHmac(eventSecret, eventIdNum, timeBlockNum, subFrameNum);
+    const expected = computeSubFrameHmac(
+      eventSecret,
+      eventIdNum,
+      timeBlockNum,
+      subFrameNum,
+    );
     if (!timingSafeCompareHex(expected, hmac)) {
-      return { ok: false, reason: "invalid_signature", eventId: eventIdNum, timeBlock: timeBlockNum, subFrame: subFrameNum, drift, format: "v8" };
+      return {
+        ok: false,
+        reason: "invalid_signature",
+        eventId: eventIdNum,
+        timeBlock: timeBlockNum,
+        subFrame: subFrameNum,
+        drift,
+        format: "v8",
+      };
     }
 
-    return { ok: true, eventId: eventIdNum, timeBlock: timeBlockNum, subFrame: subFrameNum, drift, format: "v8" };
+    return {
+      ok: true,
+      eventId: eventIdNum,
+      timeBlock: timeBlockNum,
+      subFrame: subFrameNum,
+      drift,
+      format: "v8",
+    };
   }
 
   // ---- v5 format: 3 parts (legacy) ----
@@ -189,10 +234,23 @@ export function validateQrPayload(
 
   const expected = computeTokenHmac(eventSecret, eventIdNum, timeBlockNum);
   if (!timingSafeCompareHex(expected, hmac)) {
-    return { ok: false, reason: "invalid_signature", eventId: eventIdNum, timeBlock: timeBlockNum, drift, format: "v5" };
+    return {
+      ok: false,
+      reason: "invalid_signature",
+      eventId: eventIdNum,
+      timeBlock: timeBlockNum,
+      drift,
+      format: "v5",
+    };
   }
 
-  return { ok: true, eventId: eventIdNum, timeBlock: timeBlockNum, drift, format: "v5" };
+  return {
+    ok: true,
+    eventId: eventIdNum,
+    timeBlock: timeBlockNum,
+    drift,
+    format: "v5",
+  };
 }
 
 // ====================================================================
@@ -204,23 +262,27 @@ export function validateQrPayload(
  *
  * Requirements:
  *   1. At least MIN_SUB_FRAMES (3) sub-frames captured.
- *   2. All sub-frames are within the SAME time block.
- *   3. The sub-frames are CONSECUTIVE (monotonically increasing by 1).
- *      This proves the scanner watched the QR change over time — a
- *      single photograph can only capture 1 sub-frame.
- *   4. Each sub-frame's HMAC is valid against the eventSecret.
+ *   2. Sub-frames are CONSECUTIVE — temporally adjacent. This handles
+ *      boundary straddling: sub-frame 29 of block N is consecutive with
+ *      sub-frame 0 of block N+1.
+ *   3. Each sub-frame's HMAC is valid against the eventSecret for its
+ *      own time block (not a single shared block).
+ *
+ * Boundary-aware: sub-frames may span two adjacent time blocks. Each
+ * sub-frame's HMAC is checked against both the primary block and the
+ * previous block (in case it straddles a 15s boundary).
  *
  * @param subFrames - array of { subFrame, hmac } captured by the scanner
  * @param eventSecret - the event's secret (for HMAC verification)
  * @param eventId - the event ID
- * @param timeBlock - the time block all sub-frames should belong to
+ * @param timeBlock - the primary time block (from the last captured frame)
  * @returns { ok: true } or { ok: false, reason }
  */
 export function verifySubFrameLiveness(
   subFrames: Array<{ subFrame: number; hmac: string }>,
   eventSecret: string,
   eventId: number,
-  timeBlock: number
+  timeBlock: number,
 ): { ok: true } | { ok: false; reason: ValidationReason } {
   if (subFrames.length < MIN_SUB_FRAMES) {
     return { ok: false, reason: "insufficient_subframes" };
@@ -229,23 +291,58 @@ export function verifySubFrameLiveness(
   // Sort by sub-frame index
   const sorted = [...subFrames].sort((a, b) => a.subFrame - b.subFrame);
 
-  // Check all are within valid range
+  // Verify each sub-frame's HMAC. Each frame may belong to timeBlock or
+  // timeBlock-1 (if the scan straddled a 15s boundary). Try both.
+  // Track which block each frame belongs to for consecutiveness checking.
+  const blockPerFrame: number[] = [];
   for (const sf of sorted) {
     if (sf.subFrame < 0 || sf.subFrame >= SUB_FRAMES_PER_BLOCK) {
       return { ok: false, reason: "invalid_subframe" };
     }
-    const expected = computeSubFrameHmac(eventSecret, eventId, timeBlock, sf.subFrame);
-    if (!timingSafeCompareHex(expected, sf.hmac)) {
+    const expectedCurrent = computeSubFrameHmac(
+      eventSecret,
+      eventId,
+      timeBlock,
+      sf.subFrame,
+    );
+    const expectedPrev = computeSubFrameHmac(
+      eventSecret,
+      eventId,
+      timeBlock - 1,
+      sf.subFrame,
+    );
+    if (timingSafeCompareHex(expectedCurrent, sf.hmac)) {
+      blockPerFrame.push(timeBlock);
+    } else if (timingSafeCompareHex(expectedPrev, sf.hmac)) {
+      blockPerFrame.push(timeBlock - 1);
+    } else {
       return { ok: false, reason: "invalid_signature" };
     }
   }
 
-  // Check consecutive: each sub-frame must be exactly 1 more than the previous.
-  // We allow skipping at most 1 sub-frame (camera might miss a frame at 2 FPS).
+  // Check consecutive: each frame must be temporally adjacent to the previous.
+  // Two frames are consecutive if:
+  //   - Same block, subFrame diff is 1 or 2 (allow 1 missed frame at 2 FPS)
+  //   - Adjacent blocks: last sub-frames of block N -> first of N+1
   for (let i = 1; i < sorted.length; i++) {
-    const diff = sorted[i].subFrame - sorted[i - 1].subFrame;
-    if (diff < 1 || diff > 2) {
-      // Not consecutive (or too big a gap) — likely a fabricated set
+    const sameBlock = blockPerFrame[i] === blockPerFrame[i - 1];
+    const adjacentBlock = blockPerFrame[i] === blockPerFrame[i - 1] + 1;
+
+    if (sameBlock) {
+      const diff = sorted[i].subFrame - sorted[i - 1].subFrame;
+      if (diff < 1 || diff > 2) {
+        return { ok: false, reason: "invalid_subframe" };
+      }
+    } else if (adjacentBlock) {
+      // Straddling boundary: prev is at end of block N, curr is at start of N+1.
+      if (
+        sorted[i - 1].subFrame < SUB_FRAMES_PER_BLOCK - 2 ||
+        sorted[i].subFrame > 1
+      ) {
+        return { ok: false, reason: "invalid_subframe" };
+      }
+    } else {
+      // Gap of 2+ blocks — not consecutive
       return { ok: false, reason: "invalid_subframe" };
     }
   }

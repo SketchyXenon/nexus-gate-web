@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { registerDeviceKey } from "@/lib/device-key-server";
-import { badRequest, forbidden, parseBody, requireAuth } from "@/lib/api";
+import { registerDeviceKey, revokeDeviceKey } from "@/lib/device-key-server";
+import {
+  badRequest,
+  forbidden,
+  notFound,
+  parseBody,
+  requireAuth,
+} from "@/lib/api";
 import { audit } from "@/lib/audit";
 import { z } from "zod";
 
@@ -119,4 +125,32 @@ export async function GET(_req: NextRequest) {
     { deviceKeys },
     { headers: { "Cache-Control": "private, no-cache" } },
   );
+}
+
+// ====================================================================
+// DELETE /api/profile/device-key?keyId=X — revoke a device key
+// --------------------------------------------------------------------
+// Allows students to self-manage their 5-device cap by revoking old
+// devices they no longer use. Revoked keys can't sign new certificates.
+// ====================================================================
+export async function DELETE(req: NextRequest) {
+  const res = await requireAuth();
+  if ("error" in res) return res.error;
+  const { account } = res;
+
+  const keyId = req.nextUrl.searchParams.get("keyId");
+  if (!keyId) return badRequest("Missing keyId parameter");
+
+  const revoked = await revokeDeviceKey(account.id, keyId);
+  if (!revoked) return notFound("Device key not found");
+
+  await audit({
+    actorId: account.id,
+    action: "device.revoke",
+    targetType: "DeviceKey",
+    targetId: keyId,
+    req,
+  }).catch(() => {});
+
+  return NextResponse.json({ ok: true });
 }

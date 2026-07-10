@@ -1,3 +1,6 @@
+// Allow up to 15s for Supabase admin.deleteUser.
+export const maxDuration = 15;
+
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/api";
+import { audit } from "@/lib/audit";
 
 // ====================================================================
 // POST /api/admin/cleanup
@@ -10,28 +11,34 @@ import { requireAuth } from "@/lib/api";
 export async function POST(req: NextRequest) {
   const res = await requireAuth("ADMIN");
   if ("error" in res) return res.error;
+  const { account } = res;
 
   const now = new Date();
 
-  // Delete expired/used verification tokens
-  const tokensDeleted = await db.verificationToken.deleteMany({
-    where: {
-      OR: [
-        { expiresAt: { lt: now } },
-        { usedAt: { not: null } },
-      ],
-    },
-  });
+  // Run both deletes in parallel for faster response.
+  const [tokensDeleted, refreshDeleted] = await Promise.all([
+    db.verificationToken.deleteMany({
+      where: {
+        OR: [{ expiresAt: { lt: now } }, { usedAt: { not: null } }],
+      },
+    }),
+    db.refreshToken.deleteMany({
+      where: {
+        OR: [{ expiresAt: { lt: now } }, { revokedAt: { not: null } }],
+      },
+    }),
+  ]);
 
-  // Delete expired or revoked refresh tokens (keep nothing stale)
-  const refreshDeleted = await db.refreshToken.deleteMany({
-    where: {
-      OR: [
-        { expiresAt: { lt: now } },
-        { revokedAt: { not: null } },
-      ],
+  await audit({
+    actorId: account.id,
+    action: "admin.manual_cleanup",
+    targetType: "System",
+    metadata: {
+      verificationTokens: tokensDeleted.count,
+      refreshTokens: refreshDeleted.count,
     },
-  });
+    req,
+  }).catch(() => {});
 
   return NextResponse.json({
     ok: true,

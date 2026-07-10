@@ -32,9 +32,17 @@ import {
 } from "@/lib/scan-certificate";
 
 const DB_NAME = "nexus_gate_device_keys";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = "keys";
-const KEY_RECORD_ID = "device_keypair";
+
+/**
+ * Build the IndexedDB key for a given account.
+ * Scoped by accountId so that a shared device (library tablet) doesn't
+ * reuse one student's key for another student's scans.
+ */
+function keyRecordId(accountId: string): string {
+  return `device_keypair:${accountId}`;
+}
 
 // ---- Types ----
 
@@ -56,10 +64,16 @@ export interface DeviceKeyPair {
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME);
+      }
+      // v1 → v2: no schema change to the store itself (keys are just strings).
+      // Old keys ("device_keypair") are orphaned and will be cleaned up by
+      // the browser's IndexedDB eviction — they're not reused.
+      if (event.oldVersion < 1) {
+        // First install — nothing extra to do.
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -143,7 +157,9 @@ function base64UrlToBytes(b64url: string): Uint8Array {
  *     "Failed to execute 'exportKey' on 'SubtleCrypto': key is not extractable"
  *   on every scan attempt (the scanner couldn't sign certificates).
  */
-export async function generateDeviceKeyPair(): Promise<DeviceKeyPair> {
+export async function generateDeviceKeyPair(
+  accountId: string,
+): Promise<DeviceKeyPair> {
   const keyPair = await crypto.subtle.generateKey(
     "Ed25519",
     true, // extractable — required to export JWK for IndexedDB storage
@@ -164,46 +180,51 @@ export async function generateDeviceKeyPair(): Promise<DeviceKeyPair> {
     registered: false,
   };
 
-  await idbSet(KEY_RECORD_ID, deviceKeyPair);
+  await idbSet(keyRecordId(accountId), deviceKeyPair);
   return deviceKeyPair;
 }
 
 /**
  * Get the stored device keypair, or generate a new one if none exists.
- * This is the main entry point for the scanner — call this before
- * creating a scan certificate.
+ * Scoped by accountId so shared devices don't cross-contaminate keys.
  *
  * If the stored keypair is missing the JWK fields (corrupt state from
  * a previous bug), it's regenerated. This ensures the scanner never
  * gets stuck with an unusable key.
  */
-export async function getOrCreateDeviceKeyPair(): Promise<DeviceKeyPair> {
-  const existing = await idbGet<DeviceKeyPair>(KEY_RECORD_ID);
+export async function getOrCreateDeviceKeyPair(
+  accountId: string,
+): Promise<DeviceKeyPair> {
+  const existing = await idbGet<DeviceKeyPair>(keyRecordId(accountId));
   // Validate the stored keypair has the required JWK fields.
   if (existing && existing.publicKeyJwk?.x && existing.privateKeyJwk?.d) {
     return existing;
   }
   // Corrupt or missing — regenerate.
-  return generateDeviceKeyPair();
+  return generateDeviceKeyPair(accountId);
 }
 
 /**
  * Mark the stored keypair as registered with the server.
  */
-export async function markDeviceKeyRegistered(): Promise<void> {
-  const existing = await idbGet<DeviceKeyPair>(KEY_RECORD_ID);
+export async function markDeviceKeyRegistered(
+  accountId: string,
+): Promise<void> {
+  const existing = await idbGet<DeviceKeyPair>(keyRecordId(accountId));
   if (existing) {
     existing.registered = true;
-    await idbSet(KEY_RECORD_ID, existing);
+    await idbSet(keyRecordId(accountId), existing);
   }
 }
 
 /**
- * Get the device fingerprint (hash of the public key).
+ * Get the device fingerprint (hash of the public key) for a given account.
  * Returns null if no keypair exists.
  */
-export async function getDeviceFingerprint(): Promise<string | null> {
-  const keyPair = await idbGet<DeviceKeyPair>(KEY_RECORD_ID);
+export async function getDeviceFingerprint(
+  accountId: string,
+): Promise<string | null> {
+  const keyPair = await idbGet<DeviceKeyPair>(keyRecordId(accountId));
   return keyPair?.fingerprint ?? null;
 }
 
@@ -215,12 +236,14 @@ export async function getDeviceFingerprint(): Promise<string | null> {
  * Sign a scan certificate with the device's Ed25519 private key.
  *
  * @param cert - the unsigned scan certificate
+ * @param accountId - the logged-in user's account ID (for key scoping)
  * @returns the signed certificate (certificate + canonical JSON + signature)
  */
 export async function signCertificate(
   cert: ScanCertificate,
+  accountId: string,
 ): Promise<SignedCertificate> {
-  const keyPair = await getOrCreateDeviceKeyPair();
+  const keyPair = await getOrCreateDeviceKeyPair(accountId);
 
   // Import the private key for signing
   const privateKey = await crypto.subtle.importKey(
@@ -258,11 +281,15 @@ function bytesToBase64(bytes: Uint8Array): string {
 /**
  * Register the device's public key with the server.
  * Called after login (or on first scan) if the key isn't yet registered.
+ *
+ * @param accountId - the logged-in user's account ID (for key scoping)
+ * @param label - optional device label
  */
 export async function registerDeviceKeyWithServer(
+  accountId: string,
   label?: string,
 ): Promise<boolean> {
-  const keyPair = await getOrCreateDeviceKeyPair();
+  const keyPair = await getOrCreateDeviceKeyPair(accountId);
   if (keyPair.registered) return true;
 
   try {
@@ -282,7 +309,7 @@ export async function registerDeviceKeyWithServer(
       return false;
     }
 
-    await markDeviceKeyRegistered();
+    await markDeviceKeyRegistered(accountId);
     return true;
   } catch (e) {
     console.error("Device key registration error:", e);

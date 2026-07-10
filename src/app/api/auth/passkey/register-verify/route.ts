@@ -1,3 +1,6 @@
+// Allow up to 15s for WebAuthn crypto verification.
+export const maxDuration = 15;
+
 import { NextRequest, NextResponse } from "next/server";
 import { verifyRegistrationResponse } from "@simplewebauthn/server";
 import type { RegistrationResponseJSON } from "@simplewebauthn/server";

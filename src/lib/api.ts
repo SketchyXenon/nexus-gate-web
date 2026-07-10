@@ -214,6 +214,21 @@ export async function checkRateLimit(
   return null;
 }
 
+// ---- Rate-limit check keyed by EMAIL (for login on NAT'd campuses) ----
+// On campus WiFi, 200+ students share one public IP. Per-IP limiting would
+// block legitimate logins. Per-email limiting allows each student 5 attempts
+// while still preventing brute-force on a single account. The per-account
+// DB lockout (5 fails → 15-min) remains the primary brute-force defense.
+export async function checkRateLimitByEmail(
+  email: string,
+  preset: "login" | "register" | "otp",
+): Promise<NextResponse | null> {
+  const normalizedEmail = email.toLowerCase().trim();
+  const result = await rateLimit(`${preset}:email:${normalizedEmail}`, preset);
+  if (!result.allowed) return tooManyRequests(result.retryAfterMs);
+  return null;
+}
+
 // ---- Rate-limit check for AUTHENTICATED endpoints ----
 // For scans: per-account ONLY (not per-IP). This is critical for school
 //   WiFi where 200+ students share one public IP.

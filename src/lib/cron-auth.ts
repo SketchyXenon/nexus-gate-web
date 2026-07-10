@@ -22,17 +22,39 @@ export interface CronAuthResult {
   method?: string;
 }
 
-export function checkCronAuth(req: NextRequest): CronAuthResult {
-  const cronSecret = (process.env.CRON_SECRET || "").trim();
-  if (!cronSecret) {
+/**
+ * Check cron authorization. If `endpoint` is provided (e.g. "cleanup",
+ * "reminders"), checks CRON_CLEANUP_SECRET / CRON_REMINDERS_SECRET first,
+ * falling back to CRON_SECRET. This limits blast radius if one secret leaks.
+ */
+export function checkCronAuth(
+  req: NextRequest,
+  endpoint?: "cleanup" | "reminders",
+): CronAuthResult {
+  // Build the list of valid secrets: endpoint-specific first, then global.
+  const secrets: string[] = [];
+  if (endpoint) {
+    const specific = (
+      process.env[`CRON_${endpoint.toUpperCase()}_SECRET`] || ""
+    ).trim();
+    if (specific) secrets.push(specific);
+  }
+  const globalSecret = (process.env.CRON_SECRET || "").trim();
+  if (globalSecret) secrets.push(globalSecret);
+
+  if (secrets.length === 0) {
     return { ok: false, reason: "CRON_SECRET env var is not set" };
   }
+
+  // Helper: check if a candidate matches ANY valid secret (constant-time per compare).
+  const matchesAny = (candidate: string): boolean =>
+    secrets.some((s) => constantTimeEqual(candidate, s));
 
   // ---- Method 1: Authorization: Bearer <secret> ----
   const authHeader = req.headers.get("authorization") || "";
   if (authHeader.startsWith("Bearer ")) {
     const token = authHeader.slice(7).trim();
-    if (constantTimeEqual(token, cronSecret)) {
+    if (matchesAny(token)) {
       return { ok: true, method: "bearer" };
     }
     return { ok: false, reason: "Bearer token mismatch", method: "bearer" };
@@ -50,7 +72,7 @@ export function checkCronAuth(req: NextRequest): CronAuthResult {
       // Format is "username:password" — take the part after the first colon
       const colonIdx = decoded.indexOf(":");
       const password = colonIdx >= 0 ? decoded.slice(colonIdx + 1) : decoded;
-      if (constantTimeEqual(password.trim(), cronSecret)) {
+      if (matchesAny(password.trim())) {
         return { ok: true, method: "basic" };
       }
       return {
@@ -71,7 +93,7 @@ export function checkCronAuth(req: NextRequest): CronAuthResult {
     ""
   ).trim();
   if (headerSecret) {
-    if (constantTimeEqual(headerSecret, cronSecret)) {
+    if (matchesAny(headerSecret)) {
       return { ok: true, method: "header" };
     }
     return {
@@ -92,7 +114,7 @@ export function checkCronAuth(req: NextRequest): CronAuthResult {
     ""
   ).trim();
   if (querySecret) {
-    if (constantTimeEqual(querySecret, cronSecret)) {
+    if (matchesAny(querySecret)) {
       return { ok: true, method: "query" };
     }
     return {
@@ -126,10 +148,23 @@ function constantTimeEqual(a: string, b: string): boolean {
 }
 
 // Helper for routes that want to read the secret from a JSON body field.
-// Returns true if the body's "secret" or "cron_secret" field matches.
-export function checkBodySecret(body: unknown): boolean {
-  const cronSecret = (process.env.CRON_SECRET || "").trim();
-  if (!cronSecret || !body || typeof body !== "object") return false;
+// Returns true if the body's "secret" or "cron_secret" field matches any
+// valid secret (endpoint-specific or global).
+export function checkBodySecret(
+  body: unknown,
+  endpoint?: "cleanup" | "reminders",
+): boolean {
+  const secrets: string[] = [];
+  if (endpoint) {
+    const specific = (
+      process.env[`CRON_${endpoint.toUpperCase()}_SECRET`] || ""
+    ).trim();
+    if (specific) secrets.push(specific);
+  }
+  const globalSecret = (process.env.CRON_SECRET || "").trim();
+  if (globalSecret) secrets.push(globalSecret);
+
+  if (secrets.length === 0 || !body || typeof body !== "object") return false;
   const obj = body as Record<string, unknown>;
   const secret =
     (obj.secret as string) ||
@@ -137,5 +172,5 @@ export function checkBodySecret(body: unknown): boolean {
     (obj.token as string) ||
     "";
   if (typeof secret !== "string") return false;
-  return constantTimeEqual(secret.trim(), cronSecret);
+  return secrets.some((s) => constantTimeEqual(secret.trim(), s));
 }

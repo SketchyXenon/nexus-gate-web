@@ -198,14 +198,15 @@ export async function POST(req: NextRequest) {
   // For offline scans, use the certificate's scannedAt timestamp (when the
   // student actually scanned) instead of Date.now() (when the server
   // processes it). This allows offline scans to be synced after the window
-  // closes. Grace period: 24 hours max (prevents abuse).
+  // closes. Grace period: 15 minutes max — enough for "scan in a dead zone,
+  // walk to WiFi, sync" but not enough for photo-replay attacks.
   const certScannedAt = new Date(signed.certificate.scannedAt);
   const now = Date.now();
   const scanAgeMs = now - certScannedAt.getTime();
-  const MAX_OFFLINE_GRACE_MS = 24 * 60 * 60 * 1000; // 24 hours
+  const MAX_OFFLINE_GRACE_MS = 15 * 60 * 1000; // 15 minutes
   if (scanAgeMs > MAX_OFFLINE_GRACE_MS) {
     return forbidden(
-      "This scan is too old. Offline scans must be synced within 24 hours.",
+      "This scan is too old. Offline scans must be synced within 15 minutes.",
     );
   }
 

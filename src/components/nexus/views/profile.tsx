@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   User,
@@ -18,6 +18,8 @@ import {
   AlertCircle,
   Info,
   Fingerprint,
+  Smartphone,
+  Trash2,
 } from "lucide-react";
 import {
   Card,
@@ -53,6 +55,8 @@ import {
   useProfile,
   useUpdateProfile,
   useChangePassword,
+  useDeviceKeys,
+  useRevokeDeviceKey,
 } from "@/lib/api-client";
 import { ROLE_LABELS } from "@/lib/rbac";
 import { DiceBearAvatar } from "@/components/nexus/dicebear-avatar";
@@ -147,14 +151,16 @@ export function ProfileView() {
     }
   }
 
-  // Load profile data once
-  if (profile && !loaded) {
-    setFullName(profile.fullName);
-    setProgram(profile.program ?? NO_PROGRAM);
-    setYear(String(profile.year ?? 1));
-    setSection(profile.section ?? "");
-    setLoaded(true);
-  }
+  // Load profile data once (useEffect, not render-time setState)
+  useEffect(() => {
+    if (profile && !loaded) {
+      setFullName(profile.fullName);
+      setProgram(profile.program ?? NO_PROGRAM);
+      setYear(String(profile.year ?? 1));
+      setSection(profile.section ?? "");
+      setLoaded(true);
+    }
+  }, [profile, loaded]);
 
   function handleSaveClick() {
     if (!fullName.trim()) {
@@ -580,6 +586,9 @@ export function ProfileView() {
         </CardContent>
       </Card>
 
+      {/* Registered Devices — self-service device key management */}
+      <RegisteredDevicesCard />
+
       {/* Save confirmation dialog */}
       <AlertDialog open={saveConfirmOpen} onOpenChange={setSaveConfirmOpen}>
         <AlertDialogContent>
@@ -757,5 +766,122 @@ function InfoRow({
       <span className="text-muted-foreground w-32 shrink-0">{label}</span>
       <span className="font-medium">{value}</span>
     </div>
+  );
+}
+
+// ---- Registered Devices card (self-service device key management) ----
+function RegisteredDevicesCard() {
+  const { data, isLoading } = useDeviceKeys();
+  const revoke = useRevokeDeviceKey();
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const deviceKeys = data?.deviceKeys ?? [];
+  const activeKeys = deviceKeys.filter((k) => !k.revokedAt);
+
+  function handleRevoke(keyId: string) {
+    revoke.mutate(keyId, {
+      onSuccess: () => {
+        toast({ title: "Device revoked" });
+        setConfirmId(null);
+      },
+      onError: (err) => {
+        toast({
+          title: "Couldn't revoke device",
+          description: err.message,
+          variant: "destructive",
+        });
+        setConfirmId(null);
+      },
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Smartphone className="h-4 w-4 text-primary" /> Registered devices
+        </CardTitle>
+        <CardDescription>
+          Devices that can sign scan certificates. Max 5 active. Revoke old
+          devices to free up slots.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading devices…
+          </div>
+        ) : activeKeys.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-4 text-center">
+            No active devices. Your device key is registered automatically when
+            you scan your first QR code.
+          </p>
+        ) : (
+          <>
+            <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+              <span>{activeKeys.length} active of 5 max</span>
+            </div>
+            <div className="divide-y rounded-lg border">
+              {activeKeys.map((key) => (
+                <div
+                  key={key.id}
+                  className="px-3 py-2.5 flex items-center gap-3"
+                >
+                  <div className="grid place-items-center h-8 w-8 rounded-lg bg-primary/10 text-primary shrink-0">
+                    <Smartphone className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">
+                      {key.label || "Unnamed device"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Added {format(new Date(key.createdAt), "MMM d, yyyy")}
+                      {key.lastUsedAt
+                        ? ` · Last used ${format(new Date(key.lastUsedAt), "MMM d")}`
+                        : " · Never used"}
+                    </p>
+                  </div>
+                  {confirmId === key.id ? (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="h-7 text-xs"
+                        disabled={revoke.isPending}
+                        onClick={() => handleRevoke(key.id)}
+                      >
+                        {revoke.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          "Confirm"
+                        )}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs"
+                        onClick={() => setConfirmId(null)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 text-muted-foreground hover:text-destructive shrink-0"
+                      onClick={() => setConfirmId(key.id)}
+                      aria-label="Revoke device"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
