@@ -10,8 +10,16 @@ import { checkCronAuth, checkBodySecret } from "@/lib/cron-auth";
 async function runCleanup() {
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const attendanceCutoff = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+  const auditCutoff = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
 
-  const [tokensDeleted, refreshDeleted, oldNotifications] = await Promise.all([
+  const [
+    tokensDeleted,
+    refreshDeleted,
+    oldNotifications,
+    oldAttendance,
+    oldAuditLogs,
+  ] = await Promise.all([
     db.verificationToken.deleteMany({
       where: { OR: [{ expiresAt: { lt: now } }, { usedAt: { not: null } }] },
     }),
@@ -21,6 +29,14 @@ async function runCleanup() {
     db.notification.deleteMany({
       where: { readAt: { lt: thirtyDaysAgo } },
     }),
+    // Purge event_attendance older than 180 days (storage management).
+    db.eventAttendance.deleteMany({
+      where: { scannedAt: { lt: attendanceCutoff } },
+    }),
+    // Purge audit_logs older than 90 days (unbounded growth prevention).
+    db.auditLog.deleteMany({
+      where: { createdAt: { lt: auditCutoff } },
+    }),
   ]);
 
   return {
@@ -28,6 +44,8 @@ async function runCleanup() {
       verificationTokens: tokensDeleted.count,
       refreshTokens: refreshDeleted.count,
       oldNotifications: oldNotifications.count,
+      oldAttendance: oldAttendance.count,
+      oldAuditLogs: oldAuditLogs.count,
     },
     timestamp: now.toISOString(),
   };

@@ -66,11 +66,9 @@ export async function POST(req: NextRequest) {
         // Reconcile orphaned row: check if the Supabase auth user still exists.
         try {
           const admin = createSupabaseAdminClient();
-          const { data: userList } = await admin.auth.admin.listUsers();
-          const authUserExists = userList?.users?.some(
-            (u) => u.email === email,
-          );
-          if (!authUserExists) {
+          // Use getUserByEmail (single-user lookup) instead of listUsers.
+          const { data: user } = await admin.auth.admin.getUserByEmail(email);
+          if (!user) {
             await db.account.delete({ where: { id: existing.id } });
             result.emailTaken = false;
           } else {

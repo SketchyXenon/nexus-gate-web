@@ -1,3 +1,6 @@
+// Allow up to 15s for Supabase Auth round-trips (Hobby default is 10s).
+export const maxDuration = 15;
+
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { adminCreateAccountSchema } from "@/lib/validation";
@@ -36,11 +39,11 @@ export async function POST(req: NextRequest) {
     if (existing && !existing.supabaseAuthUid && isSupabaseConfigured()) {
       try {
         const supabaseCheck = createSupabaseAdminClient();
-        const { data: userList } = await supabaseCheck.auth.admin.listUsers();
-        const authUserExists = userList?.users?.some(
-          (u) => u.email === d.email,
+        // Use getUserByEmail (single-user lookup) instead of listUsers (fetches 1000).
+        const { data: user } = await supabaseCheck.auth.admin.getUserByEmail(
+          d.email,
         );
-        if (!authUserExists) {
+        if (!user) {
           console.log(
             `[accounts/create] cleaning orphaned accounts row for ${d.email}`,
           );

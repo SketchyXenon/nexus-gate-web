@@ -121,9 +121,12 @@ export function LoginScreen({
     const refreshToken = hashParams.get("refresh_token");
     if (!code && !accessToken) return;
 
-    const finalizeAuth = async () => {
+    const finalizeAuth = async (resolvedType?: string) => {
       window.history.replaceState({}, "", window.location.pathname);
-      if (type === "recovery") {
+      // Use the resolved type from the callback response (AMR-based) if
+      // available; fall back to the URL type param.
+      const effectiveType = resolvedType || type;
+      if (effectiveType === "recovery") {
         setResetToken("supabase-recovery");
         setMode("reset");
       } else {
@@ -136,6 +139,8 @@ export function LoginScreen({
     // The code_verifier is stored in an httpOnly cookie set during
     // signInWithOtp/resetPasswordForEmail (server-side). The browser
     // client can't read httpOnly cookies, so we must exchange server-side.
+    // The callback returns the resolved type (recovery vs magiclink) from
+    // the session's AMR claim — more reliable than the URL type param.
     const codeExchangePromise = code
       ? fetch(
           `/api/auth/callback?code=${encodeURIComponent(code)}${type ? `&type=${encodeURIComponent(type)}` : ""}`,
@@ -145,7 +150,7 @@ export function LoginScreen({
             const body = await res.json().catch(() => ({}));
             throw new Error(body.error || "Code exchange failed");
           }
-          return res.json();
+          return res.json() as Promise<{ ok: boolean; type: string }>;
         })
       : accessToken && refreshToken
         ? import("@/lib/supabase-browser").then(
@@ -158,8 +163,8 @@ export function LoginScreen({
         : Promise.reject(new Error("Missing auth tokens in redirect URL"));
 
     codeExchangePromise
-      .then(async () => {
-        await finalizeAuth();
+      .then(async (result) => {
+        await finalizeAuth(result?.type);
       })
       .catch((e) => {
         // Code exchange failed (expired, already used, cross-device PKCE mismatch).
@@ -283,6 +288,20 @@ function AuthScreen({
   const studentIdCheckFailed =
     !!debouncedStudentId && !availability.isLoading && availability.isError;
 
+  // Clear stale "Checking..." errors when the availability check completes.
+  // Without this, validateRegStep's "Checking..." message stays even after
+  // the check resolves (the inline indicator updates, but the error text doesn't).
+  useEffect(() => {
+    if (!availability.isLoading && availability.data) {
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next.email;
+        delete next.studentId;
+        return next;
+      });
+    }
+  }, [availability.data, availability.isLoading]);
+
   // ---- Magic link (passwordless email login) ----
   const [magicLinkSending, setMagicLinkSending] = useState(false);
   const [magicLinkSent, setMagicLinkSent] = useState(false);
@@ -382,9 +401,28 @@ function AuthScreen({
   function validateRegStep(step: number) {
     const e: Record<string, string> = {};
     if (step === 1) {
-      if (!email) e.email = "Enter your email";
-      else if (emailTaken) e.email = "This email is already registered";
-      else if (emailChecking) e.email = "Checking email availability…";
+      if (!email) {
+        e.email = "Enter your email";
+      } else {
+        // Check if the availability check has fired for the CURRENT email.
+        // If the user typed fast and clicked Continue before the 400ms
+        // debounce, debouncedEmail may be stale — force it now and block.
+        const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+        if (emailValid) {
+          const normalizedEmail = email.toLowerCase();
+          if (debouncedEmail !== normalizedEmail) {
+            // Force the debounce immediately so the check fires now.
+            setDebouncedEmail(normalizedEmail);
+            e.email = "Checking email availability…";
+          } else if (emailTaken) {
+            e.email = "This email is already registered";
+          } else if (emailChecking) {
+            e.email = "Checking email availability…";
+          }
+        } else {
+          e.email = "Enter a valid email address";
+        }
+      }
       if (password.length < 8) {
         e.password = "At least 8 characters";
       } else if (!/[A-Z]/.test(password)) {
@@ -400,11 +438,20 @@ function AuthScreen({
         e.confirmPassword = "Passwords don't match";
     } else if (step === 2) {
       if (!fullName.trim()) e.fullName = "Enter your full name";
-      if (!/^\d{7}$/.test(studentId.trim())) e.studentId = "Must be 7 digits";
-      else if (studentIdTaken)
-        e.studentId = "This student ID is already registered";
-      else if (studentIdChecking)
-        e.studentId = "Checking student ID availability…";
+      if (!/^\d{7}$/.test(studentId.trim())) {
+        e.studentId = "Must be 7 digits";
+      } else {
+        const normalizedSid = studentId.trim();
+        if (debouncedStudentId !== normalizedSid) {
+          // Force the debounce immediately so the check fires now.
+          setDebouncedStudentId(normalizedSid);
+          e.studentId = "Checking student ID availability…";
+        } else if (studentIdTaken) {
+          e.studentId = "This student ID is already registered";
+        } else if (studentIdChecking) {
+          e.studentId = "Checking student ID availability…";
+        }
+      }
     }
     setErrors(e);
     return Object.keys(e).length === 0;

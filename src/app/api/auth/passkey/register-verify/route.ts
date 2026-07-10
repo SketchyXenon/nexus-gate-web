@@ -75,9 +75,14 @@ export async function POST(req: NextRequest) {
     transports: body.response.response?.transports || [],
   });
 
+  // Store both the full credential JSON and the extracted credential ID
+  // for O(log N) lookup during login (was O(N) scan + N crypto ops).
   await db.account.update({
     where: { id: account.id },
-    data: { passkeyCredential: stored },
+    data: {
+      passkeyCredential: stored,
+      passkeyCredentialId: credential.id,
+    },
   });
 
   await audit({

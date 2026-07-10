@@ -27,7 +27,8 @@ Sentry.init({
   sampleRate: 1.0,
   // Don't replay sessions in dev to keep the bundle small.
   replaysSessionSampleRate: 0,
-  replaysOnErrorSampleRate: isProduction ? 1.0 : 0,
+  // Sample 1% of error sessions for replays (Sentry free = 100/mo cap).
+  replaysOnErrorSampleRate: isProduction ? 0.01 : 0,
   // Ignore common browser-extension noise.
   ignoreErrors: [
     "top.GLOBALS",

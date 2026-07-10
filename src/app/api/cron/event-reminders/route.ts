@@ -12,6 +12,7 @@ async function runEventReminders() {
   const THIRTY_MIN = 30 * 60 * 1000;
   const windowEnd = new Date(now.getTime() + THIRTY_MIN);
 
+  // Step 1: fetch all upcoming events in one query.
   const upcomingEvents = await db.event.findMany({
     where: {
       status: "active",
@@ -26,49 +27,112 @@ async function runEventReminders() {
     },
   });
 
-  let notificationsCreated = 0;
+  if (upcomingEvents.length === 0) {
+    return {
+      checkedEvents: 0,
+      notificationsCreated: 0,
+      timestamp: now.toISOString(),
+    };
+  }
+
+  // Step 2: build OR conditions for all eligible student sets in one query.
+  // Each event contributes either an exact (program, section) match or
+  // open-to-all. We collect all eligible account IDs per event.
+  const eventConditions: Array<{
+    event: (typeof upcomingEvents)[0];
+    accountIds: string[];
+  }> = [];
 
   for (const event of upcomingEvents) {
-    const where: Record<string, unknown> = {
-      role: "USER",
-      status: "ACTIVE",
-      notificationEnabled: true,
-    };
-
     if (event.targetProgram && event.targetSection) {
-      where.program = event.targetProgram;
-      where.section = event.targetSection;
-    } else if (!event.targetProgram && !event.targetSection) {
-      // Open to all.
-    } else {
-      continue;
-    }
-
-    const students = await db.account.findMany({ where, select: { id: true } });
-
-    for (const student of students) {
-      const existing = await db.notification.findFirst({
+      // Exact program + section match.
+      const students = await db.account.findMany({
         where: {
-          accountId: student.id,
-          type: "reminder",
-          body: { contains: event.title },
+          role: "USER",
+          status: "ACTIVE",
+          notificationEnabled: true,
+          program: event.targetProgram,
+          section: event.targetSection,
         },
+        select: { id: true },
       });
-      if (!existing) {
-        const minutesUntil = Math.round(
-          (event.scheduledAt.getTime() - now.getTime()) / (60 * 1000),
-        );
-        await db.notification.create({
-          data: {
-            accountId: student.id,
-            title: "Upcoming class",
-            body: `"${event.title}" starts in ${minutesUntil} minute${minutesUntil === 1 ? "" : "s"}. Don't forget to check in!`,
+      eventConditions.push({ event, accountIds: students.map((s) => s.id) });
+    } else if (!event.targetProgram && !event.targetSection) {
+      // Open to all — fetch all eligible students.
+      const students = await db.account.findMany({
+        where: {
+          role: "USER",
+          status: "ACTIVE",
+          notificationEnabled: true,
+        },
+        select: { id: true },
+      });
+      eventConditions.push({ event, accountIds: students.map((s) => s.id) });
+    }
+    // Events with only program OR only section (not both) are skipped —
+    // matches the original behavior.
+  }
+
+  // Step 3: collect all unique account IDs for the dedup query.
+  const allAccountIds = Array.from(
+    new Set(eventConditions.flatMap((ec) => ec.accountIds)),
+  );
+
+  // Step 4: bulk-fetch existing reminder notifications for dedup.
+  // One query instead of N (one per student per event).
+  const existingReminders =
+    allAccountIds.length > 0
+      ? await db.notification.findMany({
+          where: {
+            accountId: { in: allAccountIds },
             type: "reminder",
+            createdAt: { gt: new Date(now.getTime() - 60 * 60 * 1000) }, // last hour
           },
-        });
-        notificationsCreated++;
+          select: { accountId: true, body: true },
+        })
+      : [];
+
+  // Build a Set of "accountId:eventTitle" keys for O(1) dedup lookup.
+  const existingKeys = new Set<string>();
+  for (const r of existingReminders) {
+    for (const ec of eventConditions) {
+      if (r.body.includes(ec.event.title)) {
+        existingKeys.add(`${r.accountId}:${ec.event.id}`);
       }
     }
+  }
+
+  // Step 5: build the list of notifications to create.
+  const toCreate: Array<{
+    accountId: string;
+    title: string;
+    body: string;
+    type: string;
+  }> = [];
+
+  for (const { event, accountIds } of eventConditions) {
+    const minutesUntil = Math.round(
+      (event.scheduledAt.getTime() - now.getTime()) / (60 * 1000),
+    );
+    const body = `"${event.title}" starts in ${minutesUntil} minute${minutesUntil === 1 ? "" : "s"}. Don't forget to check in!`;
+    for (const accountId of accountIds) {
+      const key = `${accountId}:${event.id}`;
+      if (!existingKeys.has(key)) {
+        toCreate.push({
+          accountId,
+          title: "Upcoming class",
+          body,
+          type: "reminder",
+        });
+      }
+    }
+  }
+
+  // Step 6: bulk insert all new notifications in one query.
+  let notificationsCreated = 0;
+  if (toCreate.length > 0) {
+    const result = await db.notification.createMany({ data: toCreate });
+    notificationsCreated = result.count;
   }
 
   return {

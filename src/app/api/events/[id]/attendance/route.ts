@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { forbidden, notFound, requireAuth } from "@/lib/api";
+import { forbidden, notFound, requireAuth, badRequest } from "@/lib/api";
 import { hasMinimumRole } from "@/lib/rbac";
+import { paginationSchema } from "@/lib/validation";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -14,10 +15,10 @@ type Ctx = { params: Promise<{ id: string }> };
 //       2. Open-to-all events, OR
 //       3. Events in their own program (any section — for QR delegation), OR
 //       4. Events that exactly match their program + section.
-//     This mirrors the visibility rules in GET /api/events so that
-//     organizers who can see an event in their list can also view its
-//     attendance (needed for the Overrides page).
-export async function GET(_req: NextRequest, { params }: Ctx) {
+//
+// Pagination: ?page=1&pageSize=100 (max 200). Returns total count for the
+// full roster so the client can show "X of Y present".
+export async function GET(req: NextRequest, { params }: Ctx) {
   const res = await requireAuth("ORGANIZER");
   if ("error" in res) return res.error;
   const { account } = res;
@@ -55,10 +56,22 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     }
   }
 
-  const [attendances, eligibleCount] = await Promise.all([
+  // ---- Pagination (bounded result set) ----
+  const sp = req.nextUrl.searchParams;
+  const parsed = paginationSchema.safeParse({
+    page: sp.get("page") ?? 1,
+    pageSize: sp.get("pageSize") ?? 100,
+  });
+  if (!parsed.success) return badRequest("Invalid pagination parameters");
+  const { page, pageSize } = parsed.data;
+  const skip = (page - 1) * pageSize;
+
+  const [attendances, totalCount, eligibleCount] = await Promise.all([
     db.eventAttendance.findMany({
       where: { eventId },
       orderBy: { scannedAt: "asc" },
+      skip,
+      take: pageSize,
       include: {
         account: {
           select: {
@@ -71,6 +84,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
         },
       },
     }),
+    db.eventAttendance.count({ where: { eventId } }),
     db.authorizedStudent.count({
       where: {
         program: event.targetProgram ?? undefined,
@@ -82,10 +96,20 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   return NextResponse.json(
     {
       event,
-      presentCount: attendances.length,
+      presentCount: totalCount,
       eligibleCount,
       attendances,
+      pagination: {
+        page,
+        pageSize,
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / pageSize),
+      },
     },
-    { headers: { "Cache-Control": "private, no-cache" } },
+    {
+      headers: {
+        "Cache-Control": "private, s-maxage=10, stale-while-revalidate=30",
+      },
+    },
   );
 }

@@ -1,3 +1,6 @@
+// Allow up to 15s for Supabase Auth round-trips (Hobby default is 10s).
+export const maxDuration = 15;
+
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";

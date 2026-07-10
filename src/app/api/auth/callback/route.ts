@@ -9,21 +9,26 @@ import {
 // --------------------------------------------------------------------
 // Server-side PKCE code exchange for Supabase Auth email redirects.
 //
-// WHY THIS EXISTS:
-//   signInWithOtp() and resetPasswordForEmail() are called SERVER-side
-//   (in magic-link/route.ts and forgot-password/route.ts). With PKCE
-//   flow (Supabase v2 default), this generates a code_verifier stored
-//   in an httpOnly cookie. The browser client (createBrowserClient)
-//   CANNOT read httpOnly cookies via document.cookie, so calling
-//   exchangeCodeForSession() client-side fails with "code_verifier
-//   mismatch" — which surfaces to the user as "link expired."
-//
-//   This route runs on the SERVER, where cookieStore.getAll() CAN read
-//   the httpOnly code_verifier cookie. It exchanges the code, sets the
-//   session cookies via Set-Cookie headers, and returns the type so the
-//   client knows whether to show the reset form (recovery) or reload
-//   (magiclink/signup).
+// After exchanging the code, checks the session's AMR (Authentication
+// Methods Reference) claim to determine if this is a RECOVERY flow
+// (password reset) or a regular login. The URL type param is used as
+// a fallback only — Supabase PKCE redirects may not include it.
 // ====================================================================
+
+function decodeJwtPayload(token: string): Record<string, unknown> {
+  const payload = token.split(".")[1];
+  if (!payload) return {};
+  const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(
+    normalized.length + ((4 - (normalized.length % 4)) % 4),
+    "=",
+  );
+  try {
+    return JSON.parse(Buffer.from(padded, "base64").toString("utf-8"));
+  } catch {
+    return {};
+  }
+}
 
 export async function GET(req: NextRequest) {
   if (!isSupabaseConfigured()) {
@@ -37,7 +42,7 @@ export async function GET(req: NextRequest) {
   }
 
   const code = req.nextUrl.searchParams.get("code");
-  const type = req.nextUrl.searchParams.get("type");
+  const urlType = req.nextUrl.searchParams.get("type");
 
   if (!code) {
     return NextResponse.json(
@@ -60,5 +65,21 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  return NextResponse.json({ ok: true, type: type || "magiclink" });
+  // Determine the auth type from the session's AMR claim.
+  // This is more reliable than the URL type param, which Supabase PKCE
+  // redirects may not include for password-reset flows.
+  const { data: sessionData } = await supabase.auth.getSession();
+  let resolvedType = urlType || "magiclink";
+
+  if (sessionData.session) {
+    const payload = decodeJwtPayload(sessionData.session.access_token) as {
+      amr?: Array<{ method: string }>;
+    };
+    const isRecovery = payload.amr?.some((entry) => entry.method === "recovery");
+    if (isRecovery) {
+      resolvedType = "recovery";
+    }
+  }
+
+  return NextResponse.json({ ok: true, type: resolvedType });
 }

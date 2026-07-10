@@ -11,12 +11,7 @@
 // ====================================================================
 
 const CACHE_VERSION = "nexus-gate-v1";
-const APP_SHELL = [
-  "/",
-  "/manifest.json",
-  "/icon-192.svg",
-  "/icon-512.svg",
-];
+const APP_SHELL = ["/", "/manifest.json", "/icon-192.svg", "/icon-512.svg"];
 
 // ---- Install: pre-cache the app shell ----
 self.addEventListener("install", (event) => {
@@ -25,7 +20,7 @@ self.addEventListener("install", (event) => {
       return cache.addAll(APP_SHELL).catch(() => {
         // If any resource fails, continue — we'll cache on-demand
       });
-    })
+    }),
   );
   self.skipWaiting();
 });
@@ -37,9 +32,9 @@ self.addEventListener("activate", (event) => {
       return Promise.all(
         keys
           .filter((key) => key !== CACHE_VERSION)
-          .map((key) => caches.delete(key))
+          .map((key) => caches.delete(key)),
       );
-    })
+    }),
   );
   self.clients.claim();
 });
@@ -76,12 +71,18 @@ self.addEventListener("fetch", (event) => {
         .catch(() => {
           // Offline — try cache
           return caches.match(request).then((cached) => {
-            return cached || new Response(
-              JSON.stringify({ error: "You're offline. Please reconnect." }),
-              { status: 503, headers: { "Content-Type": "application/json" } }
+            return (
+              cached ||
+              new Response(
+                JSON.stringify({ error: "You're offline. Please reconnect." }),
+                {
+                  status: 503,
+                  headers: { "Content-Type": "application/json" },
+                },
+              )
             );
           });
-        })
+        }),
     );
     return;
   }
@@ -89,9 +90,28 @@ self.addEventListener("fetch", (event) => {
   // ---- App shell + static assets: stale-while-revalidate ----
   event.respondWith(
     caches.match(request).then((cached) => {
-      const fetchPromise = fetch(request)
+      // If we have a cached version, return it immediately and update in
+      // background. If the background fetch fails (offline), we already
+      // returned the cached version — the rejection is swallowed silently.
+      if (cached) {
+        fetch(request)
+          .then((response) => {
+            if (response.ok) {
+              const clone = response.clone();
+              caches.open(CACHE_VERSION).then((cache) => {
+                cache.put(request, clone);
+              });
+            }
+          })
+          .catch(() => {
+            // Background revalidation failed — cached version still served.
+          });
+        return cached;
+      }
+
+      // No cached version — must fetch. If fetch fails, fall back to "/".
+      return fetch(request)
         .then((response) => {
-          // Cache successful responses
           if (response.ok) {
             const clone = response.clone();
             caches.open(CACHE_VERSION).then((cache) => {
@@ -101,13 +121,9 @@ self.addEventListener("fetch", (event) => {
           return response;
         })
         .catch(() => {
-          // Offline — return cached version or a basic fallback
-          return cached || caches.match("/");
+          return caches.match("/");
         });
-
-      // Return cached immediately, update in background
-      return cached || fetchPromise;
-    })
+    }),
   );
 });
 

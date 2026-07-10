@@ -1,3 +1,6 @@
+// Allow up to 15s for crypto verification + Supabase session establishment.
+export const maxDuration = 15;
+
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAuthenticationResponse } from "@simplewebauthn/server";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
@@ -11,7 +14,9 @@ import {
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
 
-function toFixedArrayBuffer(bytes: Uint8Array<ArrayBufferLike>): Uint8Array<ArrayBuffer> {
+function toFixedArrayBuffer(
+  bytes: Uint8Array<ArrayBufferLike>,
+): Uint8Array<ArrayBuffer> {
   const fixed = new Uint8Array(bytes.byteLength);
   fixed.set(bytes);
   return fixed;
@@ -23,18 +28,27 @@ function decodeStoredPublicKey(
   if (publicKey instanceof Uint8Array) return toFixedArrayBuffer(publicKey);
   if (typeof publicKey === "string" && publicKey.trim()) {
     try {
-      return toFixedArrayBuffer(Uint8Array.from(Buffer.from(publicKey.trim(), "base64")));
+      return toFixedArrayBuffer(
+        Uint8Array.from(Buffer.from(publicKey.trim(), "base64")),
+      );
     } catch {
       try {
-        const normalized = publicKey.trim().replace(/-/g, "+").replace(/_/g, "/");
-        return toFixedArrayBuffer(Uint8Array.from(Buffer.from(normalized, "base64")));
+        const normalized = publicKey
+          .trim()
+          .replace(/-/g, "+")
+          .replace(/_/g, "/");
+        return toFixedArrayBuffer(
+          Uint8Array.from(Buffer.from(normalized, "base64")),
+        );
       } catch {
         return null;
       }
     }
   }
   if (Array.isArray(publicKey)) {
-    return toFixedArrayBuffer(Uint8Array.from(publicKey.map((n) => Number(n) || 0)));
+    return toFixedArrayBuffer(
+      Uint8Array.from(publicKey.map((n) => Number(n) || 0)),
+    );
   }
   if (publicKey && typeof publicKey === "object") {
     const entries = Object.entries(publicKey)
@@ -93,9 +107,20 @@ export async function POST(req: NextRequest) {
 
   const { rpID, expectedOrigin } = getWebAuthnContext(req);
 
-  // Find the account that owns this credential by scanning passkey holders.
-  const accounts = await db.account.findMany({
-    where: { passkeyCredential: { not: null } },
+  // O(log N) lookup: extract the credential ID from the assertion and find
+  // the owning account via the indexed passkeyCredentialId column.
+  // Previously this scanned ALL passkey holders and ran N crypto verifications.
+  const assertion = body.assertion as AuthenticationResponseJSON;
+  const credentialId = assertion?.id;
+  if (!credentialId) {
+    return failWithCookieDelete(
+      { error: "Missing credential ID in assertion.", code: "BAD_REQUEST" },
+      400,
+    );
+  }
+
+  const account = await db.account.findFirst({
+    where: { passkeyCredentialId: credentialId },
     select: {
       id: true,
       email: true,
@@ -110,41 +135,42 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  let verifiedAccount: (typeof accounts)[0] | null = null;
-  for (const acc of accounts) {
+  let verifiedAccount: typeof account | null = null;
+  if (account) {
     try {
-      const stored = JSON.parse(acc.passkeyCredential || "{}");
+      const stored = JSON.parse(account.passkeyCredential || "{}");
       const publicKey = decodeStoredPublicKey(stored.publicKey);
-      if (!stored.id || !publicKey) continue;
-      const verification = await verifyAuthenticationResponse({
-        response: body.assertion as AuthenticationResponseJSON,
-        expectedChallenge: challenge,
-        expectedOrigin,
-        expectedRPID: rpID,
-        credential: {
-          id: stored.id,
-          publicKey,
-          counter: stored.counter,
-          transports: stored.transports,
-        },
-      });
-      if (verification.verified) {
-        verifiedAccount = acc;
-        stored.counter = verification.authenticationInfo.newCounter;
-        await db.account.update({
-          where: { id: acc.id },
-          data: { passkeyCredential: JSON.stringify(stored) },
+      if (stored.id && publicKey) {
+        const verification = await verifyAuthenticationResponse({
+          response: assertion,
+          expectedChallenge: challenge,
+          expectedOrigin,
+          expectedRPID: rpID,
+          credential: {
+            id: stored.id,
+            publicKey,
+            counter: stored.counter,
+            transports: stored.transports,
+          },
         });
-        break;
+        if (verification.verified) {
+          verifiedAccount = account;
+          stored.counter = verification.authenticationInfo.newCounter;
+          await db.account.update({
+            where: { id: account.id },
+            data: { passkeyCredential: JSON.stringify(stored) },
+          });
+        }
       }
     } catch {
       console.warn("[passkey/login-verify] verification threw for account");
-      continue;
     }
   }
 
   if (!verifiedAccount) {
-    console.warn("[passkey/login-verify] no matching passkey credential verified");
+    console.warn(
+      "[passkey/login-verify] no matching passkey credential verified",
+    );
     return failWithCookieDelete(
       { error: "Passkey verification failed.", code: "VERIFICATION_FAILED" },
       400,

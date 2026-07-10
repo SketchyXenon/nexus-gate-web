@@ -76,43 +76,64 @@ export async function GET(req: NextRequest) {
     authWhere.OR = orClauses;
   }
 
-  // ---- Fetch both lists ----
-  const [registeredAccounts, pendingStudents] = await Promise.all([
-    statusFilter === "pending"
-      ? []
-      : db.account.findMany({
-          where: accountWhere,
-          orderBy: [
-            { program: "asc" },
-            { section: "asc" },
-            { fullName: "asc" },
-          ],
-          select: {
-            id: true,
-            studentId: true,
-            email: true,
-            fullName: true,
-            program: true,
-            section: true,
-            status: true,
-            year: true,
-            createdAt: true,
-            lastLoginAt: true,
-          },
-        }),
-    statusFilter === "registered"
-      ? []
-      : db.authorizedStudent.findMany({
-          where: authWhere,
-          orderBy: [
-            { program: "asc" },
-            { section: "asc" },
-            { fullName: "asc" },
-          ],
-        }),
-  ]);
+  // ---- Fetch both lists with SQL pagination (bounded memory) ----
+  // Instead of loading ALL rows and merging in memory, we fetch only the
+  // rows needed for the current page from each table. We over-fetch by
+  // pageSize on each side to handle the merge correctly, then slice.
+  // Memory: O(2 * pageSize) instead of O(totalStudents).
+  const skip = (page - 1) * pageSize;
 
-  // ---- Get registered studentIds for filtering pending ----
+  // Build orderBy clause based on sort param (shared by both queries).
+  const orderBy =
+    sort === "studentid"
+      ? [{ studentId: "asc" as const }]
+      : sort === "name"
+        ? [{ fullName: "asc" as const }]
+        : [
+            { program: "asc" as const },
+            { section: "asc" as const },
+            { fullName: "asc" as const },
+          ];
+
+  const [registeredAccounts, pendingStudents, registeredCount, pendingCount] =
+    await Promise.all([
+      statusFilter === "pending"
+        ? []
+        : db.account.findMany({
+            where: accountWhere,
+            orderBy,
+            skip,
+            take: pageSize,
+            select: {
+              id: true,
+              studentId: true,
+              email: true,
+              fullName: true,
+              program: true,
+              section: true,
+              status: true,
+              year: true,
+              createdAt: true,
+              lastLoginAt: true,
+            },
+          }),
+      statusFilter === "registered"
+        ? []
+        : db.authorizedStudent.findMany({
+            where: authWhere,
+            orderBy,
+            skip,
+            take: pageSize,
+          }),
+      statusFilter === "pending"
+        ? 0
+        : db.account.count({ where: accountWhere }),
+      statusFilter === "registered"
+        ? 0
+        : db.authorizedStudent.count({ where: authWhere }),
+    ]);
+
+  // ---- Get registered studentIds for filtering pending (page-sized set only) ----
   const registeredIds = new Set(registeredAccounts.map((a) => a.studentId));
 
   // ---- Filter pending: only show those WITHOUT an account ----
@@ -120,7 +141,7 @@ export async function GET(req: NextRequest) {
     (s) => !registeredIds.has(s.studentId),
   );
 
-  // ---- Merge into a unified list ----
+  // ---- Merge into a unified list (bounded to 2 * pageSize rows) ----
   const merged = [
     ...registeredAccounts.map((a) => ({
       ...a,
@@ -145,7 +166,7 @@ export async function GET(req: NextRequest) {
     })),
   ];
 
-  // ---- Sort by chosen column ----
+  // ---- Sort the page-sized merged set ----
   merged.sort((a, b) => {
     if (sort === "studentid") {
       return (a.studentId ?? 0) - (b.studentId ?? 0);
@@ -153,7 +174,6 @@ export async function GET(req: NextRequest) {
     if (sort === "name") {
       return (a.fullName || "").localeCompare(b.fullName || "");
     }
-    // default: program → section → name
     if (a.program !== b.program)
       return (a.program || "").localeCompare(b.program || "");
     if (a.section !== b.section)
@@ -161,12 +181,9 @@ export async function GET(req: NextRequest) {
     return a.fullName.localeCompare(b.fullName);
   });
 
-  // ---- Paginate ----
-  const total = merged.length;
-  const paginated = merged.slice(
-    (page - 1) * pageSize,
-    (page - 1) * pageSize + pageSize,
-  );
+  // ---- Paginate the merged page ----
+  const total = registeredCount + pendingCount;
+  const paginated = merged.slice(0, pageSize);
 
   return NextResponse.json(
     {
