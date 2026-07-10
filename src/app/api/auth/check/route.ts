@@ -7,10 +7,7 @@ import {
   dbUnavailable,
   isDbUnavailableError,
 } from "@/lib/api";
-import {
-  createSupabaseAdminClient,
-  isSupabaseConfigured,
-} from "@/lib/supabase-server";
+import { isSupabaseConfigured } from "@/lib/supabase-server";
 
 // POST /api/auth/check
 // Pre-registration availability check for email and/or student ID.
@@ -64,11 +61,12 @@ export async function POST(req: NextRequest) {
       const existing = await db.account.findUnique({ where: { email } });
       if (existing && !existing.supabaseAuthUid && isSupabaseConfigured()) {
         // Reconcile orphaned row: check if the Supabase auth user still exists.
+        // Query auth.users directly via raw SQL (single-row lookup).
         try {
-          const admin = createSupabaseAdminClient();
-          // Use getUserByEmail (single-user lookup) instead of listUsers.
-          const { data: user } = await admin.auth.admin.getUserByEmail(email);
-          if (!user) {
+          const rows = await db.$queryRaw<Array<{ id: string }>>`
+            SELECT id FROM auth.users WHERE email = ${email} LIMIT 1
+          `;
+          if (rows.length === 0) {
             await db.account.delete({ where: { id: existing.id } });
             result.emailTaken = false;
           } else {

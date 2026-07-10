@@ -38,12 +38,11 @@ export async function POST(req: NextRequest) {
     const existing = await db.account.findUnique({ where: { email: d.email } });
     if (existing && !existing.supabaseAuthUid && isSupabaseConfigured()) {
       try {
-        const supabaseCheck = createSupabaseAdminClient();
-        // Use getUserByEmail (single-user lookup) instead of listUsers (fetches 1000).
-        const { data: user } = await supabaseCheck.auth.admin.getUserByEmail(
-          d.email,
-        );
-        if (!user) {
+        // Query auth.users directly via raw SQL (single-row lookup).
+        const rows = await db.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM auth.users WHERE email = ${d.email} LIMIT 1
+        `;
+        if (rows.length === 0) {
           console.log(
             `[accounts/create] cleaning orphaned accounts row for ${d.email}`,
           );

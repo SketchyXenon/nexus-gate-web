@@ -59,10 +59,11 @@ export async function POST(req: NextRequest) {
       isSupabaseConfigured()
     ) {
       try {
-        const admin = createSupabaseAdminClient();
-        // Use getUserByEmail (single-user lookup) instead of listUsers (fetches 1000).
-        const { data: user } = await admin.auth.admin.getUserByEmail(email);
-        if (!user) {
+        // Query auth.users directly via raw SQL (single-row lookup).
+        const rows = await db.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM auth.users WHERE email = ${email} LIMIT 1
+        `;
+        if (rows.length === 0) {
           // Orphaned accounts row - delete it so registration can proceed.
           console.log(
             `[register] cleaning orphaned accounts row for ${email} (no auth user found)`,
