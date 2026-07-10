@@ -38,7 +38,7 @@ export function useAttendanceSocket(eventId: number | null) {
     const ablyKey = process.env.NEXT_PUBLIC_ABLY_KEY;
     if (!ablyKey || eventId == null) return;
 
-    const client = new Ably.Realtime({ key: ablyKey });
+    const client = new Ably.Realtime({ key: ablyKey, autoConnect: true });
     clientRef.current = client;
 
     const channel = client.channels.get(`event:${eventId}`);
@@ -52,10 +52,17 @@ export function useAttendanceSocket(eventId: number | null) {
     client.connection.on("disconnected", () => setConnected(false));
     client.connection.on("suspended", () => setConnected(false));
     client.connection.on("failed", () => setConnected(false));
+    // "closed" fires on explicit close() — suppress the uncaught rejection.
+    client.connection.on("closed", () => setConnected(false));
 
     return () => {
+      // Unsubscribe listeners BEFORE closing so the SDK doesn't try to
+      // process events during shutdown (which causes uncaught rejections).
       channel.unsubscribe();
-      client.close();
+      client.connection.off();
+      // close() returns a Promise that rejects with "Connection closed" —
+      // catch it to suppress the console error (this is expected behavior).
+      client.close().catch(() => {});
       clientRef.current = null;
       setConnected(false);
     };
