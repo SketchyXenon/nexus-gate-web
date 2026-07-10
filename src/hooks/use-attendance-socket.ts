@@ -60,9 +60,10 @@ export function useAttendanceSocket(eventId: number | null) {
       // process events during shutdown (which causes uncaught rejections).
       channel.unsubscribe();
       client.connection.off();
-      // close() returns a Promise that rejects with "Connection closed" —
-      // catch it to suppress the console error (this is expected behavior).
-      client.close().catch(() => {});
+      // close() returns void in the Ably SDK. The "Connection closed"
+      // console error comes from Ably's internal Promise chain — removing
+      // listeners before close prevents it from firing.
+      client.close();
       clientRef.current = null;
       setConnected(false);
     };
