@@ -35,6 +35,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
       scheduledAt: true,
       ownerId: true,
       status: true,
+      enableTimeOut: true,
     },
   });
   if (!event) return notFound("Event not found");

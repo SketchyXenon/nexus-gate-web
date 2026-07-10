@@ -11,7 +11,7 @@ import {
 import { overrideSchema } from "@/lib/validation";
 import { audit } from "@/lib/audit";
 import { notifyAttendance } from "@/lib/realtime";
-import { getEventTimeWindow } from "@/lib/event-time";
+import { getEventTimeWindows } from "@/lib/event-time";
 
 // POST /api/attendance/override
 export async function POST(req: NextRequest) {
@@ -70,12 +70,18 @@ export async function POST(req: NextRequest) {
   }
 
   // ---- Anti-cheating: same time window as scanning ----
-  // Uses the shared helper — respects explicit checkInOpensAt/checkInClosesAt.
-  const window = getEventTimeWindow(event);
-  if (window.isUpcoming) {
-    return forbidden("This event hasn't opened for check-in yet.");
-  }
-  if (window.isEnded) {
+  // Uses the shared helper (plural — includes time-out window).
+  // Organizers can add overrides while EITHER the check-in window OR
+  // the time-out window is live. This allows manual entries during
+  // the full event lifecycle.
+  const windows = getEventTimeWindows(event);
+  const checkInLive = windows.checkIn.isLive;
+  const timeOutLive = windows.timeOut?.isLive ?? false;
+
+  if (!checkInLive && !timeOutLive) {
+    if (windows.checkIn.isUpcoming) {
+      return forbidden("This event hasn't opened for check-in yet.");
+    }
     return forbidden("This event's check-in window has closed.");
   }
 

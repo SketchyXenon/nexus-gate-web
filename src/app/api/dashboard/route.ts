@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/api";
-import { getTimeStatus, getEventTimeWindow } from "@/lib/event-time";
+import { getTimeStatus } from "@/lib/event-time";
 import { studentNeedsProfile } from "@/lib/event-visibility";
 
 // GET /api/dashboard
@@ -52,6 +52,9 @@ export async function GET(_req: NextRequest) {
           endsAt: true,
           checkInOpensAt: true,
           checkInClosesAt: true,
+          timeOutOpensAt: true,
+          timeOutClosesAt: true,
+          enableTimeOut: true,
           status: true,
         },
       }),
@@ -104,6 +107,9 @@ export async function GET(_req: NextRequest) {
           endsAt: true,
           checkInOpensAt: true,
           checkInClosesAt: true,
+          timeOutOpensAt: true,
+          timeOutClosesAt: true,
+          enableTimeOut: true,
           status: true,
           targetProgram: true,
           targetSection: true,

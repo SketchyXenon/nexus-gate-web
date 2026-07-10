@@ -76,8 +76,8 @@ export async function POST(req: NextRequest) {
 
   // ---- ONE-ATTEMPT CHECK (before any expensive crypto) ----
   // If the student already has an attendance record for this event,
-  // return immediately with "already scanned." This runs BEFORE
-  // certificate verification to save CPU on repeat scans.
+  // check if this is a time-out scan (student already checked in,
+  // time-out window is live, and timeOutAt hasn't been set yet).
   const existing = await db.eventAttendance.findUnique({
     where: {
       eventId_accountId: {
@@ -87,6 +87,85 @@ export async function POST(req: NextRequest) {
     },
   });
   if (existing) {
+    // If the student already has BOTH scannedAt AND timeOutAt, they're done.
+    if (existing.timeOutAt) {
+      return NextResponse.json({
+        ok: true,
+        alreadyPresent: true,
+        action: "already_complete",
+        scannedAt: existing.scannedAt,
+        timeOutAt: existing.timeOutAt,
+        message: "You've already checked in and timed out for this event.",
+      });
+    }
+
+    // Student has checked in but not timed out. Check if the time-out
+    // window is live. If yes, record the time-out. If no, return "already scanned."
+    const eventForTimeOut = await db.event.findUnique({
+      where: { id: signed.certificate.eventId },
+      select: {
+        enableTimeOut: true,
+        timeOutOpensAt: true,
+        timeOutClosesAt: true,
+        scheduledAt: true,
+        endsAt: true,
+        checkInOpensAt: true,
+        checkInClosesAt: true,
+        status: true,
+      },
+    });
+    if (eventForTimeOut?.enableTimeOut) {
+      const timeOutWindows = getEventTimeWindows(eventForTimeOut);
+      if (timeOutWindows.timeOut?.isLive) {
+        // Time-out window is live — record the time-out.
+        // Verify the certificate signature + timestamp before updating.
+        const sigResult = await verifySignedCertificate(signed);
+        if (!sigResult.ok) {
+          return badRequest(
+            sigResult.reason === "device_not_registered"
+              ? "This device is not registered. Please refresh and try again."
+              : "Scan certificate signature verification failed.",
+            "INVALID_CERTIFICATE",
+          );
+        }
+        const tsResult = validateCertificateTimestamp(signed.certificate);
+        if (!tsResult.ok) {
+          return badRequest(
+            tsResult.reason === "scanned_in_future"
+              ? "Your device clock is too far ahead. Please sync your time settings."
+              : "This scan is too old. Please scan again.",
+            tsResult.reason,
+          );
+        }
+        // Update the timeOutAt on the existing attendance record.
+        const updated = await db.eventAttendance.update({
+          where: { id: existing.id },
+          data: { timeOutAt: new Date(signed.certificate.scannedAt) },
+        });
+
+        await audit({
+          actorId: account.id,
+          action: "attendance.timeout",
+          targetType: "EventAttendance",
+          targetId: updated.id,
+          metadata: {
+            eventId: signed.certificate.eventId,
+            deviceFingerprint: signed.certificate.deviceFingerprint,
+          },
+          req,
+        });
+
+        return NextResponse.json({
+          ok: true,
+          action: "time_out",
+          timeOutAt: updated.timeOutAt,
+          message:
+            "Time-out recorded. You're marked as checked out for this event.",
+        });
+      }
+    }
+
+    // Time-out not enabled or not live — return "already scanned."
     return NextResponse.json({
       ok: true,
       alreadyPresent: true,

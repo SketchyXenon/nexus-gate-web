@@ -355,10 +355,14 @@ export function ProjectQrView() {
             </div>
             <Badge
               variant="outline"
-              className="gap-1.5 border-emerald-400/50 text-emerald-300 text-sm sm:text-base px-2.5 py-1"
+              className={`gap-1.5 text-sm sm:text-base px-2.5 py-1 ${
+                secretQ.data?.isTimeOutLive
+                  ? "border-amber-400/50 text-amber-300"
+                  : "border-emerald-400/50 text-emerald-300"
+              }`}
             >
               <Radio className="h-3.5 w-3.5 animate-pulse" />
-              Live
+              {secretQ.data?.isTimeOutLive ? "Time-out" : "Live"}
             </Badge>
             <Badge
               variant="outline"

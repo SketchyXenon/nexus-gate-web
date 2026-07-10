@@ -129,6 +129,7 @@ export function AttendanceView() {
   const presenceQ = useEventAttendance(eventId, {
     socketConnected: socket.connected,
   });
+  const eventEnableTimeOut = presenceQ.data?.event?.enableTimeOut ?? false;
 
   // ---- Derived: programs/sections present in this event's attendance ----
   const allRows: AttendanceRow[] = presenceQ.data?.attendances ?? [];
@@ -287,7 +288,9 @@ export function AttendanceView() {
         const timeIn = format(new Date(r.scannedAt), "yyyy-MM-dd HH:mm:ss");
         const timeOut = r.timeOutAt
           ? format(new Date(r.timeOutAt), "yyyy-MM-dd HH:mm:ss")
-          : "—";
+          : eventEnableTimeOut
+            ? "Still in"
+            : "Not set";
         return `${id},${name},${program},${section},${source},${timeIn},${timeOut}`;
       })
       .join("\n");
@@ -670,13 +673,17 @@ export function AttendanceView() {
                                         "HH:mm:ss",
                                       )}
                                     </span>
-                                  ) : (
+                                  ) : eventEnableTimeOut ? (
                                     <Badge
                                       variant="outline"
                                       className="border-amber-500/40 text-amber-600 text-[10px]"
                                     >
                                       Still in
                                     </Badge>
+                                  ) : (
+                                    <span className="text-muted-foreground text-[10px]">
+                                      Not set
+                                    </span>
                                   )}
                                 </TableCell>
                               </motion.tr>
@@ -776,13 +783,15 @@ export function AttendanceView() {
                                       )}
                                     </span>
                                   </>
-                                ) : (
+                                ) : eventEnableTimeOut ? (
                                   <Badge
                                     variant="outline"
                                     className="border-amber-500/40 text-amber-600 text-[10px]"
                                   >
                                     Still in
                                   </Badge>
+                                ) : (
+                                  <span className="text-[10px]">Not set</span>
                                 )}
                               </span>
                             </div>

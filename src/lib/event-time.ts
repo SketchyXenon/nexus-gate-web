@@ -60,12 +60,17 @@ export function getTimeStatus(event: {
   endsAt: Date | null;
   checkInOpensAt: Date | null;
   checkInClosesAt: Date | null;
+  timeOutOpensAt: Date | null;
+  timeOutClosesAt: Date | null;
+  enableTimeOut: boolean;
   status: string;
 }): "live" | "upcoming" | "ended" | "cancelled" {
   if (event.status !== "active") return "cancelled";
-  const { isLive, isUpcoming } = getEventTimeWindow(event);
-  if (isLive) return "live";
-  if (isUpcoming) return "upcoming";
+  const { checkIn, timeOut } = getEventTimeWindows(event);
+  // Event is "live" if EITHER the check-in window OR the time-out window is live.
+  if (checkIn.isLive || timeOut?.isLive) return "live";
+  // Event is "upcoming" if either window hasn't opened yet.
+  if (checkIn.isUpcoming || timeOut?.isUpcoming) return "upcoming";
   return "ended";
 }
 

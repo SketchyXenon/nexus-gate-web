@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { forbidden, notFound, requireAuth } from "@/lib/api";
 import { audit } from "@/lib/audit";
-import { getEventTimeWindow } from "@/lib/event-time";
+import { getEventTimeWindows } from "@/lib/event-time";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -57,6 +57,9 @@ export async function GET(req: NextRequest, { params }: Ctx) {
       endsAt: true,
       checkInOpensAt: true,
       checkInClosesAt: true,
+      timeOutOpensAt: true,
+      timeOutClosesAt: true,
+      enableTimeOut: true,
       targetProgram: true,
       targetSection: true,
       scope: true,
@@ -147,35 +150,53 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     return forbidden("This event is no longer active");
   }
 
-  // Use the shared time-window helper
-  const window = getEventTimeWindow(event);
+  // Use the shared time-window helper (plural — includes time-out window).
+  // The QR can be projected when EITHER the check-in window OR the time-out
+  // window is live. This allows organizers to project the time-out QR after
+  // the check-in window has closed.
+  const windows = getEventTimeWindows(event);
+  const checkInWindow = windows.checkIn;
+  const timeOutWindow = windows.timeOut;
 
-  if (window.isUpcoming) {
-    const opensInMs = window.opensAt.getTime() - Date.now();
-    const opensInMinutes = Math.ceil(opensInMs / (60 * 1000));
-    return NextResponse.json(
-      {
-        error: "This event hasn't opened for check-in yet.",
-        code: "UPCOMING",
-        opensInMs,
-        opensInMinutes,
-        opensAt: window.opensAt.toISOString(),
-        closesAt: window.closesAt.toISOString(),
-      },
-      { status: 403 },
-    );
-  }
+  // If neither window is live, determine which error to show.
+  if (!checkInWindow.isLive && !timeOutWindow?.isLive) {
+    // Both windows are upcoming — show the earliest opening.
+    if (checkInWindow.isUpcoming) {
+      const opensInMs = checkInWindow.opensAt.getTime() - Date.now();
+      const opensInMinutes = Math.ceil(opensInMs / (60 * 1000));
+      return NextResponse.json(
+        {
+          error: "This event hasn't opened for check-in yet.",
+          code: "UPCOMING",
+          opensInMs,
+          opensInMinutes,
+          opensAt: checkInWindow.opensAt.toISOString(),
+          closesAt: checkInWindow.closesAt.toISOString(),
+        },
+        { status: 403 },
+      );
+    }
 
-  if (window.isEnded) {
+    // Both windows have ended.
+    const lastClosesAt = timeOutWindow
+      ? timeOutWindow.closesAt > checkInWindow.closesAt
+        ? timeOutWindow.closesAt
+        : checkInWindow.closesAt
+      : checkInWindow.closesAt;
     return NextResponse.json(
       {
         error: "This event's check-in window has closed.",
         code: "ENDED",
-        closesAt: window.closesAt.toISOString(),
+        closesAt: lastClosesAt.toISOString(),
       },
       { status: 403 },
     );
   }
+
+  // At least one window is live — determine which mode we're in.
+  const isCheckInLive = checkInWindow.isLive;
+  const isTimeOutLive = timeOutWindow?.isLive ?? false;
+  const activeWindow = isCheckInLive ? checkInWindow : timeOutWindow!;
 
   // Event is live — return the secret
   return NextResponse.json(
@@ -190,8 +211,11 @@ export async function GET(req: NextRequest, { params }: Ctx) {
       targetProgram: event.targetProgram,
       targetSection: event.targetSection,
       scope: event.scope,
-      windowOpensAt: window.opensAt,
-      windowClosesAt: window.closesAt,
+      windowOpensAt: activeWindow.opensAt,
+      windowClosesAt: activeWindow.closesAt,
+      isCheckInLive,
+      isTimeOutLive,
+      enableTimeOut: event.enableTimeOut,
       isDelegated,
       delegatable: event.delegatable,
       delegationEnabled: event.delegationEnabled,

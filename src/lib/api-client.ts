@@ -388,6 +388,9 @@ export const useEventSecret = (id: number | null) =>
         scope: string;
         isDelegated: boolean;
         delegatable: boolean;
+        isCheckInLive?: boolean;
+        isTimeOutLive?: boolean;
+        enableTimeOut?: boolean;
       }>(`/api/events/${id}/secret`),
     enabled: id != null,
     staleTime: 5 * 60_000,
