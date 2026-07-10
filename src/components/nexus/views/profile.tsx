@@ -20,6 +20,8 @@ import {
   Fingerprint,
   Smartphone,
   Trash2,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import {
   Card,
@@ -99,6 +101,7 @@ export function ProfileView() {
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // Save confirmation
@@ -704,22 +707,44 @@ export function ProfileView() {
               </div>
               <PasswordStrengthMeter password={newPassword} />
             </div>
-            {/* Confirm password — NO eye toggle */}
+            {/* Confirm password — match indicator (no eye toggle) */}
             <div className="space-y-1.5">
               <Label htmlFor="confirmNewPassword">Confirm new password</Label>
-              <Input
-                id="confirmNewPassword"
-                type="password"
-                value={confirmNewPassword}
-                onChange={(e) => setConfirmNewPassword(e.target.value)}
-                required
-                autoComplete="new-password"
-              />
-              {errors.confirmNewPassword && (
+              <div className="relative">
+                <Input
+                  id="confirmNewPassword"
+                  type="password"
+                  value={confirmNewPassword}
+                  onChange={(e) => setConfirmNewPassword(e.target.value)}
+                  required
+                  autoComplete="new-password"
+                  className={`pr-10 ${
+                    confirmNewPassword && confirmNewPassword === newPassword
+                      ? "border-emerald-500/50 focus-visible:ring-emerald-500/50"
+                      : confirmNewPassword && confirmNewPassword !== newPassword
+                        ? "border-destructive/50 focus-visible:ring-destructive/50"
+                        : ""
+                  }`}
+                />
+                {confirmNewPassword && (
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2">
+                    {confirmNewPassword === newPassword ? (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-destructive/60" />
+                    )}
+                  </span>
+                )}
+              </div>
+              {errors.confirmNewPassword ? (
                 <p className="text-xs text-destructive">
                   {errors.confirmNewPassword}
                 </p>
-              )}
+              ) : confirmNewPassword && confirmNewPassword === newPassword ? (
+                <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                  Passwords match
+                </p>
+              ) : null}
             </div>
             <div className="flex gap-2 pt-2">
               <Button

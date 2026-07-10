@@ -1448,60 +1448,6 @@ function AuthScreen({
                           </button>
                         </div>
                         <PasswordStrengthMeter password={newPassword} />
-                        {/* Realtime password requirement checklist */}
-                        {newPassword && (
-                          <div className="text-[11px] space-y-0.5 mt-1">
-                            <p
-                              className={
-                                newPassword.length >= 8
-                                  ? "text-emerald-600"
-                                  : "text-muted-foreground"
-                              }
-                            >
-                              {newPassword.length >= 8 ? "✓" : "○"} At least 8
-                              characters
-                            </p>
-                            <p
-                              className={
-                                /[A-Z]/.test(newPassword)
-                                  ? "text-emerald-600"
-                                  : "text-muted-foreground"
-                              }
-                            >
-                              {/[A-Z]/.test(newPassword) ? "✓" : "○"} Uppercase
-                              letter
-                            </p>
-                            <p
-                              className={
-                                /[a-z]/.test(newPassword)
-                                  ? "text-emerald-600"
-                                  : "text-muted-foreground"
-                              }
-                            >
-                              {/[a-z]/.test(newPassword) ? "✓" : "○"} Lowercase
-                              letter
-                            </p>
-                            <p
-                              className={
-                                /[0-9]/.test(newPassword)
-                                  ? "text-emerald-600"
-                                  : "text-muted-foreground"
-                              }
-                            >
-                              {/[0-9]/.test(newPassword) ? "✓" : "○"} Number
-                            </p>
-                            <p
-                              className={
-                                /[^A-Za-z0-9]/.test(newPassword)
-                                  ? "text-emerald-600"
-                                  : "text-muted-foreground"
-                              }
-                            >
-                              {/[^A-Za-z0-9]/.test(newPassword) ? "✓" : "○"}{" "}
-                              Special character
-                            </p>
-                          </div>
-                        )}
                         {errors.newPassword && (
                           <p className="text-xs text-destructive">
                             {errors.newPassword}
@@ -1515,34 +1461,43 @@ function AuthScreen({
                         <div className="relative">
                           <Input
                             id="confirmNewPass"
-                            type={showConfirmNewPassword ? "text" : "password"}
+                            type="password"
                             autoComplete="new-password"
                             placeholder="••••••••"
                             value={confirmNewPassword}
                             onChange={(e) =>
                               setConfirmNewPassword(e.target.value)
                             }
-                            className="pr-10"
+                            className={`pr-10 ${
+                              confirmNewPassword &&
+                              confirmNewPassword === newPassword
+                                ? "border-emerald-500/50 focus-visible:ring-emerald-500/50"
+                                : confirmNewPassword &&
+                                    confirmNewPassword !== newPassword
+                                  ? "border-destructive/50 focus-visible:ring-destructive/50"
+                                  : ""
+                            }`}
                           />
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setShowConfirmNewPassword(!showConfirmNewPassword)
-                            }
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                          >
-                            {showConfirmNewPassword ? (
-                              <EyeOff className="h-4 w-4" />
-                            ) : (
-                              <Eye className="h-4 w-4" />
-                            )}
-                          </button>
+                          {confirmNewPassword && (
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2">
+                              {confirmNewPassword === newPassword ? (
+                                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                              ) : (
+                                <XCircle className="h-4 w-4 text-destructive/60" />
+                              )}
+                            </span>
+                          )}
                         </div>
-                        {errors.confirmNewPassword && (
+                        {errors.confirmNewPassword ? (
                           <p className="text-xs text-destructive">
                             {errors.confirmNewPassword}
                           </p>
-                        )}
+                        ) : confirmNewPassword &&
+                          confirmNewPassword === newPassword ? (
+                          <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                            Passwords match
+                          </p>
+                        ) : null}
                       </div>
                       <Button
                         type="submit"

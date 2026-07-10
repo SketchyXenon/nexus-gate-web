@@ -126,6 +126,8 @@ export function EventsView() {
   const [deleteTarget, setDeleteTarget] = useState<EventItem | null>(null);
   const [hardDeleteMode, setHardDeleteMode] = useState(false);
   const [detailsEventId, setDetailsEventId] = useState<number | null>(null);
+  // Show-more pagination for past events (client-side, 5 at a time).
+  const [pastEventsVisible, setPastEventsVisible] = useState(5);
 
   const events = data?.events ?? [];
 
@@ -772,41 +774,40 @@ export function EventsView() {
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
-            {/* Horizontal-scroll wrapper for narrow viewports */}
-            <div className="overflow-x-auto ng-scroll">
-              <div className="divide-y min-w-[40rem]">
-                {endedEvents.map((e) => (
-                  <div
-                    key={e.id}
-                    className="px-4 sm:px-6 py-3 flex items-center gap-3 opacity-70 hover:opacity-100 hover:bg-muted/40 transition-all cursor-pointer group"
-                    onClick={() => setDetailsEventId(e.id)}
+            <div className="divide-y">
+              {endedEvents.slice(0, pastEventsVisible).map((e) => (
+                <div
+                  key={e.id}
+                  className="px-4 sm:px-6 py-3 flex flex-wrap items-center gap-2 sm:gap-3 opacity-70 hover:opacity-100 hover:bg-muted/40 transition-all cursor-pointer group"
+                  onClick={() => setDetailsEventId(e.id)}
+                >
+                  <div className="grid place-items-center h-9 w-9 rounded-lg bg-muted text-muted-foreground shrink-0">
+                    <span className="text-xs font-semibold">
+                      {format(new Date(e.scheduledAt), "dd")}
+                    </span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">
+                      {e.title}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {format(new Date(e.scheduledAt), "PPp")} ·{" "}
+                      {e._count?.attendances ?? 0} present
+                    </p>
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className="border-muted text-muted-foreground shrink-0"
                   >
-                    <div className="grid place-items-center h-9 w-9 rounded-lg bg-muted text-muted-foreground shrink-0">
-                      <span className="text-xs font-semibold">
-                        {format(new Date(e.scheduledAt), "dd")}
-                      </span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">
-                        {e.title}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {format(new Date(e.scheduledAt), "PPp")} ·{" "}
-                        {e._count?.attendances ?? 0} present
-                      </p>
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className="border-muted text-muted-foreground shrink-0"
-                    >
-                      Ended
-                    </Badge>
+                    Ended
+                  </Badge>
+                  <div className="flex items-center shrink-0">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-9 w-9 text-muted-foreground hover:text-primary shrink-0"
+                          className="h-9 w-9 text-muted-foreground hover:text-primary"
                           onClick={(ev) => {
                             ev.stopPropagation();
                             setDetailsEventId(e.id);
@@ -824,7 +825,7 @@ export function EventsView() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-9 w-9 text-muted-foreground hover:text-destructive shrink-0"
+                            className="h-9 w-9 text-muted-foreground hover:text-destructive"
                             onClick={(ev) => {
                               ev.stopPropagation();
                               setDeleteTarget(e);
@@ -841,9 +842,20 @@ export function EventsView() {
                       </Tooltip>
                     )}
                   </div>
-                ))}
-              </div>
+                </div>
+              ))}
             </div>
+            {endedEvents.length > pastEventsVisible && (
+              <div className="p-3 text-center">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setPastEventsVisible((v) => v + 5)}
+                >
+                  Show more ({endedEvents.length - pastEventsVisible} remaining)
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

@@ -403,7 +403,7 @@ export function AttendanceView() {
               })()}
 
               {/* Stat grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
                 <Stat
                   icon={<CheckCircle2 className="h-4 w-4" />}
                   label="Present"
