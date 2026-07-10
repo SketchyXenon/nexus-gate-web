@@ -7,6 +7,32 @@ import { LoginScreen } from "@/components/nexus/login-screen";
 import { AppShell } from "@/components/nexus/app-shell";
 import { ErrorBoundary } from "@/components/nexus/error-boundary";
 
+// PWA shortcut: ?action=scan opens the scanner directly for students.
+function getInitialView(): "scanner" | undefined {
+  if (typeof window === "undefined") return undefined;
+  const params = new URLSearchParams(window.location.search);
+  return params.get("action") === "scan" ? "scanner" : undefined;
+}
+
+// Check if the URL has a ?code= param (Supabase PKCE email redirect).
+// When present, we must render LoginScreen so its useEffect can exchange
+// the code — even if useMe() succeeds (the code exchange establishes the
+// session, so useMe might return 200 AFTER the exchange).
+function hasAuthCode(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).has("code");
+}
+
+// Check if a recovery (password reset) flow is pending. This flag is set
+// by LoginScreen when finalizeAuth detects a recovery session, and cleared
+// when the user completes the password reset. It ensures the reset form
+// stays visible even if useMe() succeeds (which would otherwise render
+// AppShell and skip the reset form entirely).
+function isRecoveryPending(): boolean {
+  if (typeof window === "undefined") return false;
+  return sessionStorage.getItem("ng_recovery_pending") === "1";
+}
+
 export default function Page() {
   const { data: user, isLoading, isError } = useMe();
   const [maintenance, setMaintenance] = useState(false);
@@ -60,6 +86,29 @@ export default function Page() {
     );
   }
 
+  // If there's a ?code= in the URL (Supabase email redirect), always render
+  // LoginScreen so its useEffect can exchange the code. Without this, useMe()
+  // might succeed (if the exchange already happened) and render AppShell,
+  // skipping the reset form entirely.
+  if (hasAuthCode()) {
+    return (
+      <ErrorBoundary>
+        <LoginScreen />
+      </ErrorBoundary>
+    );
+  }
+
+  // If a recovery (password reset) flow is pending, render LoginScreen in
+  // reset mode — even if useMe() succeeds. The recovery session is valid
+  // but the user hasn't changed their password yet.
+  if (isRecoveryPending()) {
+    return (
+      <ErrorBoundary>
+        <LoginScreen />
+      </ErrorBoundary>
+    );
+  }
+
   // Unauthenticated: show login screen directly (no Turnstile gate).
   // Server-side rate limiting on auth endpoints provides bot protection.
   if (isError || !user) {
@@ -72,7 +121,7 @@ export default function Page() {
 
   return (
     <ErrorBoundary>
-      <AppShell user={user} />
+      <AppShell user={user} initialView={getInitialView()} />
     </ErrorBoundary>
   );
 }

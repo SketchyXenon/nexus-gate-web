@@ -72,6 +72,10 @@ type Mode =
 // We persist the token here so a refresh mid-flow doesn't lose it,
 // and so we can scrub it from the URL after detecting ?reset=… .
 const RESET_TOKEN_KEY = "ng_reset_token";
+// sessionStorage flag set when a recovery (password reset) session is active.
+// Ensures the reset form stays visible even if useMe() succeeds and page.tsx
+// would otherwise render AppShell. Cleared when the user completes the reset.
+const RECOVERY_PENDING_KEY = "ng_recovery_pending";
 // Sentinel value used by the program Select for the "— Not specified —" option.
 // Radix Select doesn't accept empty-string values, so we use a sentinel and
 // translate it back to null/empty before submitting.
@@ -103,8 +107,14 @@ export function LoginScreen({
     return sessionStorage.getItem(RESET_TOKEN_KEY);
   });
 
-  // If we recovered a token, jump straight into the reset flow on mount.
-  const [mode, setMode] = useState<Mode>(resetToken ? "reset" : initialMode);
+  // If we recovered a token OR the recovery-pending flag is set, jump
+  // straight into the reset flow on mount.
+  const recoveryPending =
+    typeof window !== "undefined" &&
+    sessionStorage.getItem(RECOVERY_PENDING_KEY) === "1";
+  const [mode, setMode] = useState<Mode>(
+    resetToken || recoveryPending ? "reset" : initialMode,
+  );
 
   // Handle Supabase email redirects (?code=... or hash-based tokens).
   // recovery: password reset - show the new-password form.
@@ -127,6 +137,9 @@ export function LoginScreen({
       // available; fall back to the URL type param.
       const effectiveType = resolvedType || type;
       if (effectiveType === "recovery") {
+        // Set the recovery-pending flag so page.tsx renders LoginScreen
+        // (not AppShell) even if useMe() succeeds with the recovery session.
+        sessionStorage.setItem(RECOVERY_PENDING_KEY, "1");
         setResetToken("supabase-recovery");
         setMode("reset");
       } else {
@@ -597,6 +610,10 @@ function AuthScreen({
         onSuccess: () => {
           // The token is single-use — clear it so it can't be replayed.
           onResetConsumed();
+          // Clear the recovery-pending flag — the user has completed the reset.
+          if (typeof window !== "undefined") {
+            sessionStorage.removeItem(RECOVERY_PENDING_KEY);
+          }
           setNewPassword("");
           setConfirmNewPassword("");
           setMode("reset-success");
