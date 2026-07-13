@@ -50,22 +50,11 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   const event = await db.event.findUnique({
     where: { id: Number(id) },
     select: {
-      id: true,
-      title: true,
-      eventSecret: true,
-      scheduledAt: true,
-      endsAt: true,
-      checkInOpensAt: true,
-      checkInClosesAt: true,
-      timeOutOpensAt: true,
-      timeOutClosesAt: true,
-      enableTimeOut: true,
-      targetProgram: true,
-      targetSection: true,
-      scope: true,
-      ownerId: true,
-      status: true,
-      delegatable: true,
+      id: true, title: true, eventSecret: true, scheduledAt: true,
+      endsAt: true, checkInOpensAt: true, checkInClosesAt: true,
+      timeOutOpensAt: true, timeOutClosesAt: true, enableTimeOut: true,
+      targetProgram: true, targetSection: true, scope: true,
+      ownerId: true, status: true, delegatable: true,
       delegationEnabled: true,
     },
   });
@@ -76,6 +65,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   const isAdmin = account.role === "ADMIN";
   let isDelegated = false;
   let delegationMode = "owner"; // "owner" | "admin" | "same_organization"
+  let delegatedOrgTag = ""; // org tag used for delegated projection audit
 
   if (isAdmin) {
     delegationMode = "admin";
@@ -91,14 +81,14 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     const organizerOrg = account.organizationName?.trim();
     if (!organizerOrg) {
       return forbidden(
-        "QR delegation is disabled for your account because you have no organization tag. An administrator must set your organization tag before you can project another organizer's QR code.",
+        "QR delegation is disabled for your account because you have no organization tag. An administrator must set your organization tag before you can project another organizer's QR code."
       );
     }
 
     // CHECK 2: The event's delegationEnabled flag must be true.
     if (!event.delegationEnabled) {
       return forbidden(
-        "QR delegation is not enabled for this event. Only the event creator or an administrator can project this QR code.",
+        "QR delegation is not enabled for this event. Only the event creator or an administrator can project this QR code."
       );
     }
 
@@ -110,7 +100,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     const ownerOrg = owner?.organizationName?.trim();
     if (!ownerOrg) {
       return forbidden(
-        "QR delegation is blocked because the event creator has no organization tag. The administrator must set the event creator's organization tag before delegation can be used.",
+        "QR delegation is blocked because the event creator has no organization tag. The administrator must set the event creator's organization tag before delegation can be used."
       );
     }
 
@@ -119,31 +109,14 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     // There is NO exception for open-to-all events.
     if (ownerOrg !== organizerOrg) {
       return forbidden(
-        `You can only delegate QR projection within the same organization. The event creator is tagged "${ownerOrg}" but you are tagged "${organizerOrg}". Contact your administrator if this is incorrect.`,
+        `You can only delegate QR projection within the same organization. The event creator is tagged "${ownerOrg}" but you are tagged "${organizerOrg}". Contact your administrator if this is incorrect.`
       );
     }
 
     // All checks passed — delegation is allowed.
     isDelegated = true;
     delegationMode = "same_organization";
-
-    // Audit the delegated projection so there's a trail of which
-    // organizer projected another organizer's event.
-    await audit({
-      actorId: account.id,
-      action: "event.qr_delegated",
-      targetType: "Event",
-      targetId: event.id,
-      metadata: {
-        eventId: event.id,
-        eventTitle: event.title,
-        ownerId: event.ownerId,
-        delegateId: account.id,
-        organizationTag: organizerOrg,
-        delegationMode,
-      },
-      req,
-    });
+    delegatedOrgTag = organizerOrg;
   }
 
   if (event.status !== "active") {
@@ -151,16 +124,12 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   }
 
   // Use the shared time-window helper (plural — includes time-out window).
-  // The QR can be projected when EITHER the check-in window OR the time-out
-  // window is live. This allows organizers to project the time-out QR after
-  // the check-in window has closed.
   const windows = getEventTimeWindows(event);
   const checkInWindow = windows.checkIn;
   const timeOutWindow = windows.timeOut;
 
   // If neither window is live, determine which error to show.
   if (!checkInWindow.isLive && !timeOutWindow?.isLive) {
-    // Both windows are upcoming — show the earliest opening.
     if (checkInWindow.isUpcoming) {
       const opensInMs = checkInWindow.opensAt.getTime() - Date.now();
       const opensInMinutes = Math.ceil(opensInMs / (60 * 1000));
@@ -173,15 +142,12 @@ export async function GET(req: NextRequest, { params }: Ctx) {
           opensAt: checkInWindow.opensAt.toISOString(),
           closesAt: checkInWindow.closesAt.toISOString(),
         },
-        { status: 403 },
+        { status: 403 }
       );
     }
 
-    // Both windows have ended.
     const lastClosesAt = timeOutWindow
-      ? timeOutWindow.closesAt > checkInWindow.closesAt
-        ? timeOutWindow.closesAt
-        : checkInWindow.closesAt
+      ? (timeOutWindow.closesAt > checkInWindow.closesAt ? timeOutWindow.closesAt : checkInWindow.closesAt)
       : checkInWindow.closesAt;
     return NextResponse.json(
       {
@@ -189,7 +155,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         code: "ENDED",
         closesAt: lastClosesAt.toISOString(),
       },
-      { status: 403 },
+      { status: 403 }
     );
   }
 
@@ -198,29 +164,42 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   const isTimeOutLive = timeOutWindow?.isLive ?? false;
   const activeWindow = isCheckInLive ? checkInWindow : timeOutWindow!;
 
+  // Audit the delegated projection AFTER all guards pass, so the audit
+  // trail only records successful secret disclosures (not rejected attempts).
+  if (isDelegated) {
+    await audit({
+      actorId: account.id,
+      action: "event.qr_delegated",
+      targetType: "Event",
+      targetId: event.id,
+      metadata: {
+        eventId: event.id,
+        eventTitle: event.title,
+        ownerId: event.ownerId,
+        delegateId: account.id,
+        organizationTag: delegatedOrgTag,
+        delegationMode,
+      },
+      req,
+    });
+  }
+
   // Event is live — return the secret
-  return NextResponse.json(
-    {
-      id: event.id,
-      title: event.title,
-      eventSecret: event.eventSecret,
-      scheduledAt: event.scheduledAt,
-      endsAt: event.endsAt,
-      checkInOpensAt: event.checkInOpensAt,
-      checkInClosesAt: event.checkInClosesAt,
-      targetProgram: event.targetProgram,
-      targetSection: event.targetSection,
-      scope: event.scope,
-      windowOpensAt: activeWindow.opensAt,
-      windowClosesAt: activeWindow.closesAt,
-      isCheckInLive,
-      isTimeOutLive,
-      enableTimeOut: event.enableTimeOut,
-      isDelegated,
-      delegatable: event.delegatable,
-      delegationEnabled: event.delegationEnabled,
-      delegationMode,
-    },
-    { headers: { "Cache-Control": "private, no-cache" } },
-  );
+  return NextResponse.json({
+    id: event.id, title: event.title, eventSecret: event.eventSecret,
+    scheduledAt: event.scheduledAt, endsAt: event.endsAt,
+    checkInOpensAt: event.checkInOpensAt,
+    checkInClosesAt: event.checkInClosesAt,
+    targetProgram: event.targetProgram,
+    targetSection: event.targetSection, scope: event.scope,
+    windowOpensAt: activeWindow.opensAt,
+    windowClosesAt: activeWindow.closesAt,
+    isCheckInLive,
+    isTimeOutLive,
+    enableTimeOut: event.enableTimeOut,
+    isDelegated,
+    delegatable: event.delegatable,
+    delegationEnabled: event.delegationEnabled,
+    delegationMode,
+  }, { headers: { "Cache-Control": "private, no-cache" } });
 }

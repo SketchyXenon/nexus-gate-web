@@ -19,6 +19,7 @@ export interface ApiAccount {
   section: string | null;
   organizationName: string | null;
   year: number | null;
+  lastLoginAt: string | null;
 }
 
 export async function getApiAccount(): Promise<ApiAccount | null> {
@@ -29,16 +30,10 @@ export async function getApiAccount(): Promise<ApiAccount | null> {
 
 // ---- Error responses (consistent shape) ----
 export function unauthorized(message = "Please sign in to continue") {
-  return NextResponse.json(
-    { error: message, code: "UNAUTHORIZED" },
-    { status: 401 },
-  );
+  return NextResponse.json({ error: message, code: "UNAUTHORIZED" }, { status: 401 });
 }
 
-export function forbidden(
-  message = "You do not have permission to do this",
-  code = "FORBIDDEN",
-) {
+export function forbidden(message = "You do not have permission to do this", code = "FORBIDDEN") {
   return NextResponse.json({ error: message, code }, { status: 403 });
 }
 
@@ -47,10 +42,7 @@ export function badRequest(message: string, code = "BAD_REQUEST") {
 }
 
 export function notFound(message = "Not found") {
-  return NextResponse.json(
-    { error: message, code: "NOT_FOUND" },
-    { status: 404 },
-  );
+  return NextResponse.json({ error: message, code: "NOT_FOUND" }, { status: 404 });
 }
 
 export function conflict(message: string, code = "CONFLICT") {
@@ -59,12 +51,8 @@ export function conflict(message: string, code = "CONFLICT") {
 
 export function tooManyRequests(retryAfterMs: number) {
   return NextResponse.json(
-    {
-      error: "Too many requests. Please slow down.",
-      code: "RATE_LIMITED",
-      retryAfterMs,
-    },
-    { status: 429 },
+    { error: "Too many requests. Please slow down.", code: "RATE_LIMITED", retryAfterMs },
+    { status: 429 }
   );
 }
 
@@ -100,7 +88,7 @@ export function dbUnavailable(e?: unknown) {
       error: "Service temporarily unavailable. Please try again in a moment.",
       code: "DB_UNAVAILABLE",
     },
-    { status: 503 },
+    { status: 503 }
   );
 }
 
@@ -122,14 +110,19 @@ async function isMaintenanceMode(): Promise<boolean> {
     maintenanceCache = { value, expiresAt: Date.now() + 10_000 };
     return value;
   } catch {
-    return false;
+    // Fail CLOSED on DB error: if we can't check maintenance status, treat
+    // the system as in maintenance. This prevents a DB outage from silently
+    // disabling the maintenance gate (which would let non-admins through
+    // during an active incident). Admins can still access via the cache
+    // bypass in requireAuth.
+    return true;
   }
 }
 
 function serviceUnavailable(message: string) {
   return NextResponse.json(
     { error: message, code: "MAINTENANCE" },
-    { status: 503 },
+    { status: 503 }
   );
 }
 
@@ -142,7 +135,7 @@ function serviceUnavailable(message: string) {
 // explicitly in addition to this.
 export async function requireAuth(
   minimumRole?: Role,
-  options?: { exactRole?: boolean },
+  options?: { exactRole?: boolean }
 ): Promise<{ account: ApiAccount } | { error: NextResponse }> {
   const account = await getApiAccount();
   if (!account) return { error: unauthorized() };
@@ -154,11 +147,7 @@ export async function requireAuth(
   if (account.role !== "ADMIN") {
     const maintenance = await isMaintenanceMode();
     if (maintenance) {
-      return {
-        error: serviceUnavailable(
-          "The system is under maintenance. Please try again later.",
-        ),
-      };
+      return { error: serviceUnavailable("The system is under maintenance. Please try again later.") };
     }
   }
 
@@ -206,7 +195,7 @@ export function getClientIp(req: NextRequest): string {
 // Uses IP address (parsed safely to prevent spoofing)
 export async function checkRateLimit(
   req: NextRequest,
-  preset: "login" | "register" | "otp" | "check" | "scan" | "api",
+  preset: "login" | "register" | "otp" | "check" | "scan" | "api" | "passkeyOptions" | "passkeyVerify"
 ): Promise<NextResponse | null> {
   const ip = getClientIp(req);
   const result = await rateLimit(`${preset}:ip:${ip}`, preset);
@@ -221,10 +210,24 @@ export async function checkRateLimit(
 // DB lockout (5 fails → 15-min) remains the primary brute-force defense.
 export async function checkRateLimitByEmail(
   email: string,
-  preset: "login" | "register" | "otp",
+  preset: "login" | "register" | "otp"
 ): Promise<NextResponse | null> {
   const normalizedEmail = email.toLowerCase().trim();
   const result = await rateLimit(`${preset}:email:${normalizedEmail}`, preset);
+  if (!result.allowed) return tooManyRequests(result.retryAfterMs);
+  return null;
+}
+
+// ---- Rate-limit check keyed by an arbitrary identifier (user_id checkpoint) ----
+// Applied AFTER the request is authenticated or the target account is
+// identified. This is the "user_id" checkpoint: even if an attacker rotates
+// IPs, the targeted account is throttled. Use with passkeyVerify/loginAccount
+// presets after the credential/email lookup resolves the account.
+export async function checkRateLimitByKey(
+  key: string,
+  preset: "passkeyAccount" | "loginAccount" | "scanAccount" | "apiAccount"
+): Promise<NextResponse | null> {
+  const result = await rateLimit(`${preset}:acct:${key}`, preset);
   if (!result.allowed) return tooManyRequests(result.retryAfterMs);
   return null;
 }
@@ -236,7 +239,7 @@ export async function checkRateLimitByEmail(
 export async function checkRateLimitAuthed(
   req: NextRequest,
   accountId: string,
-  preset: "scan" | "api",
+  preset: "scan" | "api"
 ): Promise<NextResponse | null> {
   // For non-scan endpoints, check the IP-based limit first.
   if (preset !== "scan") {
@@ -247,19 +250,13 @@ export async function checkRateLimitAuthed(
 
   // Always check the account-based limit (this is the real protection).
   const accountPreset = preset === "scan" ? "scanAccount" : "apiAccount";
-  const accountResult = await rateLimit(
-    `${accountPreset}:acct:${accountId}`,
-    accountPreset,
-  );
-  if (!accountResult.allowed)
-    return tooManyRequests(accountResult.retryAfterMs);
+  const accountResult = await rateLimit(`${accountPreset}:acct:${accountId}`, accountPreset);
+  if (!accountResult.allowed) return tooManyRequests(accountResult.retryAfterMs);
 
   return null;
 }
 
-export async function parseBody<T = unknown>(
-  req: NextRequest,
-): Promise<T | null> {
+export async function parseBody<T = unknown>(req: NextRequest): Promise<T | null> {
   try {
     return (await req.json()) as T;
   } catch {

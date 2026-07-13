@@ -179,11 +179,11 @@ describe("validateCertificateTimestamp", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("rejects a certificate scanned 2 minutes in the future (beyond skew)", () => {
+  it("rejects a certificate scanned 3 minutes in the future (beyond grace)", () => {
     const cert: ScanCertificate = {
       eventId: 1,
       token: "token",
-      scannedAt: now + 120_000,
+      scannedAt: now + 180_000,
       nonce: "nonce",
       deviceFingerprint: "fp",
       subFrames: [sf(0)],
@@ -193,11 +193,11 @@ describe("validateCertificateTimestamp", () => {
     expect(result.reason).toBe("scanned_in_future");
   });
 
-  it("rejects a certificate scanned 25 hours ago (beyond sync delay)", () => {
+  it("rejects a certificate scanned 20 minutes ago (beyond 15-min sync delay)", () => {
     const cert: ScanCertificate = {
       eventId: 1,
       token: "token",
-      scannedAt: now - 25 * 60 * 60 * 1000,
+      scannedAt: now - 20 * 60 * 1000,
       nonce: "nonce",
       deviceFingerprint: "fp",
       subFrames: [sf(0)],
@@ -207,11 +207,11 @@ describe("validateCertificateTimestamp", () => {
     expect(result.reason).toBe("clock_skew_too_large");
   });
 
-  it("accepts a certificate scanned 23 hours ago (within sync delay)", () => {
+  it("accepts a certificate scanned 10 minutes ago (within 15-min sync delay)", () => {
     const cert: ScanCertificate = {
       eventId: 1,
       token: "token",
-      scannedAt: now - 23 * 60 * 60 * 1000,
+      scannedAt: now - 10 * 60 * 1000,
       nonce: "nonce",
       deviceFingerprint: "fp",
       subFrames: [sf(0)],

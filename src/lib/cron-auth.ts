@@ -34,9 +34,7 @@ export function checkCronAuth(
   // Build the list of valid secrets: endpoint-specific first, then global.
   const secrets: string[] = [];
   if (endpoint) {
-    const specific = (
-      process.env[`CRON_${endpoint.toUpperCase()}_SECRET`] || ""
-    ).trim();
+    const specific = (process.env[`CRON_${endpoint.toUpperCase()}_SECRET`] || "").trim();
     if (specific) secrets.push(specific);
   }
   const globalSecret = (process.env.CRON_SECRET || "").trim();
@@ -150,15 +148,10 @@ function constantTimeEqual(a: string, b: string): boolean {
 // Helper for routes that want to read the secret from a JSON body field.
 // Returns true if the body's "secret" or "cron_secret" field matches any
 // valid secret (endpoint-specific or global).
-export function checkBodySecret(
-  body: unknown,
-  endpoint?: "cleanup" | "reminders",
-): boolean {
+export function checkBodySecret(body: unknown, endpoint?: "cleanup" | "reminders"): boolean {
   const secrets: string[] = [];
   if (endpoint) {
-    const specific = (
-      process.env[`CRON_${endpoint.toUpperCase()}_SECRET`] || ""
-    ).trim();
+    const specific = (process.env[`CRON_${endpoint.toUpperCase()}_SECRET`] || "").trim();
     if (specific) secrets.push(specific);
   }
   const globalSecret = (process.env.CRON_SECRET || "").trim();

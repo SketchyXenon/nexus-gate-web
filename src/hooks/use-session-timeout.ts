@@ -63,6 +63,12 @@ export function useSessionTimeout(isAuthenticated: boolean) {
             router.push("/");
             setTimeout(() => window.location.reload(), 500);
           },
+          // If the network is down (flaky campus WiFi), the logout request
+          // fails. Force-redirect to "/" so the user isn't stuck on the
+          // authed page with a stale session toast.
+          onError: () => {
+            window.location.href = "/";
+          },
         });
       } else if (inactive >= WARNING_MS && !warningShownRef.current) {
         // Show warning at 25 min.

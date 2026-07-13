@@ -78,9 +78,7 @@ export async function GET(req: NextRequest) {
     const payload = decodeJwtPayload(sessionData.session.access_token) as {
       amr?: Array<{ method: string }>;
     };
-    const isRecovery = payload.amr?.some(
-      (entry) => entry.method === "recovery",
-    );
+    const isRecovery = payload.amr?.some((entry) => entry.method === "recovery");
     if (isRecovery) {
       resolvedType = "recovery";
     }

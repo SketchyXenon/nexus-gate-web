@@ -54,8 +54,10 @@ model Account {
   notificationEndpoint String?
   notificationKeys     String?
   passkeyCredential    String?
+  passkeyCredentialId  String?
   supabaseAuthUid      String?  @unique
   notificationEnabled  Boolean  @default(false)
+  notificationPrefs    String? // JSON string (SQLite has no native JSON type)
   lastLoginAt     DateTime?
   failedLoginAttempts Int       @default(0)
   lockedUntil     DateTime?
@@ -76,6 +78,10 @@ model Account {
   @@index([notificationEnabled])
   @@index([lockedUntil])
   @@index([lastLoginAt])
+  // Passkey login: O(log N) lookup by credential ID (mirrors Postgres schema)
+  @@index([passkeyCredentialId])
+  // Admin roster sort (mirrors Postgres schema)
+  @@index([createdAt])
 }
 
 // ====================================================================
@@ -141,7 +147,7 @@ model Event {
   description   String?
   eventSecret   String    @default(cuid())
   ownerId       String
-  owner         Account   @relation(fields: [ownerId], references: [id])
+  owner         Account   @relation(fields: [ownerId], references: [id], onDelete: Restrict)
   scope         String    @default("academic")
   targetProgram String?
   targetSection String?
@@ -163,6 +169,8 @@ model Event {
 
   @@index([status, scheduledAt])
   @@index([ownerId, status])
+  // Organizer dashboard sorted view (mirrors Postgres schema)
+  @@index([ownerId, status, scheduledAt])
   @@index([targetProgram, targetSection, status])
   @@index([scheduledAt, status])
 }
@@ -206,7 +214,7 @@ model AttendanceOverride {
   adminId     String
   admin       Account  @relation(fields: [adminId], references: [id], onDelete: Cascade)
   studentId   Int
-  student     AuthorizedStudent @relation(fields: [studentId], references: [studentId])
+  student     AuthorizedStudent @relation(fields: [studentId], references: [studentId], onDelete: Cascade)
   reason      String
   createdAt   DateTime @default(now())
 

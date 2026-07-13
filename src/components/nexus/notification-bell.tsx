@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bell, BellOff, Loader2 } from "lucide-react";
+import { Bell, BellOff, Loader2, CalendarClock, AlarmClock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -12,9 +12,10 @@ import {
   useNotificationStatus,
   useSubscribeNotifications,
   useUnsubscribeNotifications,
+  useEvents,
 } from "@/lib/api-client";
 import { toast } from "@/hooks/use-toast";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, format, isAfter, parseISO } from "date-fns";
 
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
@@ -102,6 +103,25 @@ export function NotificationBell() {
   const notifications = data?.notifications ?? [];
   const isEnabled = status?.enabled ?? false;
 
+  // Upcoming events for the reminder section (students + organizers).
+  const { data: eventsData } = useEvents();
+  const upcomingEvents = (eventsData?.events ?? [])
+    .filter((e) => {
+      try {
+        return isAfter(parseISO(e.scheduledAt), new Date());
+      } catch {
+        return false;
+      }
+    })
+    .sort((a, b) => {
+      try {
+        return parseISO(a.scheduledAt).getTime() - parseISO(b.scheduledAt).getTime();
+      } catch {
+        return 0;
+      }
+    })
+    .slice(0, 3);
+
   return (
     <div className="relative" ref={ref}>
       <Button
@@ -144,13 +164,65 @@ export function NotificationBell() {
                 )}
               </div>
 
+              {/* Upcoming events reminder section */}
+              {upcomingEvents.length > 0 && (
+                <div className="border-b">
+                  <div className="px-3 py-2 bg-primary/5 flex items-center gap-1.5">
+                    <AlarmClock className="h-3.5 w-3.5 text-primary" />
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">
+                      Coming up
+                    </span>
+                  </div>
+                  <div className="divide-y">
+                    {upcomingEvents.map((e) => {
+                      const eventDate = parseISO(e.scheduledAt);
+                      const isSoon =
+                        eventDate.getTime() - Date.now() < 30 * 60 * 1000; // < 30 min
+                      return (
+                        <div
+                          key={e.id}
+                          className="px-3 py-2.5 flex items-start gap-2 hover:bg-accent/30 transition-colors"
+                        >
+                          <CalendarClock
+                            className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${
+                              isSoon ? "text-amber-500" : "text-muted-foreground"
+                            }`}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium truncate">
+                              {e.title}
+                            </p>
+                            <p
+                              className={`text-[10px] mt-0.5 ${
+                                isSoon
+                                  ? "text-amber-600 font-medium"
+                                  : "text-muted-foreground"
+                              }`}
+                            >
+                              {format(eventDate, "EEE, MMM d 'at' h:mm a")}
+                              {" · "}
+                              {formatDistanceToNow(eventDate, { addSuffix: true })}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Notifications list */}
               <ScrollArea className="max-h-80">
                 {notifications.length === 0 ? (
                   <div className="p-6 text-center">
-                    <Bell className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
-                    <p className="text-xs text-muted-foreground">
-                      No notifications yet.
+                    <div className="grid place-items-center h-10 w-10 rounded-full bg-muted/50 mx-auto mb-2">
+                      <Bell className="h-4 w-4 text-muted-foreground/60" />
+                    </div>
+                    <p className="text-xs font-medium text-muted-foreground">
+                      All caught up
+                    </p>
+                    <p className="text-[10px] text-muted-foreground/70 mt-0.5">
+                      New notifications will appear here
                     </p>
                   </div>
                 ) : (

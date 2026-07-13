@@ -301,7 +301,9 @@ describe("verifySubFrameLiveness", () => {
     }));
     const result = verifySubFrameLiveness(subFrames, secret, eventId, timeBlock);
     expect(result.ok).toBe(false);
-    expect(result.reason).toBe("insufficient_subframes");
+    if (!result.ok) {
+      expect(result.reason).toBe("insufficient_subframes");
+    }
   });
 
   it("rejects sub-frames with a gap > 2 (not consecutive)", () => {
@@ -311,7 +313,9 @@ describe("verifySubFrameLiveness", () => {
     }));
     const result = verifySubFrameLiveness(subFrames, secret, eventId, timeBlock);
     expect(result.ok).toBe(false);
-    expect(result.reason).toBe("invalid_subframe");
+    if (!result.ok) {
+      expect(result.reason).toBe("invalid_subframe");
+    }
   });
 
   it("rejects sub-frames with invalid HMACs", () => {
@@ -321,7 +325,9 @@ describe("verifySubFrameLiveness", () => {
     }));
     const result = verifySubFrameLiveness(subFrames, secret, eventId, timeBlock);
     expect(result.ok).toBe(false);
-    expect(result.reason).toBe("invalid_signature");
+    if (!result.ok) {
+      expect(result.reason).toBe("invalid_signature");
+    }
   });
 
   it("rejects sub-frames with out-of-range indices", () => {
@@ -332,7 +338,9 @@ describe("verifySubFrameLiveness", () => {
     ];
     const result = verifySubFrameLiveness(subFrames, secret, eventId, timeBlock);
     expect(result.ok).toBe(false);
-    expect(result.reason).toBe("invalid_subframe");
+    if (!result.ok) {
+      expect(result.reason).toBe("invalid_subframe");
+    }
   });
 
   it("handles unsorted sub-frames (sorts internally)", () => {
@@ -342,5 +350,131 @@ describe("verifySubFrameLiveness", () => {
     }));
     const result = verifySubFrameLiveness(subFrames, secret, eventId, timeBlock);
     expect(result.ok).toBe(true);
+  });
+
+  // ---- Boundary-straddling scans (the bug from C2) ----
+  // These cases were previously rejected because the function sorted by
+  // subFrame index alone, breaking temporal order across block boundaries.
+
+  it("accepts a boundary-straddling scan: [28,29 in N] + [0 in N+1]", () => {
+    const blockN = 100;
+    const blockN1 = 101;
+    const subFrames = [
+      { subFrame: 28, hmac: computeSubFrameHmac(secret, eventId, blockN, 28) },
+      { subFrame: 29, hmac: computeSubFrameHmac(secret, eventId, blockN, 29) },
+      { subFrame: 0, hmac: computeSubFrameHmac(secret, eventId, blockN1, 0) },
+    ];
+    // timeBlock = N+1 (last captured frame's block). The function tries
+    // timeBlock and timeBlock-1 for each frame.
+    const result = verifySubFrameLiveness(subFrames, secret, eventId, blockN1);
+    expect(result.ok).toBe(true);
+  });
+
+  it("accepts a boundary-straddling scan: [29 in N] + [0,1 in N+1]", () => {
+    const blockN = 100;
+    const blockN1 = 101;
+    const subFrames = [
+      { subFrame: 29, hmac: computeSubFrameHmac(secret, eventId, blockN, 29) },
+      { subFrame: 0, hmac: computeSubFrameHmac(secret, eventId, blockN1, 0) },
+      { subFrame: 1, hmac: computeSubFrameHmac(secret, eventId, blockN1, 1) },
+    ];
+    const result = verifySubFrameLiveness(subFrames, secret, eventId, blockN1);
+    expect(result.ok).toBe(true);
+  });
+
+  it("accepts 4-frame boundary straddle: [28,29 in N] + [0,1 in N+1]", () => {
+    const blockN = 200;
+    const blockN1 = 201;
+    const subFrames = [
+      { subFrame: 28, hmac: computeSubFrameHmac(secret, eventId, blockN, 28) },
+      { subFrame: 29, hmac: computeSubFrameHmac(secret, eventId, blockN, 29) },
+      { subFrame: 0, hmac: computeSubFrameHmac(secret, eventId, blockN1, 0) },
+      { subFrame: 1, hmac: computeSubFrameHmac(secret, eventId, blockN1, 1) },
+    ];
+    const result = verifySubFrameLiveness(subFrames, secret, eventId, blockN1);
+    expect(result.ok).toBe(true);
+  });
+
+  it("accepts unsorted boundary-straddling frames (sorts by block then subFrame)", () => {
+    const blockN = 100;
+    const blockN1 = 101;
+    // Deliberately unsorted: frame 0 of N+1 first, then 29 of N, then 28 of N.
+    const subFrames = [
+      { subFrame: 0, hmac: computeSubFrameHmac(secret, eventId, blockN1, 0) },
+      { subFrame: 29, hmac: computeSubFrameHmac(secret, eventId, blockN, 29) },
+      { subFrame: 28, hmac: computeSubFrameHmac(secret, eventId, blockN, 28) },
+    ];
+    const result = verifySubFrameLiveness(subFrames, secret, eventId, blockN1);
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a 2-block gap (frames in N and N+2, no N+1)", () => {
+    const blockN = 100;
+    const blockN2 = 102;
+    // Frames 29 of N and 0 of N+2 — there's a full block gap (N+1 missing).
+    // timeBlock=N+2; function tries N+2 and N+1. Frame 29 of N matches neither.
+    const subFrames = [
+      { subFrame: 0, hmac: computeSubFrameHmac(secret, eventId, blockN2, 0) },
+      { subFrame: 1, hmac: computeSubFrameHmac(secret, eventId, blockN2, 1) },
+      { subFrame: 29, hmac: computeSubFrameHmac(secret, eventId, blockN, 29) },
+    ];
+    const result = verifySubFrameLiveness(subFrames, secret, eventId, blockN2);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a boundary straddle where prev frame is mid-block (not at the end)", () => {
+    const blockN = 100;
+    const blockN1 = 101;
+    // Frame 15 of N then frame 0 of N+1 — the prev frame isn't at the end
+    // of its block, so this isn't a valid boundary straddle.
+    const subFrames = [
+      { subFrame: 15, hmac: computeSubFrameHmac(secret, eventId, blockN, 15) },
+      { subFrame: 16, hmac: computeSubFrameHmac(secret, eventId, blockN, 16) },
+      { subFrame: 0, hmac: computeSubFrameHmac(secret, eventId, blockN1, 0) },
+    ];
+    const result = verifySubFrameLiveness(subFrames, secret, eventId, blockN1);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe("invalid_subframe");
+    }
+  });
+
+  it("rejects duplicate frames (same block + subFrame twice)", () => {
+    const subFrames = [
+      { subFrame: 5, hmac: computeSubFrameHmac(secret, eventId, timeBlock, 5) },
+      { subFrame: 5, hmac: computeSubFrameHmac(secret, eventId, timeBlock, 5) },
+      { subFrame: 6, hmac: computeSubFrameHmac(secret, eventId, timeBlock, 6) },
+    ];
+    const result = verifySubFrameLiveness(subFrames, secret, eventId, timeBlock);
+    expect(result.ok).toBe(false);
+  });
+
+  // ---- Boundary asymmetry fix (unified temporal index) ----
+  // The old code allowed (28 in N -> 1 in N+1) as an adjacent-block pair
+  // (prev>=28, curr<=1), a 3-frame gap (1500ms), while rejecting same-block
+  // diff=3 (also 1500ms). The unified temporal index treats both identically.
+  // Test case: [28 in N, 1 in N+1, 2 in N+1] — the 28->1 pair is a 3-frame gap.
+  it("rejects boundary straddle (28 in N -> 1 in N+1): 3-frame gap", () => {
+    const blockN = 100;
+    const blockN1 = 101;
+    const subFrames = [
+      { subFrame: 28, hmac: computeSubFrameHmac(secret, eventId, blockN, 28) },
+      { subFrame: 1, hmac: computeSubFrameHmac(secret, eventId, blockN1, 1) },
+      { subFrame: 2, hmac: computeSubFrameHmac(secret, eventId, blockN1, 2) },
+    ];
+    const result = verifySubFrameLiveness(subFrames, secret, eventId, blockN1);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe("invalid_subframe");
+    }
+  });
+
+  it("rejects same-block diff=3 (consistency with boundary case)", () => {
+    const subFrames = [0, 3, 5].map((sf) => ({
+      subFrame: sf,
+      hmac: computeSubFrameHmac(secret, eventId, timeBlock, sf),
+    }));
+    const result = verifySubFrameLiveness(subFrames, secret, eventId, timeBlock);
+    expect(result.ok).toBe(false);
   });
 });

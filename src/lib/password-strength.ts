@@ -20,12 +20,7 @@ export interface PasswordScore {
   /** Human-readable label */
   label: "Empty" | "Weak" | "Fair" | "Good" | "Strong";
   /** Color class for the meter bar (Tailwind) */
-  color:
-    | ""
-    | "bg-red-500"
-    | "bg-amber-500"
-    | "bg-yellow-500"
-    | "bg-emerald-500";
+  color: "" | "bg-red-500" | "bg-amber-500" | "bg-yellow-500" | "bg-emerald-500";
   /** Missing requirements (for the "Needs: …" hint) */
   tips: string[];
   /** True if the password meets the MINIMUM strength required by the server */
@@ -94,11 +89,7 @@ export function scorePassword(password: string): PasswordScore {
   else tips.push("special character");
 
   // Penalty for common patterns — expanded list of obvious passwords.
-  if (
-    /^(password|passw0rd|123456|123123|qwerty|letmein|welcome|admin|admin123|monkey|iloveyou|111111|000000|abc123|1q2w3e|asdf|zxcv)/i.test(
-      password,
-    )
-  ) {
+  if (/^(password|passw0rd|123456|123123|qwerty|letmein|welcome|admin|admin123|monkey|iloveyou|111111|000000|abc123|1q2w3e|asdf|zxcv)/i.test(password)) {
     s = Math.max(0, s - 2);
   }
 
@@ -117,19 +108,10 @@ export function scorePassword(password: string): PasswordScore {
 
   let label: PasswordScore["label"];
   let color: PasswordScore["color"];
-  if (s <= 2) {
-    label = "Weak";
-    color = "bg-red-500";
-  } else if (s <= 3) {
-    label = "Fair";
-    color = "bg-amber-500";
-  } else if (s <= 4) {
-    label = "Good";
-    color = "bg-yellow-500";
-  } else {
-    label = "Strong";
-    color = "bg-emerald-500";
-  }
+  if (s <= 2) { label = "Weak"; color = "bg-red-500"; }
+  else if (s <= 3) { label = "Fair"; color = "bg-amber-500"; }
+  else if (s <= 4) { label = "Good"; color = "bg-yellow-500"; }
+  else { label = "Strong"; color = "bg-emerald-500"; }
 
   return {
     score: s,

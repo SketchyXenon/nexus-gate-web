@@ -58,7 +58,7 @@ export function msUntilNextSubFrame(now: number = Date.now()): number {
 export function computeTokenHmac(
   eventSecret: string,
   eventId: number,
-  timeBlock: number,
+  timeBlock: number
 ): string {
   return hmacSha256(eventSecret, `${eventId}:${timeBlock}`);
 }
@@ -68,7 +68,7 @@ export function computeSubFrameHmac(
   eventSecret: string,
   eventId: number,
   timeBlock: number,
-  subFrame: number,
+  subFrame: number
 ): string {
   return hmacSha256(eventSecret, `${eventId}:${timeBlock}:${subFrame}`);
 }
@@ -92,7 +92,7 @@ export interface ProjectedToken {
 export function generateQrPayload(
   eventId: number,
   eventSecret: string,
-  now: number = Date.now(),
+  now: number = Date.now()
 ): ProjectedToken {
   const timeBlock = currentTimeBlock(now);
   const subFrame = currentSubFrame(now);
@@ -141,7 +141,7 @@ export interface ValidationResult {
 export function validateQrPayload(
   raw: string,
   eventSecret: string,
-  now: number = Date.now(),
+  now: number = Date.now()
 ): ValidationResult {
   const parts = raw.split(".");
   if (parts.length !== 4 && parts.length !== 3) {
@@ -151,11 +151,7 @@ export function validateQrPayload(
   const eventIdNum = Number(parts[0]);
   const timeBlockNum = Number(parts[1]);
 
-  if (
-    !Number.isFinite(eventIdNum) ||
-    !Number.isFinite(timeBlockNum) ||
-    eventIdNum <= 0
-  ) {
+  if (!Number.isFinite(eventIdNum) || !Number.isFinite(timeBlockNum) || eventIdNum <= 0) {
     return { ok: false, reason: "malformed" };
   }
 
@@ -163,22 +159,10 @@ export function validateQrPayload(
   const drift = timeBlockNum - current;
 
   if (drift > TOKEN_TOLERANCE) {
-    return {
-      ok: false,
-      reason: "future_block",
-      eventId: eventIdNum,
-      timeBlock: timeBlockNum,
-      drift,
-    };
+    return { ok: false, reason: "future_block", eventId: eventIdNum, timeBlock: timeBlockNum, drift };
   }
   if (drift < -TOKEN_TOLERANCE) {
-    return {
-      ok: false,
-      reason: "expired",
-      eventId: eventIdNum,
-      timeBlock: timeBlockNum,
-      drift,
-    };
+    return { ok: false, reason: "expired", eventId: eventIdNum, timeBlock: timeBlockNum, drift };
   }
 
   // ---- v8 format: 4 parts with sub-frame ----
@@ -186,46 +170,17 @@ export function validateQrPayload(
     const subFrameNum = Number(parts[2]);
     const hmac = parts[3];
 
-    if (
-      !Number.isFinite(subFrameNum) ||
-      subFrameNum < 0 ||
-      subFrameNum >= SUB_FRAMES_PER_BLOCK
-    ) {
-      return {
-        ok: false,
-        reason: "malformed",
-        eventId: eventIdNum,
-        timeBlock: timeBlockNum,
-      };
+    if (!Number.isFinite(subFrameNum) || subFrameNum < 0 || subFrameNum >= SUB_FRAMES_PER_BLOCK) {
+      return { ok: false, reason: "malformed", eventId: eventIdNum, timeBlock: timeBlockNum };
     }
     if (!hmac) return { ok: false, reason: "malformed" };
 
-    const expected = computeSubFrameHmac(
-      eventSecret,
-      eventIdNum,
-      timeBlockNum,
-      subFrameNum,
-    );
+    const expected = computeSubFrameHmac(eventSecret, eventIdNum, timeBlockNum, subFrameNum);
     if (!timingSafeCompareHex(expected, hmac)) {
-      return {
-        ok: false,
-        reason: "invalid_signature",
-        eventId: eventIdNum,
-        timeBlock: timeBlockNum,
-        subFrame: subFrameNum,
-        drift,
-        format: "v8",
-      };
+      return { ok: false, reason: "invalid_signature", eventId: eventIdNum, timeBlock: timeBlockNum, subFrame: subFrameNum, drift, format: "v8" };
     }
 
-    return {
-      ok: true,
-      eventId: eventIdNum,
-      timeBlock: timeBlockNum,
-      subFrame: subFrameNum,
-      drift,
-      format: "v8",
-    };
+    return { ok: true, eventId: eventIdNum, timeBlock: timeBlockNum, subFrame: subFrameNum, drift, format: "v8" };
   }
 
   // ---- v5 format: 3 parts (legacy) ----
@@ -234,23 +189,10 @@ export function validateQrPayload(
 
   const expected = computeTokenHmac(eventSecret, eventIdNum, timeBlockNum);
   if (!timingSafeCompareHex(expected, hmac)) {
-    return {
-      ok: false,
-      reason: "invalid_signature",
-      eventId: eventIdNum,
-      timeBlock: timeBlockNum,
-      drift,
-      format: "v5",
-    };
+    return { ok: false, reason: "invalid_signature", eventId: eventIdNum, timeBlock: timeBlockNum, drift, format: "v5" };
   }
 
-  return {
-    ok: true,
-    eventId: eventIdNum,
-    timeBlock: timeBlockNum,
-    drift,
-    format: "v5",
-  };
+  return { ok: true, eventId: eventIdNum, timeBlock: timeBlockNum, drift, format: "v5" };
 }
 
 // ====================================================================
@@ -282,67 +224,49 @@ export function verifySubFrameLiveness(
   subFrames: Array<{ subFrame: number; hmac: string }>,
   eventSecret: string,
   eventId: number,
-  timeBlock: number,
+  timeBlock: number
 ): { ok: true } | { ok: false; reason: ValidationReason } {
   if (subFrames.length < MIN_SUB_FRAMES) {
     return { ok: false, reason: "insufficient_subframes" };
   }
 
-  // Sort by sub-frame index
-  const sorted = [...subFrames].sort((a, b) => a.subFrame - b.subFrame);
-
-  // Verify each sub-frame's HMAC. Each frame may belong to timeBlock or
-  // timeBlock-1 (if the scan straddled a 15s boundary). Try both.
-  // Track which block each frame belongs to for consecutiveness checking.
-  const blockPerFrame: number[] = [];
-  for (const sf of sorted) {
+  // Validate sub-frame index range and verify each HMAC. Each frame may
+  // belong to timeBlock or timeBlock-1 (if the scan straddled a 15s
+  // boundary). Track which block each frame belongs to.
+  const annotated: Array<{ block: number; subFrame: number }> = [];
+  for (const sf of subFrames) {
     if (sf.subFrame < 0 || sf.subFrame >= SUB_FRAMES_PER_BLOCK) {
       return { ok: false, reason: "invalid_subframe" };
     }
-    const expectedCurrent = computeSubFrameHmac(
-      eventSecret,
-      eventId,
-      timeBlock,
-      sf.subFrame,
-    );
-    const expectedPrev = computeSubFrameHmac(
-      eventSecret,
-      eventId,
-      timeBlock - 1,
-      sf.subFrame,
-    );
+    const expectedCurrent = computeSubFrameHmac(eventSecret, eventId, timeBlock, sf.subFrame);
+    const expectedPrev = computeSubFrameHmac(eventSecret, eventId, timeBlock - 1, sf.subFrame);
     if (timingSafeCompareHex(expectedCurrent, sf.hmac)) {
-      blockPerFrame.push(timeBlock);
+      annotated.push({ block: timeBlock, subFrame: sf.subFrame });
     } else if (timingSafeCompareHex(expectedPrev, sf.hmac)) {
-      blockPerFrame.push(timeBlock - 1);
+      annotated.push({ block: timeBlock - 1, subFrame: sf.subFrame });
     } else {
       return { ok: false, reason: "invalid_signature" };
     }
   }
 
-  // Check consecutive: each frame must be temporally adjacent to the previous.
-  // Two frames are consecutive if:
-  //   - Same block, subFrame diff is 1 or 2 (allow 1 missed frame at 2 FPS)
-  //   - Adjacent blocks: last sub-frames of block N -> first of N+1
-  for (let i = 1; i < sorted.length; i++) {
-    const sameBlock = blockPerFrame[i] === blockPerFrame[i - 1];
-    const adjacentBlock = blockPerFrame[i] === blockPerFrame[i - 1] + 1;
+  // Sort TEMPORALLY by (block, subFrame) — NOT by subFrame alone. Sorting
+  // by subFrame alone breaks boundary-straddling scans: e.g. frames
+  // [0(block N+1), 28(block N), 29(block N)] would sort to [0, 28, 29]
+  // and the consecutiveness check would see a 2-block gap (N+1 -> N).
+  const sorted = [...annotated].sort((a, b) =>
+    a.block !== b.block ? a.block - b.block : a.subFrame - b.subFrame
+  );
 
-    if (sameBlock) {
-      const diff = sorted[i].subFrame - sorted[i - 1].subFrame;
-      if (diff < 1 || diff > 2) {
-        return { ok: false, reason: "invalid_subframe" };
-      }
-    } else if (adjacentBlock) {
-      // Straddling boundary: prev is at end of block N, curr is at start of N+1.
-      if (
-        sorted[i - 1].subFrame < SUB_FRAMES_PER_BLOCK - 2 ||
-        sorted[i].subFrame > 1
-      ) {
-        return { ok: false, reason: "invalid_subframe" };
-      }
-    } else {
-      // Gap of 2+ blocks — not consecutive
+  // Check consecutive using a UNIFIED temporal index: block * SUB_FRAMES_PER_BLOCK
+  // + subFrame. This treats same-block and boundary-straddling cases identically,
+  // closing the asymmetry where (28 -> 1 across blocks) allowed a 3-frame gap
+  // (1500ms) while same-block diff=3 rejected it. Now both are rejected.
+  // Allowed gap: 1 or 2 sub-frames (500ms or 1000ms — 1 missed frame at 2 FPS).
+  for (let i = 1; i < sorted.length; i++) {
+    const prevIdx = sorted[i - 1].block * SUB_FRAMES_PER_BLOCK + sorted[i - 1].subFrame;
+    const currIdx = sorted[i].block * SUB_FRAMES_PER_BLOCK + sorted[i].subFrame;
+    const diff = currIdx - prevIdx;
+    if (diff < 1 || diff > 2) {
       return { ok: false, reason: "invalid_subframe" };
     }
   }

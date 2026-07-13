@@ -203,7 +203,9 @@ export function LandingPage({ onSignIn, onRegister }: LandingPageProps) {
           >
             Attendance,
             <br />
-            <span className="text-primary">simplified.</span>
+            <span className="bg-gradient-to-r from-primary via-primary to-primary/60 bg-clip-text text-transparent">
+              simplified.
+            </span>
           </motion.h1>
           <motion.p
             initial={{ opacity: 0, y: 20 }}
@@ -212,7 +214,7 @@ export function LandingPage({ onSignIn, onRegister }: LandingPageProps) {
             className="mt-6 text-base sm:text-lg text-muted-foreground max-w-xl mx-auto leading-relaxed"
           >
             No more sign-in sheets or long lines. Your teacher shows a code, you
-            scan it with your phone, and you're marked present. It takes less
+            scan it with your phone, and you&apos;re marked present. It takes less
             than a second.
           </motion.p>
           <motion.div
@@ -223,7 +225,7 @@ export function LandingPage({ onSignIn, onRegister }: LandingPageProps) {
           >
             <Button
               size="lg"
-              className="h-12 px-8 text-base"
+              className="h-12 px-8 text-base shadow-lg shadow-primary/20 hover:shadow-primary/30 transition-shadow"
               onClick={onRegister}
             >
               Create account <ArrowRight className="h-4 w-4" />
@@ -272,16 +274,22 @@ export function LandingPage({ onSignIn, onRegister }: LandingPageProps) {
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
                   transition={{ duration: 0.5, delay: i * 0.1 }}
+                  className="relative"
                 >
-                  <Card className="h-full hover:border-primary/40 transition-colors">
+                  <Card className="h-full hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5 transition-all duration-300 group">
                     <CardContent className="p-6">
                       <div className="flex items-center gap-3 mb-3">
-                        <div className="grid place-items-center h-10 w-10 rounded-lg bg-primary/10 text-primary">
+                        <div className="relative grid place-items-center h-10 w-10 rounded-lg bg-primary/10 text-primary group-hover:bg-primary/15 group-hover:scale-110 transition-all duration-300">
                           <Icon className="h-5 w-5" />
                         </div>
                         <span className="font-heading text-sm font-bold text-muted-foreground">
                           Step {i + 1}
                         </span>
+                        {i < 2 && (
+                          <div className="hidden md:block absolute -right-3 top-1/2 -translate-y-1/2 text-muted-foreground/30 z-10">
+                            <ArrowRight className="h-4 w-4" />
+                          </div>
+                        )}
                       </div>
                       <h3 className="font-heading font-semibold mb-1">
                         {step.title}
@@ -345,12 +353,12 @@ export function LandingPage({ onSignIn, onRegister }: LandingPageProps) {
                   whileInView={{ opacity: 1, scale: 1 }}
                   viewport={{ once: true }}
                   transition={{ duration: 0.4, delay: i * 0.05 }}
-                  className="flex gap-3 p-4 rounded-lg hover:bg-accent/40 transition-colors"
+                  className="group relative flex gap-3 p-4 rounded-xl border border-border/50 bg-card hover:border-primary/30 hover:shadow-md hover:shadow-primary/5 transition-all duration-300"
                 >
-                  <div className="grid place-items-center h-9 w-9 rounded-lg bg-primary/10 text-primary shrink-0">
+                  <div className="grid place-items-center h-10 w-10 rounded-lg bg-primary/10 text-primary shrink-0 group-hover:bg-primary/15 group-hover:scale-110 transition-all duration-300">
                     <Icon className="h-4 w-4" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <h3 className="font-heading font-semibold text-sm">
                       {f.title}
                     </h3>

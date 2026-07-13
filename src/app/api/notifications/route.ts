@@ -20,26 +20,25 @@ export async function GET(req: NextRequest) {
     where.readAt = null;
   }
 
-  const notifications = await db.notification.findMany({
-    where,
-    orderBy: { createdAt: "desc" },
-    take: 50,
-  });
+  // Run the list + count queries in parallel (was sequential).
+  const [notifications, unreadCount] = await Promise.all([
+    db.notification.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    }),
+    db.notification.count({
+      where: {
+        accountId: res.account.id,
+        readAt: null,
+      },
+    }),
+  ]);
 
-  const unreadCount = await db.notification.count({
-    where: {
-      accountId: res.account.id,
-      readAt: null,
-    },
-  });
-
-  return NextResponse.json(
-    {
-      notifications,
-      unreadCount,
-    },
-    { headers: { "Cache-Control": "private, no-cache" } },
-  );
+  return NextResponse.json({
+    notifications,
+    unreadCount,
+  }, { headers: { "Cache-Control": "private, no-cache" } });
 }
 
 // ====================================================================

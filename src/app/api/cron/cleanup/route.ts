@@ -13,8 +13,14 @@ import { checkCronAuth, checkBodySecret } from "@/lib/cron-auth";
 async function runCleanup() {
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const attendanceCutoff = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
-  const auditCutoff = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+  // Attendance: 365 days (one full academic year). Previously 180 days,
+  // which deleted records mid-year for schools on a June-April calendar.
+  const attendanceCutoff = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+  // Audit logs: 365 days. ARCHITECTURE.md calls the audit log an
+  // "append-only accountability trail"; 90 days was too short for an
+  // academic-year compliance window. 365 days balances accountability
+  // with storage growth.
+  const auditCutoff = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
 
   const [
     tokensDeleted,
@@ -29,14 +35,22 @@ async function runCleanup() {
     db.refreshToken.deleteMany({
       where: { OR: [{ expiresAt: { lt: now } }, { revokedAt: { not: null } }] },
     }),
+    // Notifications: purge read notifications > 30 days, AND unread
+    // notifications > 365 days (prevents unbounded growth of unread
+    // notifications that users never dismiss).
     db.notification.deleteMany({
-      where: { readAt: { lt: thirtyDaysAgo } },
+      where: {
+        OR: [
+          { readAt: { lt: thirtyDaysAgo } },
+          { readAt: null, createdAt: { lt: auditCutoff } },
+        ],
+      },
     }),
-    // Purge event_attendance older than 180 days (storage management).
+    // Purge event_attendance older than 365 days (one academic year).
     db.eventAttendance.deleteMany({
       where: { scannedAt: { lt: attendanceCutoff } },
     }),
-    // Purge audit_logs older than 90 days (unbounded growth prevention).
+    // Purge audit_logs older than 365 days.
     db.auditLog.deleteMany({
       where: { createdAt: { lt: auditCutoff } },
     }),

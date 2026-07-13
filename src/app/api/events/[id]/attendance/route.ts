@@ -94,23 +94,16 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     }),
   ]);
 
-  return NextResponse.json(
-    {
-      event,
-      presentCount: totalCount,
-      eligibleCount,
-      attendances,
-      pagination: {
-        page,
-        pageSize,
-        total: totalCount,
-        totalPages: Math.ceil(totalCount / pageSize),
-      },
+  return NextResponse.json({
+    event,
+    presentCount: totalCount,
+    eligibleCount,
+    attendances,
+    pagination: {
+      page,
+      pageSize,
+      total: totalCount,
+      totalPages: Math.ceil(totalCount / pageSize),
     },
-    {
-      headers: {
-        "Cache-Control": "private, s-maxage=10, stale-while-revalidate=30",
-      },
-    },
-  );
+  }, { headers: { "Cache-Control": "private, no-cache" } });
 }

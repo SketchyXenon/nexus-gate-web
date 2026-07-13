@@ -31,49 +31,34 @@ async function runEventReminders() {
   });
 
   if (upcomingEvents.length === 0) {
-    return {
-      checkedEvents: 0,
-      notificationsCreated: 0,
-      timestamp: now.toISOString(),
-    };
+    return { checkedEvents: 0, notificationsCreated: 0, timestamp: now.toISOString() };
   }
 
-  // Step 2: build OR conditions for all eligible student sets in one query.
-  // Each event contributes either an exact (program, section) match or
-  // open-to-all. We collect all eligible account IDs per event.
-  const eventConditions: Array<{
-    event: (typeof upcomingEvents)[0];
-    accountIds: string[];
-  }> = [];
+  // Step 2: bulk-fetch all eligible students ONCE (was N+1 — one query
+  // per event). Then distribute to events in memory.
+  const allEligibleStudents = await db.account.findMany({
+    where: {
+      role: "USER",
+      status: "ACTIVE",
+      notificationEnabled: true,
+    },
+    select: { id: true, program: true, section: true },
+  });
+
+  const eventConditions: Array<{ event: typeof upcomingEvents[0]; accountIds: string[] }> = [];
 
   for (const event of upcomingEvents) {
     if (event.targetProgram && event.targetSection) {
-      // Exact program + section match.
-      const students = await db.account.findMany({
-        where: {
-          role: "USER",
-          status: "ACTIVE",
-          notificationEnabled: true,
-          program: event.targetProgram,
-          section: event.targetSection,
-        },
-        select: { id: true },
-      });
-      eventConditions.push({ event, accountIds: students.map((s) => s.id) });
+      // Exact program + section match — filter in memory.
+      const accountIds = allEligibleStudents
+        .filter((s) => s.program === event.targetProgram && s.section === event.targetSection)
+        .map((s) => s.id);
+      eventConditions.push({ event, accountIds });
     } else if (!event.targetProgram && !event.targetSection) {
-      // Open to all — fetch all eligible students.
-      const students = await db.account.findMany({
-        where: {
-          role: "USER",
-          status: "ACTIVE",
-          notificationEnabled: true,
-        },
-        select: { id: true },
-      });
-      eventConditions.push({ event, accountIds: students.map((s) => s.id) });
+      // Open to all — all eligible students.
+      eventConditions.push({ event, accountIds: allEligibleStudents.map((s) => s.id) });
     }
-    // Events with only program OR only section (not both) are skipped —
-    // matches the original behavior.
+    // Events with only program OR only section (not both) are skipped.
   }
 
   // Step 3: collect all unique account IDs for the dedup query.
@@ -82,26 +67,28 @@ async function runEventReminders() {
   );
 
   // Step 4: bulk-fetch existing reminder notifications for dedup.
-  // One query instead of N (one per student per event).
-  const existingReminders =
-    allAccountIds.length > 0
-      ? await db.notification.findMany({
-          where: {
-            accountId: { in: allAccountIds },
-            type: "reminder",
-            createdAt: { gt: new Date(now.getTime() - 60 * 60 * 1000) }, // last hour
-          },
-          select: { accountId: true, body: true },
-        })
-      : [];
+  // One query instead of N (one per student per event). Dedup is based on
+  // the type field which encodes the eventId as "reminder:event:N" — this
+  // avoids false-positive matches from the old title-substring check
+  // (e.g. "Math" matching "Math Review").
+  const existingReminders = allAccountIds.length > 0
+    ? await db.notification.findMany({
+        where: {
+          accountId: { in: allAccountIds },
+          type: { startsWith: "reminder:event:" },
+          createdAt: { gt: new Date(now.getTime() - 60 * 60 * 1000) },
+        },
+        select: { accountId: true, type: true },
+      })
+    : [];
 
-  // Build a Set of "accountId:eventTitle" keys for O(1) dedup lookup.
+  // Build a Set of "accountId:eventId" keys for O(1) dedup lookup.
   const existingKeys = new Set<string>();
   for (const r of existingReminders) {
-    for (const ec of eventConditions) {
-      if (r.body.includes(ec.event.title)) {
-        existingKeys.add(`${r.accountId}:${ec.event.id}`);
-      }
+    // type format: "reminder:event:42"
+    const eventIdStr = r.type.split(":")[2];
+    if (eventIdStr) {
+      existingKeys.add(`${r.accountId}:${eventIdStr}`);
     }
   }
 
@@ -125,7 +112,8 @@ async function runEventReminders() {
           accountId,
           title: "Upcoming class",
           body,
-          type: "reminder",
+          // Encode eventId in type for O(1) dedup on the next cron run.
+          type: `reminder:event:${event.id}`,
         });
       }
     }

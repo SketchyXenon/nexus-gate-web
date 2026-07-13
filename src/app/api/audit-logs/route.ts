@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
     },
     {
       headers: {
-        "Cache-Control": "private, s-maxage=30, stale-while-revalidate=120",
+        "Cache-Control": "private, no-cache",
       },
     },
   );

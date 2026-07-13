@@ -6,7 +6,9 @@ import { getWebAuthnContext } from "@/lib/webauthn-context";
 // POST /api/auth/passkey/login-options
 // Returns WebAuthn authentication options (userless discoverable credentials).
 export async function POST(req: NextRequest) {
-  const rl = await checkRateLimit(req, "login");
+  // passkeyOptions is lenient (30/min per-IP): this endpoint only returns
+  // challenge options, no crypto. The expensive verify endpoint is tighter.
+  const rl = await checkRateLimit(req, "passkeyOptions");
   if (rl) return rl;
 
   const { rpID } = getWebAuthnContext(req);

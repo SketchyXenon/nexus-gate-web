@@ -89,11 +89,7 @@ export async function GET(req: NextRequest) {
       ? [{ studentId: "asc" as const }]
       : sort === "name"
         ? [{ fullName: "asc" as const }]
-        : [
-            { program: "asc" as const },
-            { section: "asc" as const },
-            { fullName: "asc" as const },
-          ];
+        : [{ program: "asc" as const }, { section: "asc" as const }, { fullName: "asc" as const }];
 
   const [registeredAccounts, pendingStudents, registeredCount, pendingCount] =
     await Promise.all([
@@ -125,12 +121,8 @@ export async function GET(req: NextRequest) {
             skip,
             take: pageSize,
           }),
-      statusFilter === "pending"
-        ? 0
-        : db.account.count({ where: accountWhere }),
-      statusFilter === "registered"
-        ? 0
-        : db.authorizedStudent.count({ where: authWhere }),
+      statusFilter === "pending" ? 0 : db.account.count({ where: accountWhere }),
+      statusFilter === "registered" ? 0 : db.authorizedStudent.count({ where: authWhere }),
     ]);
 
   // ---- Get registered studentIds for filtering pending (page-sized set only) ----
@@ -197,7 +189,7 @@ export async function GET(req: NextRequest) {
     },
     {
       headers: {
-        "Cache-Control": "private, s-maxage=30, stale-while-revalidate=120",
+        "Cache-Control": "private, no-cache",
       },
     },
   );
@@ -252,11 +244,14 @@ export async function POST(req: NextRequest) {
   const toUpdate = students.filter((s) => existingIds.has(s.studentId));
 
   // Step 2: Batch create new records.
+  // Note: skipDuplicates is omitted because SQLite's createMany doesn't
+  // support it (TS error). We pre-filter duplicates via existingIds above,
+  // so toCreate only contains records that don't yet exist. If a race
+  // condition causes a duplicate, the catch block counts it as skipped.
   if (toCreate.length > 0) {
     try {
       const result = await db.authorizedStudent.createMany({
         data: toCreate,
-        skipDuplicates: true,
       });
       inserted += result.count;
     } catch {
@@ -264,22 +259,28 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Step 3: Update existing records (still sequential, but only for
-  // records that already exist — typically a small subset).
-  for (const s of toUpdate) {
-    try {
-      await db.authorizedStudent.update({
-        where: { studentId: s.studentId },
-        data: {
-          email: s.email,
-          fullName: s.fullName,
-          program: s.program,
-          section: s.section,
-        },
-      });
-      inserted++;
-    } catch {
-      skipped++;
+  // Step 3: Update existing records in parallel batches (was sequential,
+  // which timed out on 5000-row re-imports). Chunk size 50 balances
+  // parallelism against DB connection pool pressure.
+  const CHUNK_SIZE = 50;
+  for (let i = 0; i < toUpdate.length; i += CHUNK_SIZE) {
+    const chunk = toUpdate.slice(i, i + CHUNK_SIZE);
+    const results = await Promise.allSettled(
+      chunk.map((s) =>
+        db.authorizedStudent.update({
+          where: { studentId: s.studentId },
+          data: {
+            email: s.email,
+            fullName: s.fullName,
+            program: s.program,
+            section: s.section,
+          },
+        }),
+      ),
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled") inserted++;
+      else skipped++;
     }
   }
 

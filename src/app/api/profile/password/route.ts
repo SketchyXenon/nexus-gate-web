@@ -4,13 +4,7 @@ export const maxDuration = 15;
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { changePasswordSchema } from "@/lib/validation";
-import {
-  badRequest,
-  forbidden,
-  parseBody,
-  requireAuth,
-  unauthorized,
-} from "@/lib/api";
+import { badRequest, forbidden, parseBody, requireAuth, unauthorized } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import { isCooldownExpired, daysUntilCooldownExpires } from "@/lib/cooldown";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
@@ -42,7 +36,7 @@ export async function POST(req: NextRequest) {
     const daysLeft = daysUntilCooldownExpires(fullAccount.lastPasswordChangeAt);
     return forbidden(
       `You can change your password again in ${daysLeft} day${daysLeft === 1 ? "" : "s"}.`,
-      "PASSWORD_COOLDOWN",
+      "PASSWORD_COOLDOWN"
     );
   }
 
@@ -56,23 +50,15 @@ export async function POST(req: NextRequest) {
       password: currentPassword,
     });
     if (verifyError) {
-      return badRequest(
-        "Your current password is incorrect.",
-        "WRONG_PASSWORD",
-      );
+      return badRequest("Your current password is incorrect.", "WRONG_PASSWORD");
     }
   }
 
   // Update the password via Supabase Auth.
   const supabase = await createSupabaseServerClient();
-  const { error: updateError } = await supabase.auth.updateUser({
-    password: newPassword,
-  });
+  const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
   if (updateError) {
-    return badRequest(
-      "Unable to update password. Please try again.",
-      "UPDATE_FAILED",
-    );
+    return badRequest("Unable to update password. Please try again.", "UPDATE_FAILED");
   }
 
   // Stamp lastPasswordChangeAt (drives the cooldown).
@@ -82,11 +68,8 @@ export async function POST(req: NextRequest) {
   });
 
   await audit({
-    actorId: account.id,
-    action: "profile.password_change",
-    targetType: "Account",
-    targetId: account.id,
-    req,
+    actorId: account.id, action: "profile.password_change", targetType: "Account",
+    targetId: account.id, req,
   });
 
   return NextResponse.json({

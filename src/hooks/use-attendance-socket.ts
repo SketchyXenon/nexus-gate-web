@@ -6,16 +6,14 @@ import Ably from "ably";
 // ====================================================================
 // useAttendanceSocket — subscribes to a per-event live attendance channel.
 // --------------------------------------------------------------------
-// Uses Ably (managed realtime, free tier: 200 concurrent connections,
-// 3M messages/month). Replaces the Render socket.io mini-service which
-// spun down after 15 min on the free tier.
+// Uses Ably Token Authentication: the client fetches a short-lived,
+// SUBSCRIBE-ONLY token from /api/ably/token. The full server key (which
+// can publish) is NEVER shipped to the client. This prevents anyone from
+// extracting a publish-capable key from the JS bundle to spam fake
+// attendance events.
 //
-// Only organizers connect to Ably (students don't need realtime — they
-// scan and get an immediate result). At 200 concurrent users: ~10-20
-// Ably connections (well under the 200 free-tier limit).
-//
-// ENV: NEXT_PUBLIC_ABLY_KEY must be set (Ably API key from dashboard).
-// Falls back to polling if Ably is not configured.
+// Only organizers connect to Ably (students don't need realtime). Falls
+// back to polling if the token endpoint is unavailable.
 // ====================================================================
 
 export interface LiveAttendance {
@@ -35,10 +33,22 @@ export function useAttendanceSocket(eventId: number | null) {
   const clientRef = useRef<Ably.Realtime | null>(null);
 
   useEffect(() => {
-    const ablyKey = process.env.NEXT_PUBLIC_ABLY_KEY;
-    if (!ablyKey || eventId == null) return;
+    if (eventId == null) return;
 
-    const client = new Ably.Realtime({ key: ablyKey, autoConnect: true });
+    let client: Ably.Realtime;
+    try {
+      // Token auth: the SDK calls /api/ably/token?eventId=N to get a signed,
+      // subscribe-only TokenRequest scoped to THIS event's channel. No key
+      // is shipped to the client, and the token can't subscribe to other
+      // events' channels.
+      client = new Ably.Realtime({
+        authUrl: `/api/ably/token?eventId=${encodeURIComponent(eventId)}`,
+        autoConnect: true,
+      });
+    } catch (e) {
+      console.error("[useAttendanceSocket] Ably init failed:", e);
+      return;
+    }
     clientRef.current = client;
 
     const channel = client.channels.get(`event:${eventId}`);

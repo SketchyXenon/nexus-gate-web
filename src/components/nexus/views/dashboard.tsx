@@ -13,6 +13,13 @@ import {
   BarChart3,
   Download,
   Info,
+  Plus,
+  QrCode,
+  CalendarRange,
+  ClipboardList,
+  Zap,
+  History,
+  UserCircle2,
   type LucideIcon,
 } from "lucide-react";
 import { motion } from "framer-motion";
@@ -31,14 +38,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  useDashboard,
-  useRecentAttendance,
-  type Account,
-} from "@/lib/api-client";
+import { useDashboard, useRecentAttendance, type Account } from "@/lib/api-client";
 import { ROLE_LABELS } from "@/lib/rbac";
 import { getProgramLabel } from "@/lib/programs";
 import { MaintenancePanel } from "@/components/nexus/maintenance";
+import { AnalyticsCharts } from "@/components/nexus/analytics-charts";
 import { format } from "date-fns";
 
 type ViewId =
@@ -49,7 +53,11 @@ type ViewId =
   | "scanner"
   | "attendance"
   | "overrides"
-  | "profile";
+  | "profile"
+  | "calendar"
+  | "my-attendance"
+  | "accounts"
+  | "audit-logs";
 
 interface Props {
   user: Account;
@@ -95,14 +103,7 @@ export function DashboardView({ user, onNavigate }: Props) {
     );
   }
 
-  const {
-    stats,
-    recentEvents,
-    attendances,
-    programCounts,
-    sectionCounts,
-    needsProfile,
-  } = data;
+  const { stats, recentEvents, attendances, programCounts, sectionCounts, needsProfile } = data;
 
   // ---------- Student (USER) dashboard ----------
   if (user.role === "USER") {
@@ -110,10 +111,7 @@ export function DashboardView({ user, onNavigate }: Props) {
       <div className="space-y-6">
         {/* Profile completion prompt */}
         {needsProfile && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
             <Card className="border-amber-500/40 bg-amber-500/5">
               <CardContent className="p-3 sm:p-4 flex flex-wrap items-center gap-2">
                 <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
@@ -124,10 +122,7 @@ export function DashboardView({ user, onNavigate }: Props) {
                   <TooltipTrigger asChild>
                     <Info className="h-3.5 w-3.5 text-amber-600/70 cursor-help" />
                   </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">
-                    Your course and section aren&apos;t set. Fill them out in
-                    your profile to see attendance events for your class.
-                  </TooltipContent>
+                  <TooltipContent className="max-w-xs">Your course and section aren&apos;t set. Fill them out in your profile to see attendance events for your class.</TooltipContent>
                 </Tooltip>
                 <Button
                   size="sm"
@@ -166,10 +161,7 @@ export function DashboardView({ user, onNavigate }: Props) {
               </div>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
-                    onClick={() => onNavigate("scanner")}
-                    className="h-10 shrink-0"
-                  >
+                  <Button onClick={() => onNavigate("scanner")} className="h-10 shrink-0">
                     <ScanLine className="h-4 w-4" />
                     Scan to check in
                   </Button>
@@ -209,15 +201,22 @@ export function DashboardView({ user, onNavigate }: Props) {
           </motion.div>
         </div>
 
+        {/* Attendance rate donut */}
+        <StudentAttendanceDonut
+          attended={stats.totalAttended ?? 0}
+          available={stats.eligibleEvents ?? 0}
+        />
+
+        {/* Student quick actions */}
+        <StudentQuickActions onNavigate={onNavigate} />
+
         <Card>
           <CardHeader className="p-4 sm:p-6">
             <CardTitle className="flex items-center gap-2 text-base">
               <Activity className="h-4 w-4 text-primary" />
               Your attendance history
             </CardTitle>
-            <CardDescription>
-              Every event you&apos;ve checked in to
-            </CardDescription>
+            <CardDescription>Every event you&apos;ve checked in to</CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             <div className="divide-y max-h-80 overflow-y-auto ng-scroll">
@@ -273,49 +272,47 @@ export function DashboardView({ user, onNavigate }: Props) {
     hint: string;
     view: ViewId;
     show: boolean;
-  }> = (
-    [
-      {
-        label: "Approved students",
-        value: stats.totalStudents ?? 0,
-        icon: Users,
-        hint: "On the approved list",
-        view: "whitelist" as ViewId,
-        show: user.role === "ADMIN",
-      },
-      {
-        label: "Active events",
-        value: stats.totalEvents ?? 0,
-        icon: CalendarDays,
-        hint: "Classes and gatherings",
-        view: "events" as ViewId,
-        show: true,
-      },
-      {
-        label: "Total check-ins",
-        value: stats.totalScans ?? 0,
-        icon: ScanLine,
-        hint: "Attendance records",
-        view: "attendance" as ViewId,
-        show: true,
-      },
-      {
-        label: "Manual entries",
-        value: stats.totalOverrides ?? 0,
-        icon: AlertTriangle,
-        hint: "Added by hand",
-        view: "overrides" as ViewId,
-        show: true,
-      },
-    ] as Array<{
-      label: string;
-      value: number;
-      icon: LucideIcon;
-      hint: string;
-      view: ViewId;
-      show: boolean;
-    }>
-  ).filter((c) => c.show);
+  }> = ([
+    {
+      label: "Approved students",
+      value: stats.totalStudents ?? 0,
+      icon: Users,
+      hint: "On the approved list",
+      view: "whitelist" as ViewId,
+      show: user.role === "ADMIN",
+    },
+    {
+      label: "Active events",
+      value: stats.totalEvents ?? 0,
+      icon: CalendarDays,
+      hint: "Classes and gatherings",
+      view: "events" as ViewId,
+      show: true,
+    },
+    {
+      label: "Total check-ins",
+      value: stats.totalScans ?? 0,
+      icon: ScanLine,
+      hint: "Attendance records",
+      view: "attendance" as ViewId,
+      show: true,
+    },
+    {
+      label: "Manual entries",
+      value: stats.totalOverrides ?? 0,
+      icon: AlertTriangle,
+      hint: "Added by hand",
+      view: "overrides" as ViewId,
+      show: true,
+    },
+  ] as Array<{
+    label: string;
+    value: number;
+    icon: LucideIcon;
+    hint: string;
+    view: ViewId;
+    show: boolean;
+  }>).filter((c) => c.show);
 
   const maxProgram = safeMax(Object.values(programCounts ?? {}));
 
@@ -344,20 +341,13 @@ export function DashboardView({ user, onNavigate }: Props) {
             </div>
             <div className="flex gap-2 flex-wrap shrink-0">
               {user.role === "ORGANIZER" && (
-                <Button
-                  onClick={() => onNavigate("project-qr")}
-                  className="h-10"
-                >
+                <Button onClick={() => onNavigate("project-qr")} className="h-10">
                   <ScanLine className="h-4 w-4" />
                   Show QR code
                 </Button>
               )}
               {user.role === "ADMIN" && (
-                <Button
-                  variant="outline"
-                  onClick={() => onNavigate("whitelist")}
-                  className="h-10"
-                >
+                <Button variant="outline" onClick={() => onNavigate("whitelist")} className="h-10">
                   <Users className="h-4 w-4" />
                   Manage approved students
                 </Button>
@@ -395,9 +385,7 @@ export function DashboardView({ user, onNavigate }: Props) {
                     {c.value.toLocaleString()}
                   </div>
                   <div className="flex items-center justify-between mt-2 gap-2">
-                    <p className="text-[11px] text-muted-foreground truncate">
-                      {c.hint}
-                    </p>
+                    <p className="text-[11px] text-muted-foreground truncate">{c.hint}</p>
                     <ArrowRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all shrink-0" />
                   </div>
                 </CardContent>
@@ -407,6 +395,12 @@ export function DashboardView({ user, onNavigate }: Props) {
         })}
       </div>
 
+      {/* Analytics charts: scans over time, peak hours, top events, source breakdown */}
+      <AnalyticsCharts />
+
+      {/* Quick actions */}
+      <QuickActions onNavigate={onNavigate} role={user.role} />
+
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2 min-w-0 overflow-hidden">
           <CardHeader className="flex flex-row items-center justify-between gap-2 p-4 sm:p-6">
@@ -415,16 +409,9 @@ export function DashboardView({ user, onNavigate }: Props) {
                 <Activity className="h-4 w-4 text-primary shrink-0" />
                 Recent events
               </CardTitle>
-              <CardDescription className="truncate">
-                The latest classes and gatherings
-              </CardDescription>
+              <CardDescription className="truncate">The latest classes and gatherings</CardDescription>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onNavigate("attendance")}
-              className="h-9 shrink-0"
-            >
+            <Button variant="ghost" size="sm" onClick={() => onNavigate("attendance")} className="h-9 shrink-0">
               View all
             </Button>
           </CardHeader>
@@ -449,9 +436,7 @@ export function DashboardView({ user, onNavigate }: Props) {
                         {e.presentCount}
                       </div>
                     </TooltipTrigger>
-                    <TooltipContent>
-                      {e.presentCount} students present
-                    </TooltipContent>
+                    <TooltipContent>{e.presentCount} students present</TooltipContent>
                   </Tooltip>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{e.title}</p>
@@ -470,19 +455,13 @@ export function DashboardView({ user, onNavigate }: Props) {
                         e.timeStatus === "live"
                           ? "border-emerald-500/40 text-emerald-600"
                           : e.timeStatus === "upcoming"
-                            ? "border-amber-500/40 text-amber-600"
-                            : e.timeStatus === "ended"
-                              ? "border-muted text-muted-foreground"
-                              : "border-red-500/40 text-red-600"
+                          ? "border-amber-500/40 text-amber-600"
+                          : e.timeStatus === "ended"
+                          ? "border-muted text-muted-foreground"
+                          : "border-red-500/40 text-red-600"
                       }
                     >
-                      {e.timeStatus === "live"
-                        ? "Live now"
-                        : e.timeStatus === "upcoming"
-                          ? "Upcoming"
-                          : e.timeStatus === "ended"
-                            ? "Ended"
-                            : "Cancelled"}
+                      {e.timeStatus === "live" ? "Live now" : e.timeStatus === "upcoming" ? "Upcoming" : e.timeStatus === "ended" ? "Ended" : "Cancelled"}
                     </Badge>
                     <Badge
                       variant="outline"
@@ -555,9 +534,7 @@ export function DashboardView({ user, onNavigate }: Props) {
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {Object.entries(sectionCounts ?? {}).length === 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    No sections yet.
-                  </p>
+                  <p className="text-xs text-muted-foreground">No sections yet.</p>
                 )}
                 {Object.entries(sectionCounts ?? {}).map(([sec, count]) => (
                   <Badge key={sec} variant="secondary" className="text-[11px]">
@@ -609,9 +586,7 @@ function StatCard({
         <div className="text-2xl sm:text-3xl font-bold tracking-tight">
           {value.toLocaleString()}
         </div>
-        <p className="text-[11px] text-muted-foreground mt-1 truncate">
-          {hint}
-        </p>
+        <p className="text-[11px] text-muted-foreground mt-1 truncate">{hint}</p>
       </CardContent>
     </Card>
   );
@@ -684,7 +659,11 @@ function AnalyticsPanel({
     rows.push(["event", "present_count"]);
     topEvents.forEach((e) => rows.push([e.title, e.presentCount]));
     const csv = rows
-      .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
+      .map((r) =>
+        r
+          .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+          .join(","),
+      )
       .join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -707,9 +686,7 @@ function AnalyticsPanel({
             <BarChart3 className="h-4 w-4 text-primary shrink-0" />
             Analytics snapshot
           </CardTitle>
-          <CardDescription className="truncate">
-            Key metrics across the system
-          </CardDescription>
+          <CardDescription className="truncate">Key metrics across the system</CardDescription>
         </div>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -724,7 +701,9 @@ function AnalyticsPanel({
               <span className="hidden sm:inline">Export CSV</span>
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Download these metrics as a CSV file</TooltipContent>
+          <TooltipContent>
+            Download these metrics as a CSV file
+          </TooltipContent>
         </Tooltip>
       </CardHeader>
       <CardContent className="space-y-4 sm:space-y-6 p-4 sm:p-6 sm:pt-0">
@@ -735,8 +714,7 @@ function AnalyticsPanel({
               No activity yet
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              Once students start checking in, you&apos;ll see live metrics
-              here.
+              Once students start checking in, you&apos;ll see live metrics here.
             </p>
           </div>
         ) : (
@@ -864,11 +842,7 @@ function AnalyticsPanel({
 }
 
 // Recent check-ins across all events the organizer/admin can see.
-function RecentCheckInsCard({
-  onNavigate,
-}: {
-  onNavigate: (v: ViewId) => void;
-}) {
+function RecentCheckInsCard({ onNavigate }: { onNavigate: (v: ViewId) => void }) {
   const { data, isLoading } = useRecentAttendance(15);
   const records = data?.records ?? [];
 
@@ -948,5 +922,283 @@ function RecentCheckInsCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// ---- Quick Actions card ----
+// Shortcut buttons for the most common organizer/admin tasks.
+function QuickActions({
+  onNavigate,
+  role,
+}: {
+  onNavigate: (v: ViewId) => void;
+  role: string;
+}) {
+  const actions: Array<{
+    label: string;
+    description: string;
+    icon: LucideIcon;
+    view: ViewId;
+    accent: string;
+  }> = [
+    {
+      label: "Create event",
+      description: "Set up a new class or event",
+      icon: Plus,
+      view: "events",
+      accent: "bg-primary/10 text-primary",
+    },
+    {
+      label: "Project QR",
+      description: "Show the live QR code",
+      icon: QrCode,
+      view: "project-qr",
+      accent: "bg-emerald-500/10 text-emerald-600",
+    },
+    {
+      label: "Calendar",
+      description: "View events by month",
+      icon: CalendarRange,
+      view: "calendar",
+      accent: "bg-blue-500/10 text-blue-600",
+    },
+    {
+      label: "Take attendance",
+      description: "See who's present",
+      icon: ClipboardList,
+      view: "attendance",
+      accent: "bg-amber-500/10 text-amber-600",
+    },
+  ];
+
+  // Admin-only: manage students
+  if (role === "ADMIN") {
+    actions.push({
+      label: "Manage students",
+      description: "Import the approved list",
+      icon: Users,
+      view: "whitelist",
+      accent: "bg-purple-500/10 text-purple-600",
+    });
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+    >
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Zap className="h-4 w-4 text-primary" />
+            Quick actions
+          </CardTitle>
+          <CardDescription>Jump straight to common tasks</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+            {actions.map((a, i) => {
+              const Icon = a.icon;
+              return (
+                <motion.button
+                  key={a.label}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.25, delay: i * 0.04 }}
+                  whileHover={{ y: -2 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => onNavigate(a.view)}
+                  className="group flex flex-col items-start gap-2 p-3 rounded-lg border border-border/50 bg-card hover:border-primary/30 hover:shadow-sm transition-all text-left"
+                >
+                  <div className={`grid place-items-center h-9 w-9 rounded-lg ${a.accent} shrink-0 group-hover:scale-110 transition-transform`}>
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium leading-tight">{a.label}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
+                      {a.description}
+                    </p>
+                  </div>
+                </motion.button>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
+// ---- Student Quick Actions card ----
+// Shortcut buttons for the most common student tasks.
+function StudentQuickActions({ onNavigate }: { onNavigate: (v: ViewId) => void }) {
+  const actions: Array<{
+    label: string;
+    description: string;
+    icon: LucideIcon;
+    view: ViewId;
+    accent: string;
+  }> = [
+    {
+      label: "Scan to check in",
+      description: "Open the QR scanner",
+      icon: ScanLine,
+      view: "scanner",
+      accent: "bg-primary/10 text-primary",
+    },
+    {
+      label: "My attendance",
+      description: "View your check-in history",
+      icon: History,
+      view: "my-attendance",
+      accent: "bg-emerald-500/10 text-emerald-600",
+    },
+    {
+      label: "Your profile",
+      description: "Manage your account",
+      icon: UserCircle2,
+      view: "profile",
+      accent: "bg-blue-500/10 text-blue-600",
+    },
+  ];
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+    >
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Zap className="h-4 w-4 text-primary" />
+            Quick actions
+          </CardTitle>
+          <CardDescription>Jump straight to common tasks</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-2 grid-cols-1 sm:grid-cols-3">
+            {actions.map((a, i) => {
+              const Icon = a.icon;
+              return (
+                <motion.button
+                  key={a.label}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.25, delay: i * 0.04 }}
+                  whileHover={{ y: -2 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => onNavigate(a.view)}
+                  className="group flex items-center gap-3 p-3 rounded-lg border border-border/50 bg-card hover:border-primary/30 hover:shadow-sm transition-all text-left"
+                >
+                  <div className={`grid place-items-center h-9 w-9 rounded-lg ${a.accent} shrink-0 group-hover:scale-110 transition-transform`}>
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium leading-tight">{a.label}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight truncate">
+                      {a.description}
+                    </p>
+                  </div>
+                  <ArrowRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
+                </motion.button>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
+// ---- Student attendance rate donut ----
+// A small donut chart showing attended vs available events.
+function StudentAttendanceDonut({
+  attended,
+  available,
+}: {
+  attended: number;
+  available: number;
+}) {
+  const total = attended + available;
+  const pct = total > 0 ? Math.round((attended / total) * 100) : 0;
+
+  // Donut SVG: two arcs (attended in primary, remaining in muted).
+  const radius = 54;
+  const circumference = 2 * Math.PI * radius;
+  const dash = total > 0 ? (attended / total) * circumference : 0;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+    >
+      <Card>
+        <CardContent className="p-4 sm:p-6 flex items-center gap-4">
+          {/* SVG donut */}
+          <div className="relative shrink-0">
+            <svg width="120" height="120" viewBox="0 0 120 120" className="-rotate-90">
+              {/* Track */}
+              <circle
+                cx="60"
+                cy="60"
+                r={radius}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="12"
+                className="text-muted/30"
+              />
+              {/* Attended arc */}
+              {total > 0 && (
+                <motion.circle
+                  cx="60"
+                  cy="60"
+                  r={radius}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="12"
+                  strokeLinecap="round"
+                  className="text-primary"
+                  strokeDasharray={`${dash} ${circumference - dash}`}
+                  initial={{ strokeDasharray: `0 ${circumference}` }}
+                  animate={{ strokeDasharray: `${dash} ${circumference - dash}` }}
+                  transition={{ duration: 0.8, ease: "easeOut" }}
+                />
+              )}
+            </svg>
+            {/* Center label */}
+            <div className="absolute inset-0 grid place-items-center">
+              <div className="text-center">
+                <p className="text-2xl font-bold tabular-nums">{pct}%</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">attended</p>
+              </div>
+            </div>
+          </div>
+          {/* Legend */}
+          <div className="flex-1 min-w-0 space-y-2">
+            <p className="text-sm font-medium">Your attendance rate</p>
+            <div className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-primary shrink-0" />
+              <span className="text-xs text-muted-foreground">
+                {attended} attended
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-muted-foreground/30 shrink-0" />
+              <span className="text-xs text-muted-foreground">
+                {available} available now
+              </span>
+            </div>
+            {total === 0 && (
+              <p className="text-[11px] text-muted-foreground/70 pt-1">
+                Scan into your first event to see your rate here.
+              </p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
   );
 }

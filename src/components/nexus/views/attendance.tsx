@@ -57,6 +57,7 @@ import { EventCombobox } from "@/components/nexus/event-combobox";
 import {
   useEvents,
   useEventAttendance,
+  exportAttendanceCsv,
   type AttendanceRow,
 } from "@/lib/api-client";
 import { useAttendanceSocket } from "@/hooks/use-attendance-socket";
@@ -268,42 +269,21 @@ export function AttendanceView() {
   }
 
   function exportCsv() {
-    if (sorted.length === 0) {
+    if (!eventId) {
       toast({
-        title: "Nothing to export",
-        description: "There are no check-ins matching the current filters.",
+        title: "Select an event",
+        description: "Choose an event to export its attendance.",
         variant: "destructive",
       });
       return;
     }
-    const header =
-      "Student ID,Full Name,Program,Section,Source,Time In,Time Out\n";
-    const body = sorted
-      .map((r) => {
-        const id = r.account.studentId ?? "";
-        const name = escapeCsv(r.account.fullName);
-        const program = escapeCsv(r.account.program ?? "");
-        const section = escapeCsv(r.account.section ?? "");
-        const source = r.source === "override" ? "Manual override" : "QR scan";
-        const timeIn = format(new Date(r.scannedAt), "yyyy-MM-dd HH:mm:ss");
-        const timeOut = r.timeOutAt
-          ? format(new Date(r.timeOutAt), "yyyy-MM-dd HH:mm:ss")
-          : eventEnableTimeOut
-            ? "Still in"
-            : "Not set";
-        return `${id},${name},${program},${section},${source},${timeIn},${timeOut}`;
-      })
-      .join("\n");
-    const blob = new Blob([header + body], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `attendance-event-${eventId}-${format(new Date(), "yyyy-MM-dd")}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    // Use the server-side export endpoint, which exports ALL records for
+    // the event (not just the current page). The server also handles CSV
+    // escaping and sets the Content-Disposition header.
+    exportAttendanceCsv(Number(eventId));
     toast({
-      title: "CSV downloaded",
-      description: `${sorted.length} rows exported.`,
+      title: "Downloading CSV",
+      description: "All attendance records for this event are being downloaded.",
     });
   }
 
@@ -891,11 +871,4 @@ function Stat({
       </div>
     </div>
   );
-}
-
-function escapeCsv(value: string): string {
-  if (/[",\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
 }

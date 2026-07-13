@@ -68,3 +68,7 @@ scripts
 SESSION-NOTES.md
 NexusGate.zip
 ARCHITECTURE-ANALYSIS-REPORT.md
+.vitest-empty.js
+bun.lock
+CAPACITY-ASSESSMENT.md
+db

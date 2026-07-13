@@ -7,6 +7,7 @@ import { loginSchema } from "@/lib/validation";
 import {
   badRequest,
   checkRateLimitByEmail,
+  checkRateLimitByKey,
   parseBody,
   unauthorized,
   dbUnavailable,
@@ -68,6 +69,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Per-account (user_id) checkpoint: now that we resolved the account by
+    // email, throttle by account ID on top of the per-email limit. This
+    // stops distributed brute force where an attacker rotates IPs/emails but
+    // targets one account. Skipped if the email doesn't match an account
+    // (the generic per-email limit still applies).
+    if (preCheck) {
+      const acctRl = await checkRateLimitByKey(preCheck.id, "loginAccount");
+      if (acctRl) return acctRl;
+    }
+
     // Sign in via Supabase Auth (sets the session cookie).
     const supabase = await createSupabaseServerClient();
     const { data: authData, error: authError } =
@@ -77,22 +88,29 @@ export async function POST(req: NextRequest) {
       });
 
     if (authError || !authData.user) {
-      // ---- Increment failed login attempts ----
+      // ---- Increment failed login attempts (atomic) ----
+      // Use Prisma's atomic increment to close the race where two
+      // concurrent failed logins both read the same count and both write
+      // count+1, bypassing the 5-attempt lockout.
       if (preCheck) {
-        const newAttempts = (preCheck.failedLoginAttempts ?? 0) + 1;
-        const shouldLock = newAttempts >= MAX_FAILED_ATTEMPTS;
-        await db.account
+        const updated = await db.account
           .update({
             where: { id: preCheck.id },
             data: {
-              failedLoginAttempts: newAttempts,
-              ...(shouldLock
-                ? { lockedUntil: new Date(Date.now() + LOCK_DURATION_MS) }
-                : {}),
+              failedLoginAttempts: { increment: 1 },
             },
+            select: { failedLoginAttempts: true },
           })
-          .catch(() => {});
-        if (shouldLock) {
+          .catch(() => null);
+        if (updated && updated.failedLoginAttempts >= MAX_FAILED_ATTEMPTS) {
+          // Lock the account. Separate update to avoid overwriting
+          // lockedUntil on every attempt past the threshold.
+          await db.account
+            .update({
+              where: { id: preCheck.id },
+              data: { lockedUntil: new Date(Date.now() + LOCK_DURATION_MS) },
+            })
+            .catch(() => {});
           return NextResponse.json(
             {
               error: `Too many failed attempts. Your account is locked for 15 minutes.`,
@@ -110,6 +128,9 @@ export async function POST(req: NextRequest) {
         errMsg.toLowerCase().includes("not confirmed") ||
         errMsg.toLowerCase().includes("email not confirmed")
       ) {
+        // Keep this distinct message: an unconfirmed-email user genuinely
+        // needs a different remediation than a wrong password. The email
+        // existence is already implied by the registration flow.
         return NextResponse.json(
           {
             error:
@@ -119,17 +140,10 @@ export async function POST(req: NextRequest) {
           { status: 403 },
         );
       }
-      // Check if the account exists in the DB but the auth user was deleted
-      // in Supabase Dashboard. If so, clean up the orphaned accounts row
-      // so the user can re-register.
-      if (preCheck && !preCheck.supabaseAuthUid) {
-        console.warn(
-          `[login] ${email} exists in accounts but has no supabaseAuthUid - needs migration`,
-        );
-        return unauthorized(
-          "Your account needs to be migrated. Use 'Forgot password' to set a new password, or contact your administrator.",
-        );
-      }
+      // Orphan-reconciliation: if the accounts row exists but the Supabase
+      // auth user was deleted (e.g. via dashboard), clean up silently and
+      // return the SAME generic error so an attacker can't enumerate which
+      // emails have orphan rows.
       if (preCheck?.supabaseAuthUid && isSupabaseConfigured()) {
         try {
           const admin = createSupabaseAdminClient();
@@ -141,14 +155,13 @@ export async function POST(req: NextRequest) {
               `[login] cleaning orphaned accounts row for ${email} (auth user deleted)`,
             );
             await db.account.delete({ where: { id: preCheck.id } });
-            return unauthorized(
-              "Your account no longer exists. Please register again.",
-            );
           }
         } catch {
           // Can't verify - fall through to the generic error.
         }
       }
+      // Generic message for all other failures (wrong password, no account,
+      // migration needed). Prevents account enumeration.
       return unauthorized(
         "Incorrect email or password. Check your details and try again.",
       );

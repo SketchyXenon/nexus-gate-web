@@ -62,6 +62,7 @@ import {
 } from "@/lib/api-client";
 import { ROLE_LABELS } from "@/lib/rbac";
 import { DiceBearAvatar } from "@/components/nexus/dicebear-avatar";
+import { NotificationPreferences } from "@/components/nexus/notification-preferences";
 import { PasswordStrengthMeter } from "@/components/nexus/password-meter";
 import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -256,21 +257,32 @@ export function ProfileView() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      {/* Header card */}
+      {/* Header card with gradient accent */}
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-        <Card>
-          <CardContent className="p-6">
+        <Card className="relative overflow-hidden border-primary/20">
+          <div className="absolute -top-16 -right-16 h-48 w-48 rounded-full bg-primary/10 blur-3xl pointer-events-none" />
+          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary via-primary/60 to-transparent" />
+          <CardContent className="relative p-6">
             <div className="flex items-center gap-4">
-              <DiceBearAvatar fullName={profile.fullName} size={72} />
+              <div className="relative">
+                <DiceBearAvatar fullName={profile.fullName} size={72} />
+                <div className="absolute -bottom-1 -right-1 grid place-items-center h-6 w-6 rounded-full bg-background border-2 border-background">
+                  <div className={`h-3 w-3 rounded-full ${profile.status === "ACTIVE" ? "bg-emerald-500" : profile.status === "SUSPENDED" ? "bg-red-500" : "bg-amber-500"}`} />
+                </div>
+              </div>
               <div className="flex-1 min-w-0">
                 <h2 className="font-heading text-xl font-bold truncate">
                   {profile.fullName}
                 </h2>
-                <p className="text-sm text-muted-foreground truncate">
+                <p className="text-sm text-muted-foreground truncate flex items-center gap-1">
+                  <Mail className="h-3 w-3 shrink-0" />
                   {profile.email}
                 </p>
-                <div className="flex gap-2 mt-2">
-                  <Badge variant="secondary">{ROLE_LABELS[profile.role]}</Badge>
+                <div className="flex gap-2 mt-2 flex-wrap">
+                  <Badge variant="secondary" className="gap-1">
+                    <Shield className="h-3 w-3" />
+                    {ROLE_LABELS[profile.role]}
+                  </Badge>
                   <Badge
                     variant="outline"
                     className={
@@ -283,6 +295,12 @@ export function ProfileView() {
                   >
                     {profile.status}
                   </Badge>
+                  {profile.lastLoginAt && (
+                    <Badge variant="outline" className="text-muted-foreground gap-1">
+                      <Clock className="h-3 w-3" />
+                      Last login: {new Date(profile.lastLoginAt).toLocaleDateString()}
+                    </Badge>
+                  )}
                 </div>
               </div>
             </div>
@@ -591,6 +609,9 @@ export function ProfileView() {
 
       {/* Registered Devices — self-service device key management */}
       <RegisteredDevicesCard />
+
+      {/* Notification preferences */}
+      <NotificationPreferences />
 
       {/* Save confirmation dialog */}
       <AlertDialog open={saveConfirmOpen} onOpenChange={setSaveConfirmOpen}>

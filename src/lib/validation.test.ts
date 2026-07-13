@@ -1,10 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   registerSchema,
   loginSchema,
   updateProfileSchema,
   programSchema,
   passwordSchema,
+  forgotPasswordSchema,
 } from "./validation";
 
 // ====================================================================
@@ -39,26 +40,17 @@ describe("registerSchema", () => {
   });
 
   it("rejects an invalid program code", () => {
-    const result = registerSchema.safeParse({
-      ...validInput,
-      program: "INVALID",
-    });
+    const result = registerSchema.safeParse({ ...validInput, program: "INVALID" });
     expect(result.success).toBe(false);
   });
 
   it("rejects a weak password (no number)", () => {
-    const result = registerSchema.safeParse({
-      ...validInput,
-      password: "WeakPassword",
-    });
+    const result = registerSchema.safeParse({ ...validInput, password: "WeakPassword" });
     expect(result.success).toBe(false);
   });
 
   it("rejects a weak password (no uppercase)", () => {
-    const result = registerSchema.safeParse({
-      ...validInput,
-      password: "weakpass1",
-    });
+    const result = registerSchema.safeParse({ ...validInput, password: "weakpass1" });
     expect(result.success).toBe(false);
   });
 
@@ -68,10 +60,7 @@ describe("registerSchema", () => {
   });
 
   it("rejects an invalid email", () => {
-    const result = registerSchema.safeParse({
-      ...validInput,
-      email: "not-an-email",
-    });
+    const result = registerSchema.safeParse({ ...validInput, email: "not-an-email" });
     expect(result.success).toBe(false);
   });
 
@@ -81,18 +70,12 @@ describe("registerSchema", () => {
   });
 
   it("rejects a name with numbers", () => {
-    const result = registerSchema.safeParse({
-      ...validInput,
-      fullName: "Jane Doe 123",
-    });
+    const result = registerSchema.safeParse({ ...validInput, fullName: "Jane Doe 123" });
     expect(result.success).toBe(false);
   });
 
   it("lowercases the email on parse", () => {
-    const result = registerSchema.safeParse({
-      ...validInput,
-      email: "STUDENT@EXAMPLE.COM",
-    });
+    const result = registerSchema.safeParse({ ...validInput, email: "STUDENT@EXAMPLE.COM" });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.email).toBe("student@example.com");
@@ -100,14 +83,7 @@ describe("registerSchema", () => {
   });
 
   it("accepts all valid program codes", () => {
-    for (const program of [
-      "BSIT",
-      "BSMx",
-      "BIT-CT",
-      "BIT-DT",
-      "BIT-ET",
-      "BIT-ELT",
-    ]) {
+    for (const program of ["BSIT", "BSMx", "BIT-CT", "BIT-DT", "BIT-ET", "BIT-ELT"]) {
       const result = registerSchema.safeParse({ ...validInput, program });
       expect(result.success).toBe(true);
     }
@@ -162,40 +138,24 @@ describe("updateProfileSchema", () => {
   });
 
   it("accepts a name + valid program update", () => {
-    const result = updateProfileSchema.safeParse({
-      ...validInput,
-      program: "BSIT",
-    });
+    const result = updateProfileSchema.safeParse({ ...validInput, program: "BSIT" });
     expect(result.success).toBe(true);
   });
 
   it("rejects an INVALID program code (must come from the dropdown)", () => {
     // This enforces server-side that the program comes from the dropdown,
     // not a free-text input.
-    const result = updateProfileSchema.safeParse({
-      ...validInput,
-      program: "HACKED",
-    });
+    const result = updateProfileSchema.safeParse({ ...validInput, program: "HACKED" });
     expect(result.success).toBe(false);
   });
 
   it("accepts an empty program string (clearing the course)", () => {
-    const result = updateProfileSchema.safeParse({
-      ...validInput,
-      program: "",
-    });
+    const result = updateProfileSchema.safeParse({ ...validInput, program: "" });
     expect(result.success).toBe(true);
   });
 
   it("accepts all valid program codes", () => {
-    for (const program of [
-      "BSIT",
-      "BSMx",
-      "BIT-CT",
-      "BIT-DT",
-      "BIT-ET",
-      "BIT-ELT",
-    ]) {
+    for (const program of ["BSIT", "BSMx", "BIT-CT", "BIT-DT", "BIT-ET", "BIT-ELT"]) {
       const result = updateProfileSchema.safeParse({ ...validInput, program });
       expect(result.success).toBe(true);
     }
@@ -209,43 +169,27 @@ describe("updateProfileSchema", () => {
   });
 
   it("rejects an invalid year (0 or 7+)", () => {
-    expect(
-      updateProfileSchema.safeParse({ ...validInput, year: 0 }).success,
-    ).toBe(false);
-    expect(
-      updateProfileSchema.safeParse({ ...validInput, year: 7 }).success,
-    ).toBe(false);
+    expect(updateProfileSchema.safeParse({ ...validInput, year: 0 }).success).toBe(false);
+    expect(updateProfileSchema.safeParse({ ...validInput, year: 7 }).success).toBe(false);
   });
 
   it("accepts a valid section (number-letter format)", () => {
-    const result = updateProfileSchema.safeParse({
-      ...validInput,
-      section: "2-B",
-    });
+    const result = updateProfileSchema.safeParse({ ...validInput, section: "2-B" });
     expect(result.success).toBe(true);
   });
 
   it("rejects an invalid section (letter only, no number)", () => {
-    const result = updateProfileSchema.safeParse({
-      ...validInput,
-      section: "A",
-    });
+    const result = updateProfileSchema.safeParse({ ...validInput, section: "A" });
     expect(result.success).toBe(false);
   });
 
   it("rejects an invalid section (number only, no letter)", () => {
-    const result = updateProfileSchema.safeParse({
-      ...validInput,
-      section: "2",
-    });
+    const result = updateProfileSchema.safeParse({ ...validInput, section: "2" });
     expect(result.success).toBe(false);
   });
 
   it("rejects a name that's too short", () => {
-    const result = updateProfileSchema.safeParse({
-      ...validInput,
-      fullName: "A",
-    });
+    const result = updateProfileSchema.safeParse({ ...validInput, fullName: "A" });
     expect(result.success).toBe(false);
   });
 });
@@ -333,5 +277,84 @@ describe("OTP removal verification", () => {
   it("the api-client module does NOT export useResendOtp", async () => {
     const mod = await import("./api-client");
     expect((mod as Record<string, unknown>).useResendOtp).toBeUndefined();
+  });
+});
+
+describe("forgotPasswordSchema — open-redirect defense", () => {
+  beforeEach(() => {
+    delete process.env.NEXT_PUBLIC_APP_URL;
+  });
+  afterEach(() => {
+    delete process.env.NEXT_PUBLIC_APP_URL;
+  });
+
+  it("accepts a same-origin redirectTo when APP_URL is set", () => {
+    process.env.NEXT_PUBLIC_APP_URL = "https://nexus.example.com";
+    
+    const r = forgotPasswordSchema.safeParse({
+      email: "user@example.com",
+      redirectTo: "https://nexus.example.com/reset?token=abc",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects a cross-origin redirectTo (open-redirect block) when APP_URL is set", () => {
+    process.env.NEXT_PUBLIC_APP_URL = "https://nexus.example.com";
+    
+    const r = forgotPasswordSchema.safeParse({
+      email: "user@example.com",
+      redirectTo: "https://evil.example.com/phish",
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("FAILS CLOSED: rejects all absolute redirectTo when APP_URL is unset (tautology fix)", () => {
+    delete process.env.NEXT_PUBLIC_APP_URL;
+    
+    // Previously this passed due to `parsed.origin === parsed.origin` tautology.
+    const r = forgotPasswordSchema.safeParse({
+      email: "user@example.com",
+      redirectTo: "https://evil.example.com/phish",
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("still accepts when redirectTo is omitted (optional field)", () => {
+    process.env.NEXT_PUBLIC_APP_URL = "https://nexus.example.com";
+    
+    const r = forgotPasswordSchema.safeParse({
+      email: "user@example.com",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects a malformed redirectTo URL", () => {
+    process.env.NEXT_PUBLIC_APP_URL = "https://nexus.example.com";
+
+    const r = forgotPasswordSchema.safeParse({
+      email: "user@example.com",
+      redirectTo: "not-a-url",
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("accepts a relative path redirectTo (inherently same-origin)", () => {
+    process.env.NEXT_PUBLIC_APP_URL = "https://nexus.example.com";
+
+    const r = forgotPasswordSchema.safeParse({
+      email: "user@example.com",
+      redirectTo: "/reset-password?token=abc",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts a relative path redirectTo even when APP_URL is unset", () => {
+    delete process.env.NEXT_PUBLIC_APP_URL;
+
+    const r = forgotPasswordSchema.safeParse({
+      email: "user@example.com",
+      redirectTo: "/reset-password",
+    });
+    expect(r.success).toBe(true);
   });
 });

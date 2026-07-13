@@ -69,6 +69,7 @@ import {
 import { ROLE_LABELS } from "@/lib/rbac";
 import { PROGRAMS, getProgramLabel } from "@/lib/programs";
 import { toast } from "@/hooks/use-toast";
+import { useDebounce } from "@/hooks/use-debounce";
 import { format } from "date-fns";
 
 const STATUS_LABELS: Record<Account["status"], string> = {
@@ -104,12 +105,13 @@ type EditTarget = {
 
 export function AccountsView({ currentUser }: { currentUser?: Account }) {
   const [q, setQ] = useState("");
+  const debouncedQ = useDebounce(q, 300);
   const [roleFilter, setRoleFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [sortBy, setSortBy] = useState<string>("created-desc");
   const [page, setPage] = useState(1);
   const { data, isLoading, isError } = useAccounts({
-    q: q || undefined,
+    q: debouncedQ || undefined,
     role: roleFilter === "ALL" ? undefined : roleFilter,
     page,
   });

@@ -10,8 +10,14 @@
 // worker ensures the app SHELL loads instantly even on bad WiFi.
 // ====================================================================
 
-const CACHE_VERSION = "nexus-gate-v1";
-const APP_SHELL = ["/", "/manifest.json", "/icon-192.svg", "/icon-512.svg"];
+// Bumped to v2: authed API responses are no longer cached (cross-user leak fix).
+const CACHE_VERSION = "nexus-gate-v2";
+const APP_SHELL = [
+  "/",
+  "/manifest.json",
+  "/icon-192.svg",
+  "/icon-512.svg",
+];
 
 // ---- Install: pre-cache the app shell ----
 self.addEventListener("install", (event) => {
@@ -20,7 +26,7 @@ self.addEventListener("install", (event) => {
       return cache.addAll(APP_SHELL).catch(() => {
         // If any resource fails, continue — we'll cache on-demand
       });
-    }),
+    })
   );
   self.skipWaiting();
 });
@@ -32,9 +38,9 @@ self.addEventListener("activate", (event) => {
       return Promise.all(
         keys
           .filter((key) => key !== CACHE_VERSION)
-          .map((key) => caches.delete(key)),
+          .map((key) => caches.delete(key))
       );
-    }),
+    })
   );
   self.clients.claim();
 });
@@ -54,13 +60,19 @@ self.addEventListener("fetch", (event) => {
   // Skip Next.js HMR in development
   if (url.pathname.startsWith("/_next/webpack-hmr")) return;
 
-  // ---- API requests: network-first ----
+  // ---- API requests: network-first, but NEVER cache authed endpoints ----
+  // Caching /api/auth/* or per-user endpoints risks cross-user data leakage
+  // on shared devices (User A's cached /api/auth/me served to User B after
+  // logout). Only cache public, shared endpoints.
   if (url.pathname.startsWith("/api/")) {
+    const isCacheable =
+      url.pathname === "/api/health" ||
+      url.pathname === "/api/settings" ||
+      url.pathname === "/api/whitelist/template";
     event.respondWith(
       fetch(request)
         .then((response) => {
-          // Cache successful GET responses for offline fallback
-          if (response.ok) {
+          if (response.ok && isCacheable) {
             const clone = response.clone();
             caches.open(CACHE_VERSION).then((cache) => {
               cache.put(request, clone);
@@ -69,20 +81,20 @@ self.addEventListener("fetch", (event) => {
           return response;
         })
         .catch(() => {
-          // Offline — try cache
-          return caches.match(request).then((cached) => {
-            return (
-              cached ||
-              new Response(
+          // Offline — only public endpoints have a useful cache fallback.
+          if (isCacheable) {
+            return caches.match(request).then((cached) => {
+              return cached || new Response(
                 JSON.stringify({ error: "You're offline. Please reconnect." }),
-                {
-                  status: 503,
-                  headers: { "Content-Type": "application/json" },
-                },
-              )
-            );
-          });
-        }),
+                { status: 503, headers: { "Content-Type": "application/json" } }
+              );
+            });
+          }
+          return new Response(
+            JSON.stringify({ error: "You're offline. Please reconnect." }),
+            { status: 503, headers: { "Content-Type": "application/json" } }
+          );
+        })
     );
     return;
   }
@@ -123,7 +135,7 @@ self.addEventListener("fetch", (event) => {
         .catch(() => {
           return caches.match("/");
         });
-    }),
+    })
   );
 });
 

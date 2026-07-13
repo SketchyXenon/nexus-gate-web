@@ -49,8 +49,10 @@ model Account {
   notificationEndpoint String?  @map("notification_endpoint")
   notificationKeys     String?  @map("notification_keys")
   passkeyCredential    String?  @map("passkey_credential")
+  passkeyCredentialId  String?  @map("passkey_credential_id")
   supabaseAuthUid      String?  @unique @map("supabase_auth_uid")
   notificationEnabled  Boolean  @default(false) @map("notification_enabled")
+  notificationPrefs    Json?    @map("notification_prefs")
   lastLoginAt     DateTime?     @map("last_login_at")
   failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
   lockedUntil     DateTime?     @map("locked_until")
@@ -77,6 +79,10 @@ model Account {
   @@index([lockedUntil])
   // Soft activity sort
   @@index([lastLoginAt])
+  // Passkey login: O(log N) lookup by credential ID (replaces N-row scan)
+  @@index([passkeyCredentialId])
+  // Admin roster sort
+  @@index([createdAt])
 
   @@map("accounts")
 }
@@ -156,7 +162,7 @@ model Event {
   description   String?
   eventSecret   String    @default(cuid()) @map("event_secret")
   ownerId       String    @map("owner_id")
-  owner         Account   @relation(fields: [ownerId], references: [id])
+  owner         Account   @relation(fields: [ownerId], references: [id], onDelete: Restrict)
   scope         String    @default("academic")
   targetProgram String?   @map("target_program")
   targetSection String?   @map("target_section")
@@ -188,6 +194,8 @@ model Event {
   @@index([status, scheduledAt])
   // Organizer dashboard: list my events
   @@index([ownerId, status])
+  // Organizer dashboard sorted view (ownerId + status + scheduledAt)
+  @@index([ownerId, status, scheduledAt])
   // Strict eligibility: filter by exact program+section match
   @@index([targetProgram, targetSection, status])
   // Cron reminders: upcoming events by scheduled time
@@ -255,7 +263,7 @@ model AttendanceOverride {
   adminId     String   @map("admin_id")
   admin       Account  @relation(fields: [adminId], references: [id], onDelete: Cascade)
   studentId   Int      @map("student_id")
-  student     AuthorizedStudent @relation(fields: [studentId], references: [studentId])
+  student     AuthorizedStudent @relation(fields: [studentId], references: [studentId], onDelete: Cascade)
   reason      String
   createdAt   DateTime @default(now()) @map("created_at")
 

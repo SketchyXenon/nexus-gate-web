@@ -15,7 +15,9 @@ const TTL_HOURS = 1;
  * Find an existing attendance record by idempotency key.
  * Returns null if not found.
  */
-export async function findIdempotentAttendance(key: string) {
+export async function findIdempotentAttendance(
+  key: string
+) {
   return db.eventAttendance.findUnique({
     where: { idempotencyKey: key },
   });

@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { registerDeviceKey, revokeDeviceKey } from "@/lib/device-key-server";
-import {
-  badRequest,
-  forbidden,
-  notFound,
-  parseBody,
-  requireAuth,
-} from "@/lib/api";
+import { badRequest, forbidden, notFound, parseBody, requireAuth } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import { z } from "zod";
 
@@ -56,10 +50,7 @@ export async function POST(req: NextRequest) {
   const { computeFingerprint } = await import("@/lib/device-key-server");
   const expectedFingerprint = await computeFingerprint(publicKeyJwk);
   if (expectedFingerprint !== fingerprint) {
-    return badRequest(
-      "Fingerprint does not match the public key.",
-      "FINGERPRINT_MISMATCH",
-    );
+    return badRequest("Fingerprint does not match the public key.", "FINGERPRINT_MISMATCH");
   }
 
   // ---- DoS defense: cap active devices per account ----
@@ -69,7 +60,7 @@ export async function POST(req: NextRequest) {
   if (existingCount >= MAX_DEVICES_PER_ACCOUNT) {
     return forbidden(
       `Maximum ${MAX_DEVICES_PER_ACCOUNT} active devices per account. Revoke an old device first.`,
-      "DEVICE_LIMIT",
+      "DEVICE_LIMIT"
     );
   }
 

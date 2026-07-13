@@ -18,6 +18,7 @@ import {
   X,
   Users,
   Clock,
+  CalendarPlus,
 } from "lucide-react";
 import {
   Card,
@@ -55,6 +56,7 @@ import {
   type EventStatusFilter,
 } from "@/lib/api-client";
 import { PROGRAMS, getProgramLabel } from "@/lib/programs";
+import { downloadIcsFile } from "@/lib/ics-export";
 import { toast } from "@/hooks/use-toast";
 import { useDebounce } from "@/hooks/use-debounce";
 import { format } from "date-fns";
@@ -138,8 +140,7 @@ export function EventsView() {
   const endedEvents = (historyData?.events ?? [])
     .filter(
       (e) =>
-        e.timeStatus === "ended" &&
-        !events.some((active) => active.id === e.id),
+        e.timeStatus === "ended" && !events.some((active) => active.id === e.id)
     )
     // When a search is active, also filter the past-events list by the same
     // query so the user doesn't see unrelated rows.
@@ -151,7 +152,8 @@ export function EventsView() {
 
   // The Section field is shown when a specific program is selected AND the
   // scope is "academic" (departmental events clear program/section anyway).
-  const showSectionField = scope === "academic" && targetProgram !== "__all__";
+  const showSectionField =
+    scope === "academic" && targetProgram !== "__all__";
 
   function validate(): boolean {
     const next: FormErrors = {};
@@ -288,9 +290,7 @@ export function EventsView() {
       }
     } catch (e) {
       toast({
-        title: hardDeleteMode
-          ? "Could not delete event"
-          : "Could not cancel event",
+        title: hardDeleteMode ? "Could not delete event" : "Could not cancel event",
         description: e instanceof Error ? e.message : undefined,
         variant: "destructive",
       });
@@ -392,7 +392,10 @@ export function EventsView() {
                   }}
                   disabled={scope === "departmental"}
                 >
-                  <SelectTrigger className="w-full" aria-label="Target program">
+                  <SelectTrigger
+                    className="w-full"
+                    aria-label="Target program"
+                  >
                     <SelectValue placeholder="All programs" />
                   </SelectTrigger>
                   <SelectContent>
@@ -443,9 +446,7 @@ export function EventsView() {
                   aria-invalid={!!errors.scheduledAt}
                 />
                 {errors.scheduledAt && (
-                  <p className="text-xs text-destructive">
-                    {errors.scheduledAt}
-                  </p>
+                  <p className="text-xs text-destructive">{errors.scheduledAt}</p>
                 )}
               </div>
               <div className="space-y-1.5">
@@ -461,14 +462,10 @@ export function EventsView() {
 
             {/* Check-in window — time only (uses event date) */}
             <div className="space-y-2 rounded-lg border border-border/50 p-3 bg-muted/20">
-              <p className="text-xs font-medium text-muted-foreground">
-                Check-in window (optional)
-              </p>
+              <p className="text-xs font-medium text-muted-foreground">Check-in window (optional)</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <Label htmlFor="ciOpens" className="text-[11px]">
-                    Opens at
-                  </Label>
+                  <Label htmlFor="ciOpens" className="text-[11px]">Opens at</Label>
                   <Input
                     id="ciOpens"
                     type="time"
@@ -479,9 +476,7 @@ export function EventsView() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor="ciCloses" className="text-[11px]">
-                    Closes at
-                  </Label>
+                  <Label htmlFor="ciCloses" className="text-[11px]">Closes at</Label>
                   <Input
                     id="ciCloses"
                     type="time"
@@ -492,41 +487,28 @@ export function EventsView() {
                   />
                 </div>
               </div>
-              <p className="text-[10px] text-muted-foreground">
-                Leave blank for defaults.
-              </p>
+              <p className="text-[10px] text-muted-foreground">Leave blank for defaults.</p>
             </div>
 
             {/* Time-out toggle + window */}
             <label className="flex items-center gap-3 p-3 rounded-lg border border-border/50 bg-muted/20 cursor-pointer hover:bg-muted/40 transition-colors">
-              <input
-                type="checkbox"
-                checked={enableTimeOut}
-                onChange={(e) => setEnableTimeOut(e.target.checked)}
-                className="h-4 w-4 rounded accent-primary"
-              />
+              <input type="checkbox" checked={enableTimeOut} onChange={(e) => setEnableTimeOut(e.target.checked)} className="h-4 w-4 rounded accent-primary" />
               <div className="flex-1 flex items-center gap-1.5">
                 <p className="text-sm font-medium">Time-out mode</p>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
                   </TooltipTrigger>
-                  <TooltipContent>
-                    Students scan again to check out (e.g. 4:00 PM – 6:00 PM)
-                  </TooltipContent>
+                  <TooltipContent>Students scan again to check out (e.g. 4:00 PM – 6:00 PM)</TooltipContent>
                 </Tooltip>
               </div>
             </label>
             {enableTimeOut && (
               <div className="space-y-2 rounded-lg border border-border/50 p-3 bg-muted/20">
-                <p className="text-xs font-medium text-muted-foreground">
-                  Time-out window
-                </p>
+                <p className="text-xs font-medium text-muted-foreground">Time-out window</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div className="space-y-1">
-                    <Label htmlFor="toOpens" className="text-[11px]">
-                      Opens at
-                    </Label>
+                    <Label htmlFor="toOpens" className="text-[11px]">Opens at</Label>
                     <Input
                       id="toOpens"
                       type="time"
@@ -537,9 +519,7 @@ export function EventsView() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label htmlFor="toCloses" className="text-[11px]">
-                      Closes at
-                    </Label>
+                    <Label htmlFor="toCloses" className="text-[11px]">Closes at</Label>
                     <Input
                       id="toCloses"
                       type="time"
@@ -567,19 +547,13 @@ export function EventsView() {
                 disabled={scope === "departmental"}
               />
               <div className="space-y-0.5">
-                <Label
-                  htmlFor="delegatable"
-                  className="cursor-pointer text-sm flex items-center gap-1.5"
-                >
+                <Label htmlFor="delegatable" className="cursor-pointer text-sm flex items-center gap-1.5">
                   Allow QR delegation
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
                     </TooltipTrigger>
-                    <TooltipContent>
-                      Other organizers in this program can project this event's
-                      QR if you're absent
-                    </TooltipContent>
+                    <TooltipContent>Other organizers in this program can project this event's QR if you're absent</TooltipContent>
                   </Tooltip>
                 </Label>
               </div>
@@ -663,10 +637,7 @@ export function EventsView() {
 
               {/* Scope filter */}
               <Select value={scopeFilter} onValueChange={setScopeFilter}>
-                <SelectTrigger
-                  className="h-9 w-full"
-                  aria-label="Filter by scope"
-                >
+                <SelectTrigger className="h-9 w-full" aria-label="Filter by scope">
                   <SelectValue placeholder="All scopes" />
                 </SelectTrigger>
                 <SelectContent>
@@ -678,10 +649,7 @@ export function EventsView() {
 
               {/* Status filter */}
               <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger
-                  className="h-9 w-full"
-                  aria-label="Filter by status"
-                >
+                <SelectTrigger className="h-9 w-full" aria-label="Filter by status">
                   <SelectValue placeholder="All statuses" />
                 </SelectTrigger>
                 <SelectContent>
@@ -697,7 +665,10 @@ export function EventsView() {
                 value={sortBy}
                 onValueChange={(v) => setSortBy(v as EventSort)}
               >
-                <SelectTrigger className="h-9 w-full" aria-label="Sort by date">
+                <SelectTrigger
+                  className="h-9 w-full"
+                  aria-label="Sort by date"
+                >
                   <SelectValue placeholder="Sort" />
                 </SelectTrigger>
                 <SelectContent>
@@ -721,9 +692,7 @@ export function EventsView() {
           <Card>
             <CardContent className="p-10 text-center">
               <CalendarX className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
-              <p className="text-sm font-medium">
-                No events match your filters
-              </p>
+              <p className="text-sm font-medium">No events match your filters</p>
               <p className="text-xs text-muted-foreground mt-1">
                 {hasActiveFilters
                   ? "Try clearing filters or adjusting your search."
@@ -869,11 +838,7 @@ export function EventsView() {
           }
         }}
         destructive={true}
-        title={
-          hardDeleteMode
-            ? "Permanently delete this event?"
-            : "Cancel this event?"
-        }
+        title={hardDeleteMode ? "Permanently delete this event?" : "Cancel this event?"}
         description={
           hardDeleteMode
             ? `This will permanently delete "${deleteTarget?.title ?? ""}" and ALL attendance records for it. This cannot be undone.`
@@ -999,7 +964,7 @@ function EventCard({
                   Check-in: {format(new Date(event.checkInOpensAt), "h:mm a")} –{" "}
                   {format(
                     new Date(event.checkInClosesAt || event.scheduledAt),
-                    "h:mm a",
+                    "h:mm a"
                   )}
                 </span>
               </p>
@@ -1011,7 +976,7 @@ function EventCard({
                   Time-out: {format(new Date(event.timeOutOpensAt), "h:mm a")} –{" "}
                   {format(
                     new Date(event.timeOutClosesAt || event.scheduledAt),
-                    "h:mm a",
+                    "h:mm a"
                   )}
                 </span>
               </p>
@@ -1062,6 +1027,28 @@ function EventCard({
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>Duplicate (copy to form)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-muted-foreground hover:text-primary"
+                    onClick={() => {
+                      downloadIcsFile({
+                        title: event.title,
+                        description: event.description,
+                        scheduledAt: event.scheduledAt,
+                        endsAt: event.endsAt,
+                      });
+                      toast({ title: "Calendar file downloaded", description: `Added "${event.title}" to your calendar.` });
+                    }}
+                    aria-label={`Add ${event.title} to calendar`}
+                  >
+                    <CalendarPlus className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Add to calendar (.ics)</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>

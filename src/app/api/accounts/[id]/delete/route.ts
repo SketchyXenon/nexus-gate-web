@@ -45,6 +45,17 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
       }
     }
 
+    // Pre-check: block deletion if the account owns any events. The FK
+    // constraint (events_owner_id_fkey ON DELETE RESTRICT) would throw
+    // P2003; checking first lets us return a clear, actionable message.
+    const ownedEventCount = await db.event.count({ where: { ownerId: id } });
+    if (ownedEventCount > 0) {
+      return forbidden(
+        `This account owns ${ownedEventCount} event(s). Reassign or delete those events before deleting the account.`,
+        "OWNS_EVENTS",
+      );
+    }
+
     // Revoke all refresh tokens first (clean up sessions).
     await db.refreshToken.updateMany({
       where: { accountId: id, revokedAt: null },

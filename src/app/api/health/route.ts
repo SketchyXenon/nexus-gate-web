@@ -16,16 +16,14 @@ export async function GET() {
   try {
     await Promise.race([
       db.$queryRaw`SELECT 1`,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("DB timeout")), 3000),
-      ),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("DB timeout")), 3000)),
     ]);
     checks.connectivity = "ok";
   } catch {
     checks.connectivity = "down";
     return NextResponse.json(
       { status: "degraded", timestamp },
-      { status: 503 },
+      { status: 503 }
     );
   }
 
@@ -37,7 +35,7 @@ export async function GET() {
     checks.query = "down";
     return NextResponse.json(
       { status: "degraded", timestamp },
-      { status: 503 },
+      { status: 503 }
     );
   }
 
@@ -45,23 +43,16 @@ export async function GET() {
   const account = await getApiAccount().catch(() => null);
   if (account && account.role === "ADMIN") {
     // Admins get full diagnostics for troubleshooting.
-    return NextResponse.json(
-      {
-        status: "ok",
-        timestamp,
-        checks,
-        uptime: process.uptime(),
-      },
-      { headers: { "Cache-Control": "private, no-cache" } },
-    );
+    return NextResponse.json({
+      status: "ok",
+      timestamp,
+      checks,
+      uptime: process.uptime(),
+    }, { headers: { "Cache-Control": "private, no-cache" } });
   }
 
   return NextResponse.json(
     { status: "ok", timestamp },
-    {
-      headers: {
-        "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30",
-      },
-    },
+    { headers: { "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30" } },
   );
 }

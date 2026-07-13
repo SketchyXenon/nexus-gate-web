@@ -3,7 +3,9 @@ import { withSentryConfig } from "@sentry/nextjs";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  reactStrictMode: false,
+  // Strict mode surfaces bugs (double-invoke effects in dev) that hide in
+  // production. The codebase has been audited to be strict-mode-safe.
+  reactStrictMode: true,
   poweredByHeader: false,
   compiler: {
     removeConsole: process.env.NODE_ENV === "production" ? { exclude: ["error", "warn"] } : false,

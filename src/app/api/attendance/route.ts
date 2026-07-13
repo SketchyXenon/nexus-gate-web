@@ -103,22 +103,16 @@ export async function POST(req: NextRequest) {
     // window is live. If yes, record the time-out. If no, return "already scanned."
     const eventForTimeOut = await db.event.findUnique({
       where: { id: signed.certificate.eventId },
-      select: {
-        enableTimeOut: true,
-        timeOutOpensAt: true,
-        timeOutClosesAt: true,
-        scheduledAt: true,
-        endsAt: true,
-        checkInOpensAt: true,
-        checkInClosesAt: true,
-        status: true,
-      },
     });
-    if (eventForTimeOut?.enableTimeOut) {
+    if (eventForTimeOut?.enableTimeOut && eventForTimeOut.status === "active") {
       const timeOutWindows = getEventTimeWindows(eventForTimeOut);
       if (timeOutWindows.timeOut?.isLive) {
-        // Time-out window is live — record the time-out.
-        // Verify the certificate signature + timestamp before updating.
+        // Time-out window is live — run the FULL anti-cheat pipeline before
+        // recording the time-out. Previously this path only verified the
+        // Ed25519 signature + timestamp, skipping token HMAC, event match,
+        // and sub-frame liveness. That let a student with a registered
+        // device fake a time-out with any garbage token. Now we verify the
+        // same 10-step pipeline as a check-in scan.
         const sigResult = await verifySignedCertificate(signed);
         if (!sigResult.ok) {
           return badRequest(
@@ -137,7 +131,70 @@ export async function POST(req: NextRequest) {
             tsResult.reason,
           );
         }
-        // Update the timeOutAt on the existing attendance record.
+
+        // Step 6: validate the token HMAC against scannedAt (offline-first).
+        const timeOutTokenValidation = validateQrPayload(
+          signed.certificate.token,
+          eventForTimeOut.eventSecret,
+          signed.certificate.scannedAt,
+        );
+        if (!timeOutTokenValidation.ok) {
+          return NextResponse.json(
+            {
+              error: `Scan rejected: ${timeOutTokenValidation.reason}`,
+              code: timeOutTokenValidation.reason,
+            },
+            { status: 400 },
+          );
+        }
+
+        // Step 7: validate event match (certificate eventId = token eventId).
+        if (timeOutTokenValidation.eventId !== signed.certificate.eventId) {
+          return badRequest("This token does not match the event", "EVENT_MISMATCH");
+        }
+        const timeOutEventMatch = validateCertificateEventMatch(
+          signed.certificate,
+          timeOutTokenValidation.eventId,
+        );
+        if (!timeOutEventMatch.ok) {
+          return badRequest("Certificate event mismatch", "EVENT_MISMATCH");
+        }
+
+        // Step 8: multi-frame liveness (sub-frame proof).
+        if (
+          timeOutTokenValidation.format === "v8" &&
+          timeOutTokenValidation.timeBlock !== undefined
+        ) {
+          if (signed.certificate.subFrames.length < MIN_SUB_FRAMES) {
+            return badRequest(
+              `Scan rejected: insufficient frames captured. Hold the camera steady for at least 2 seconds.`,
+              "insufficient_subframes",
+            );
+          }
+          const liveness = verifySubFrameLiveness(
+            signed.certificate.subFrames,
+            eventForTimeOut.eventSecret,
+            signed.certificate.eventId,
+            timeOutTokenValidation.timeBlock,
+          );
+          if (!liveness.ok) {
+            return badRequest(
+              `Scan rejected: ${liveness.reason}. Please scan again — hold the camera steady for 2 seconds.`,
+              liveness.reason,
+            );
+          }
+        }
+
+        // Offline grace: the scan must be synced within 15 minutes.
+        const timeOutScanAgeMs = Date.now() - new Date(signed.certificate.scannedAt).getTime();
+        const MAX_OFFLINE_GRACE_MS = 15 * 60 * 1000;
+        if (timeOutScanAgeMs > MAX_OFFLINE_GRACE_MS) {
+          return forbidden(
+            "This scan is too old. Offline scans must be synced within 15 minutes.",
+          );
+        }
+
+        // All checks passed — record the time-out using scannedAt (offline-first).
         const updated = await db.eventAttendance.update({
           where: { id: existing.id },
           data: { timeOutAt: new Date(signed.certificate.scannedAt) },
@@ -159,8 +216,7 @@ export async function POST(req: NextRequest) {
           ok: true,
           action: "time_out",
           timeOutAt: updated.timeOutAt,
-          message:
-            "Time-out recorded. You're marked as checked out for this event.",
+          message: "Time-out recorded. You're marked as checked out for this event.",
         });
       }
     }

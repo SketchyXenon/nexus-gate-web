@@ -10,6 +10,10 @@ import {
 } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import { invalidateAccountCache } from "@/lib/supabase-session";
+import {
+  createSupabaseAdminClient,
+  isSupabaseConfigured,
+} from "@/lib/supabase-server";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -107,6 +111,39 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     // Invalidate the account cache so the change takes effect immediately.
     if (updated.supabaseAuthUid) {
       invalidateAccountCache(updated.supabaseAuthUid);
+    }
+  }
+
+  // If email changed, sync to Supabase Auth so login uses the new email.
+  // Without this, the DB and auth layer diverge (user must log in with the
+  // OLD email, and re-registration with the new email fails).
+  if (
+    parsed.data.email &&
+    parsed.data.email !== target.email &&
+    updated.supabaseAuthUid &&
+    isSupabaseConfigured()
+  ) {
+    try {
+      const adminClient = createSupabaseAdminClient();
+      const { error: emailUpdateError } =
+        await adminClient.auth.admin.updateUserById(updated.supabaseAuthUid, {
+          email: parsed.data.email,
+        });
+      if (emailUpdateError) {
+        console.error(
+          "[accounts.update] WARNING: failed to sync email to Supabase Auth:",
+          emailUpdateError.message,
+          "uid:",
+          updated.supabaseAuthUid,
+        );
+        // Don't fail the whole request — the DB row is updated. The admin
+        // can re-sync via the Supabase dashboard if needed.
+      }
+    } catch (e) {
+      console.error(
+        "[accounts.update] WARNING: Supabase admin client error syncing email:",
+        e,
+      );
     }
   }
 

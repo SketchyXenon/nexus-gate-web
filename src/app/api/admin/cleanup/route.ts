@@ -19,12 +19,18 @@ export async function POST(req: NextRequest) {
   const [tokensDeleted, refreshDeleted] = await Promise.all([
     db.verificationToken.deleteMany({
       where: {
-        OR: [{ expiresAt: { lt: now } }, { usedAt: { not: null } }],
+        OR: [
+          { expiresAt: { lt: now } },
+          { usedAt: { not: null } },
+        ],
       },
     }),
     db.refreshToken.deleteMany({
       where: {
-        OR: [{ expiresAt: { lt: now } }, { revokedAt: { not: null } }],
+        OR: [
+          { expiresAt: { lt: now } },
+          { revokedAt: { not: null } },
+        ],
       },
     }),
   ]);

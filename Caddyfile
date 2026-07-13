@@ -1,4 +1,4 @@
- Nexus Gate — Caddyfile
+# Nexus Gate — Caddyfile
 # --------------------------------------------------------------------
 # Security hardening:
 #   - Body size limit (10MB) to prevent OOM via large uploads.

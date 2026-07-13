@@ -21,18 +21,11 @@ describe("scorePassword", () => {
   // ---- Weak passwords (score < MIN_PASSWORD_SCORE) ----
   describe("weak passwords (should NOT pass)", () => {
     const weakPasswords: Array<{ pw: string; reason: string }> = [
-      {
-        pw: "Ab1",
-        reason: "too short (no length point, no 12+ point, no special)",
-      },
+      { pw: "Ab1", reason: "too short (no length point, no 12+ point, no special)" },
       { pw: "abcdefgh", reason: "no uppercase, no number, no special" },
       { pw: "ABCDEFGH", reason: "no lowercase, no number, no special" },
       { pw: "12345678", reason: "no letters, no special" },
-      {
-        pw: "Xk7mP2q9",
-        reason:
-          "8 chars + upper + lower + digit = 4, but no 12+ and no special → 4 (borderline, see below)",
-      },
+      { pw: "Xk7mP2q9", reason: "8 chars + upper + lower + digit = 4, but no 12+ and no special → 4 (borderline, see below)" },
     ];
 
     for (const { pw, reason } of weakPasswords) {
@@ -53,22 +46,10 @@ describe("scorePassword", () => {
   // ---- Strong passwords (score >= MIN_PASSWORD_SCORE) ----
   describe("strong passwords (should pass)", () => {
     const strongPasswords: Array<{ pw: string; reason: string }> = [
-      {
-        pw: "Xk7mP2q!",
-        reason: "8 chars + upper + lower + digit + special = 5",
-      },
-      {
-        pw: "StrongPass1!",
-        reason: "12 chars + upper + lower + digit + special = 6",
-      },
-      {
-        pw: "MyP@ssw0rd2024",
-        reason: "14 chars + upper + lower + digit + special = 6",
-      },
-      {
-        pw: "XkmPqxzLL3jN",
-        reason: "13 chars + upper + lower + digit = 5 (no special but 12+)",
-      },
+      { pw: "Xk7mP2q!", reason: "8 chars + upper + lower + digit + special = 5" },
+      { pw: "StrongPass1!", reason: "12 chars + upper + lower + digit + special = 6" },
+      { pw: "MyP@ssw0rd2024", reason: "14 chars + upper + lower + digit + special = 6" },
+      { pw: "XkmPqxzLL3jN", reason: "13 chars + upper + lower + digit = 5 (no special but 12+)" },
     ];
 
     for (const { pw, reason } of strongPasswords) {

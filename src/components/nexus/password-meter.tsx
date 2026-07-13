@@ -15,7 +15,7 @@ interface Props {
 export function PasswordStrengthMeter({ password }: Props) {
   const { score, percent, label, color, tips, passes } = useMemo(
     () => scorePassword(password),
-    [password],
+    [password]
   );
 
   if (!password) return null;
@@ -47,8 +47,8 @@ export function PasswordStrengthMeter({ password }: Props) {
             score >= 4
               ? "text-yellow-600"
               : score >= 3
-                ? "text-amber-600"
-                : "text-red-500"
+              ? "text-amber-600"
+              : "text-red-500"
           }`}
         >
           {label}

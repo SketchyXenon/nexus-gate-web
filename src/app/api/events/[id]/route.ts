@@ -73,7 +73,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
 
   return NextResponse.json(event, {
     headers: {
-      "Cache-Control": "private, s-maxage=15, stale-while-revalidate=60",
+      "Cache-Control": "private, no-cache",
     },
   });
 }
@@ -106,6 +106,17 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   let targetProgram = d.targetProgram;
   let targetSection = d.targetSection;
   if (account.role === "ORGANIZER") {
+    // An organizer without a program cannot set a targetProgram (would allow
+    // cross-program event creation). Previously the guard short-circuited.
+    if (
+      targetProgram !== undefined &&
+      targetProgram &&
+      !account.program
+    ) {
+      return forbidden(
+        "Your account has no program assigned. Ask an admin to set your program before targeting a specific program.",
+      );
+    }
     if (
       targetProgram !== undefined &&
       targetProgram &&

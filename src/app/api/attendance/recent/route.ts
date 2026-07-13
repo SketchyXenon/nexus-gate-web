@@ -52,10 +52,6 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json(
     { records },
-    {
-      headers: {
-        "Cache-Control": "private, no-cache, stale-while-revalidate=15",
-      },
-    },
+    { headers: { "Cache-Control": "private, no-cache" } },
   );
 }

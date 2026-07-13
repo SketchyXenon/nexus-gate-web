@@ -1,6 +1,9 @@
 // Nexus Gate - Supabase server client (cookie-based sessions).
 // Used in API routes and Server Components to read the auth session.
+// server-only guard: prevents accidental import in client components,
+// which would bundle the SUPABASE_SERVICE_ROLE_KEY.
 
+import "server-only";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 

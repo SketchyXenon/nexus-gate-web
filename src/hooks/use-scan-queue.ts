@@ -20,7 +20,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { submitScanCertificate } from "@/lib/api-client";
 import type { SignedCertificate } from "@/lib/scan-certificate";
 
-const QUEUE_KEY = "ng_scan_queue_v2"; // bumped from v1 (new certificate format)
+const QUEUE_KEY_PREFIX = "ng_scan_queue_v2"; // bumped from v1 (new certificate format)
 
 export interface QueuedScan {
   id: string;
@@ -33,19 +33,29 @@ export interface QueuedScan {
   error?: string;
 }
 
-function loadQueue(): QueuedScan[] {
+// Account-scoped queue key prevents cross-account metadata leaks on shared
+// devices. User A's pending scans are invisible to User B.
+function queueKey(accountId: string | undefined): string {
+  // Fallback to the legacy global key if no accountId (shouldn't happen in
+  // the authed app, but keeps the hook callable without crashing).
+  return accountId
+    ? `${QUEUE_KEY_PREFIX}:${accountId}`
+    : QUEUE_KEY_PREFIX;
+}
+
+function loadQueue(accountId: string | undefined): QueuedScan[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(QUEUE_KEY);
+    const raw = localStorage.getItem(queueKey(accountId));
     return raw ? (JSON.parse(raw) as QueuedScan[]) : [];
   } catch {
     return [];
   }
 }
 
-function saveQueue(q: QueuedScan[]) {
+function saveQueue(q: QueuedScan[], accountId: string | undefined) {
   try {
-    localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
+    localStorage.setItem(queueKey(accountId), JSON.stringify(q));
   } catch {
     /* ignore quota */
   }
@@ -60,7 +70,7 @@ function backoffDelay(attempts: number): number {
   return jitter(base);
 }
 
-export function useScanQueue() {
+export function useScanQueue(accountId?: string) {
   const [queue, setQueue] = useState<QueuedScan[]>([]);
   const [online, setOnline] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -68,15 +78,20 @@ export function useScanQueue() {
   const onlineRef = useRef(true);
   // Ref breaks the circular dependency between drain ↔ scheduleDrain.
   const drainRef = useRef<() => Promise<void>>(async () => {});
+  const accountIdRef = useRef(accountId);
+  // Keep the ref in sync with the prop (must not mutate ref during render).
+  useEffect(() => {
+    accountIdRef.current = accountId;
+  }, [accountId]);
 
   const persist = useCallback((next: QueuedScan[]) => {
-    saveQueue(next);
+    saveQueue(next, accountIdRef.current);
     setQueue(next);
   }, []);
 
   const drain = useCallback(async () => {
     if (!onlineRef.current) return;
-    const current = loadQueue().filter(
+    const current = loadQueue(accountIdRef.current).filter(
       (s) => s.status === "pending"
     );
     if (current.length === 0) {
@@ -85,14 +100,14 @@ export function useScanQueue() {
     }
     setSyncing(true);
     for (const item of current) {
-      const all = loadQueue();
+      const all = loadQueue(accountIdRef.current);
       const idx = all.findIndex((s) => s.id === item.id);
       if (idx < 0) continue;
       all[idx] = { ...all[idx], status: "syncing" };
       persist(all);
       try {
         const res = await submitScanCertificate(item.signedCertificate);
-        const after = loadQueue();
+        const after = loadQueue(accountIdRef.current);
         const i2 = after.findIndex((s) => s.id === item.id);
         if (i2 >= 0) {
           after[i2] = {
@@ -108,7 +123,7 @@ export function useScanQueue() {
           persist(after);
         }
       } catch (e) {
-        const after = loadQueue();
+        const after = loadQueue(accountIdRef.current);
         const i2 = after.findIndex((s) => s.id === item.id);
         if (i2 >= 0) {
           const attempts = after[i2].attempts + 1;
@@ -152,7 +167,7 @@ export function useScanQueue() {
         attempts: 0,
         status: "pending",
       };
-      const next = [item, ...loadQueue()];
+      const next = [item, ...loadQueue(accountIdRef.current)];
       persist(next);
       scheduleDrain(0);
       return item;
@@ -161,21 +176,34 @@ export function useScanQueue() {
   );
 
   const clearSynced = useCallback(() => {
-    persist(loadQueue().filter((s) => s.status !== "synced"));
+    persist(loadQueue(accountIdRef.current).filter((s) => s.status !== "synced"));
   }, [persist]);
 
   const removeItem = useCallback(
     (id: string) => {
-      persist(loadQueue().filter((s) => s.id !== id));
+      persist(loadQueue(accountIdRef.current).filter((s) => s.id !== id));
     },
     [persist]
   );
 
   // Hydrate from localStorage on mount + subscribe to network events.
   useEffect(() => {
-    // One-time mount hydration from localStorage (client-only store).
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setQueue(loadQueue());
+    // Reset any "syncing" items back to "pending". If the page was closed
+    // mid-drain, those items are stuck forever (the drain filter only picks
+    // "pending"). This recovers them so they get retried.
+    const loaded = loadQueue(accountId);
+    const hasStuck = loaded.some((s) => s.status === "syncing");
+    if (hasStuck) {
+      const recovered = loaded.map((s) =>
+        s.status === "syncing" ? { ...s, status: "pending" as const } : s
+      );
+      saveQueue(recovered, accountId);
+      // One-time hydration from localStorage — setState in effect is intentional.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setQueue(recovered);
+    } else {
+      setQueue(loaded);
+    }
     setOnline(navigator.onLine);
     onlineRef.current = navigator.onLine;
     const onOnline = () => {
@@ -194,7 +222,7 @@ export function useScanQueue() {
       window.removeEventListener("offline", onOffline);
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [scheduleDrain]);
+  }, [accountId, scheduleDrain]);
 
   // Kick off drain whenever queue changes and we're online.
   useEffect(() => {

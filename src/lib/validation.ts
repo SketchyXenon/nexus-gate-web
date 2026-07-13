@@ -114,17 +114,20 @@ export const refreshSchema = z.object({
 export const forgotPasswordSchema = z.object({
   email: emailSchema,
   // Only allow same-origin redirect URLs (prevent open-redirect attacks).
-  // Accepts relative paths or URLs that match the app's configured origin.
+  // Accepts relative paths (inherently same-origin) OR absolute URLs that
+  // match the configured NEXT_PUBLIC_APP_URL origin. Fail CLOSED when
+  // NEXT_PUBLIC_APP_URL is unset: reject all absolute URLs.
   redirectTo: z
     .string()
     .trim()
-    .url()
     .refine(
       (url) => {
+        // Relative paths (starting with /) are inherently same-origin.
+        if (url.startsWith("/")) return true;
         try {
           const parsed = new URL(url);
           const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-          if (!appUrl) return parsed.origin === parsed.origin; // allow if no appUrl configured
+          if (!appUrl) return false;
           const appOrigin = new URL(appUrl).origin;
           return parsed.origin === appOrigin;
         } catch {

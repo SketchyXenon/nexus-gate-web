@@ -76,7 +76,7 @@ export async function GET(_req: NextRequest) {
     });
     userRes.headers.set(
       "Cache-Control",
-      "private, no-cache, stale-while-revalidate=30",
+      "private, no-cache",
     );
     return userRes;
   }
@@ -165,7 +165,7 @@ export async function GET(_req: NextRequest) {
   });
   adminRes.headers.set(
     "Cache-Control",
-    "private, no-cache, stale-while-revalidate=30",
+    "private, no-cache",
   );
   return adminRes;
 }

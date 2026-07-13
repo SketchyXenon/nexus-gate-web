@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
   // SSRF defense: validate the push endpoint URL — but only for real
   // Web Push endpoints (not the "in-app" sentinel).
   if (!isInAppSentinel) {
-    const urlCheck = validatePushEndpoint(parsed.data.endpoint);
+    const urlCheck = await validatePushEndpoint(parsed.data.endpoint);
     if (!urlCheck.ok) {
       return badRequest(
         `Invalid push endpoint: ${urlCheck.reason}. The endpoint must be a valid HTTPS push service URL.`,

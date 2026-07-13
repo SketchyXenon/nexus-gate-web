@@ -84,7 +84,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
       ? Number(selectedEventId)
       : (events[0]?.id ?? null);
 
-  const queue = useScanQueue();
+  const queue = useScanQueue(user.id);
   const online = useOnlineStatus();
 
   const videoRef = useRef<HTMLVideoElement>(null);

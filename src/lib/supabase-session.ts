@@ -15,11 +15,14 @@ export interface SupabaseSession {
   email: string;
 }
 
-// ---- Account cache (30s TTL) ----
+// ---- Account cache (30s TTL, bounded LRU) ----
 // Caches the account lookup by supabaseAuthUid to avoid a DB query on
 // every API request. The cache is in-memory (per serverless instance).
 // Status changes (suspend/activate) take effect within 30s.
+// Bounded to ACCOUNT_CACHE_MAX entries (LRU eviction) to prevent unbounded
+// memory growth from attacker-supplied fake session tokens.
 const ACCOUNT_CACHE_TTL_MS = 30_000;
+const ACCOUNT_CACHE_MAX = 2_000;
 interface AccountCacheEntry {
   account: ApiAccount | null;
   expiresAt: number;
@@ -29,6 +32,25 @@ const accountCache = new Map<string, AccountCacheEntry>();
 // Clear the cache for a specific user (called when account is updated).
 export function invalidateAccountCache(authUid: string): void {
   accountCache.delete(authUid);
+}
+
+// Evict expired entries and enforce the max-size bound. Called on every
+// cache write. Uses Map insertion-order iteration for LRU eviction (oldest
+// entries are evicted first — Map preserves insertion order in JS).
+function evictAccountCache(): void {
+  // First pass: drop expired entries.
+  const now = Date.now();
+  for (const [key, entry] of accountCache) {
+    if (entry.expiresAt <= now) {
+      accountCache.delete(key);
+    }
+  }
+  // Second pass: if still over the limit, evict oldest by insertion order.
+  while (accountCache.size > ACCOUNT_CACHE_MAX) {
+    const oldest = accountCache.keys().next().value;
+    if (oldest === undefined) break;
+    accountCache.delete(oldest);
+  }
 }
 
 // Read the Supabase session from cookies. Returns null if no session
@@ -68,15 +90,23 @@ export async function getCurrentAccountSupabase(): Promise<ApiAccount | null> {
       section: true,
       organizationName: true,
       year: true,
+      lastLoginAt: true,
     },
   });
 
   const result =
     account && account.status === "ACTIVE"
-      ? { ...account, role: account.role as ApiAccount["role"] }
+      ? {
+          ...account,
+          role: account.role as ApiAccount["role"],
+          lastLoginAt: account.lastLoginAt
+            ? account.lastLoginAt.toISOString()
+            : null,
+        }
       : null;
 
   // Cache the result (including nulls, so we don't re-query for invalid accounts).
+  evictAccountCache();
   accountCache.set(session.authUid, {
     account: result,
     expiresAt: Date.now() + ACCOUNT_CACHE_TTL_MS,

@@ -144,6 +144,28 @@ export async function proxy(request: NextRequest) {
         { status: 403 },
       );
     }
+    // If BOTH Origin and Referer are absent, reject browser-like requests.
+    // Real browsers always send at least one on cross-origin POSTs. SameSite
+    // =Lax cookies are the primary CSRF defense, but this closes the hole
+    // where privacy extensions or Referrer-Policy:no-referrer produce a
+    // header-less same-origin POST. Non-browser clients (curl, server-side
+    // fetch) typically don't set a Mozilla/Safari/Chrome UA and are allowed.
+    if (!origin && !referer) {
+      const ua = (request.headers.get("user-agent") || "").toLowerCase();
+      const isBrowserLike =
+        ua.includes("mozilla") ||
+        ua.includes("chrome") ||
+        ua.includes("safari") ||
+        ua.includes("firefox") ||
+        ua.includes("edg/") ||
+        ua.includes("opr/");
+      if (isBrowserLike) {
+        return NextResponse.json(
+          { error: "Missing Origin/Referer header.", code: "CSRF_BLOCKED" },
+          { status: 403 },
+        );
+      }
+    }
   }
 
   // Content Security Policy — prevents XSS, data injection

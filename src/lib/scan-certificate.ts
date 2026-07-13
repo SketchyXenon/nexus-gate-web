@@ -139,7 +139,7 @@ export const MAX_SYNC_DELAY_MS = 15 * 60 * 1000; // 15 minutes
  */
 export function validateCertificateTimestamp(
   cert: ScanCertificate,
-  now: number = Date.now(),
+  now: number = Date.now()
 ): CertificateValidationResult {
   const driftMs = now - cert.scannedAt;
 
@@ -171,7 +171,7 @@ export function validateCertificateTimestamp(
  */
 export function validateCertificateEventMatch(
   cert: ScanCertificate,
-  tokenEventId: number,
+  tokenEventId: number
 ): CertificateValidationResult {
   if (cert.eventId !== tokenEventId) {
     return { ok: false, reason: "token_event_mismatch" };
@@ -222,9 +222,7 @@ export function generateNonce(): string {
   if (typeof crypto !== "undefined" && crypto.getRandomValues) {
     const bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);
-    return Array.from(bytes)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
+    return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
   }
   // Fallback (shouldn't happen in modern browsers/Node)
   return crypto.randomUUID().replace(/-/g, "");

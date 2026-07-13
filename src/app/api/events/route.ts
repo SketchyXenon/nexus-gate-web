@@ -200,7 +200,7 @@ export async function GET(req: NextRequest) {
     {
       headers: {
         "Cache-Control":
-          "private, s-maxage=15, stale-while-revalidate=60",
+          "private, no-cache",
       },
     },
   );
@@ -230,6 +230,14 @@ export async function POST(req: NextRequest) {
   let targetSection =
     d.scope === "departmental" ? null : (d.targetSection ?? null);
   if (account.role === "ORGANIZER" && d.scope !== "departmental") {
+    // An organizer without a program can ONLY create open-to-all (no
+    // targetProgram) events. Previously the guard short-circuited on null
+    // account.program, allowing cross-program event creation.
+    if (targetProgram && !account.program) {
+      return forbidden(
+        "Your account has no program assigned. Ask an admin to set your program before creating program-scoped events, or create a departmental event instead.",
+      );
+    }
     if (targetProgram && account.program && targetProgram !== account.program) {
       return forbidden(
         `You can only create events for the ${account.program} program.`,

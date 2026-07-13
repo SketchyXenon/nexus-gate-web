@@ -21,6 +21,8 @@ import {
   X,
   Bug,
   UserCircle,
+  CalendarRange,
+  History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +54,8 @@ import { OverridesView } from "./views/overrides";
 import { AccountsView } from "./views/accounts";
 import { AuditLogsView } from "./views/audit-logs";
 import { ProfileView } from "./views/profile";
+import { CalendarView } from "./views/calendar";
+import { MyAttendanceView } from "./views/my-attendance";
 import { CardErrorBoundary } from "./error-boundary";
 
 type ViewId =
@@ -64,7 +68,9 @@ type ViewId =
   | "overrides"
   | "accounts"
   | "audit-logs"
-  | "profile";
+  | "profile"
+  | "calendar"
+  | "my-attendance";
 
 interface NavItem {
   id: ViewId;
@@ -97,6 +103,13 @@ const NAV: NavItem[] = [
     description: "Classes and events",
   },
   {
+    id: "calendar",
+    label: "Calendar",
+    icon: CalendarRange,
+    roles: ["ADMIN", "ORGANIZER"],
+    description: "Monthly view",
+  },
+  {
     id: "project-qr",
     label: "Project QR",
     icon: QrCode,
@@ -109,6 +122,13 @@ const NAV: NavItem[] = [
     icon: ScanLine,
     roles: ["USER"],
     description: "Check in",
+  },
+  {
+    id: "my-attendance",
+    label: "My Attendance",
+    icon: History,
+    roles: ["USER"],
+    description: "Your history",
   },
   {
     id: "attendance",
@@ -147,13 +167,7 @@ const NAV: NavItem[] = [
   },
 ];
 
-export function AppShell({
-  user,
-  initialView,
-}: {
-  user: Account;
-  initialView?: ViewId;
-}) {
+export function AppShell({ user, initialView }: { user: Account; initialView?: ViewId }) {
   const [view, setView] = useState<ViewId>(initialView ?? "dashboard");
   const logout = useLogout();
   const online = useOnlineStatus();
@@ -321,15 +335,15 @@ export function AppShell({
                 )}
                 {activeView === "whitelist" && <WhitelistView />}
                 {activeView === "events" && <EventsView />}
+                {activeView === "calendar" && <CalendarView />}
                 {activeView === "project-qr" && <ProjectQrView />}
                 {activeView === "scanner" && (
                   <ScannerView user={user} onNavigate={setView} />
                 )}
+                {activeView === "my-attendance" && <MyAttendanceView />}
                 {activeView === "attendance" && <AttendanceView />}
                 {activeView === "overrides" && <OverridesView />}
-                {activeView === "accounts" && (
-                  <AccountsView currentUser={user} />
-                )}
+                {activeView === "accounts" && <AccountsView currentUser={user} />}
                 {activeView === "audit-logs" && <AuditLogsView />}
                 {activeView === "profile" && <ProfileView />}
               </CardErrorBoundary>

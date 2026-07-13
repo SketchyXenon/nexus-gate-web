@@ -11,6 +11,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // server-only is a Next.js bundler marker; in vitest (raw node) it
+      // throws. Alias to an empty module so tests can import server modules.
+      "server-only": path.resolve(__dirname, "./.vitest-empty.js"),
     },
   },
 });

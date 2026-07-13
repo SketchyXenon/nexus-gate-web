@@ -14,12 +14,8 @@ import { getAppUrl } from "@/lib/app-url";
 
 // ---- HTML escaping for user-supplied content in emails (XSS defense) ----
 function escapeHtml(s: string): string {
-  return s.replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
-        c
-      ]!,
+  return s.replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!)
   );
 }
 
@@ -73,7 +69,7 @@ export function isEmailConfigured(): boolean {
 // ---- Send verification code email ----
 export async function sendVerificationEmail(
   to: string,
-  code: string,
+  code: string
 ): Promise<{ ok: boolean; error?: string }> {
   const config = getEmailConfig();
   if (!config) {
@@ -127,7 +123,7 @@ export async function sendVerificationEmail(
 // ---- Send welcome email (after verification) ----
 export async function sendWelcomeEmail(
   to: string,
-  fullName: string,
+  fullName: string
 ): Promise<void> {
   const config = getEmailConfig();
   if (!config) return;
@@ -172,7 +168,7 @@ export async function sendWelcomeEmail(
 // the reset link to the console as a dev fallback.
 export async function sendPasswordResetEmail(
   to: string,
-  resetUrl: string,
+  resetUrl: string
 ): Promise<{ ok: boolean; error?: string }> {
   const config = getEmailConfig();
   if (!config) {

@@ -19,11 +19,8 @@ export async function GET() {
     },
   });
 
-  return NextResponse.json(
-    {
-      enabled: full?.notificationEnabled ?? false,
-      hasSubscription: !!full?.notificationEndpoint,
-    },
-    { headers: { "Cache-Control": "private, no-cache" } },
-  );
+  return NextResponse.json({
+    enabled: full?.notificationEnabled ?? false,
+    hasSubscription: !!full?.notificationEndpoint,
+  }, { headers: { "Cache-Control": "private, no-cache" } });
 }

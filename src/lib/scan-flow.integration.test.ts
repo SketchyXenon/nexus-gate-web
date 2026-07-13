@@ -159,24 +159,24 @@ describe("Integration: Full scan flow (Tier 1 + Tier 2)", () => {
       expect(validateCertificateTimestamp(cert, NOW).ok).toBe(true);
     });
 
-    it("accepts a certificate scanned 1 hour ago (offline sync)", () => {
+    it("accepts a certificate scanned 5 minutes ago (offline sync within 15-min window)", () => {
       const cert = createCertificate({
         eventId: EVENT_ID,
         token: "token",
         deviceFingerprint: "fp",
-        subFrames: makeSubFrames(TEST_SECRET, EVENT_ID, Math.floor((NOW - 3_600_000) / 15_000), [0]),
-        scannedAt: NOW - 3_600_000,
+        subFrames: makeSubFrames(TEST_SECRET, EVENT_ID, Math.floor((NOW - 5 * 60_000) / 15_000), [0]),
+        scannedAt: NOW - 5 * 60_000,
       });
       expect(validateCertificateTimestamp(cert, NOW).ok).toBe(true);
     });
 
-    it("rejects a certificate scanned 25 hours ago (beyond sync window)", () => {
+    it("rejects a certificate scanned 20 minutes ago (beyond 15-min sync window)", () => {
       const cert = createCertificate({
         eventId: EVENT_ID,
         token: "token",
         deviceFingerprint: "fp",
         subFrames: makeFakeSubFrames([0]),
-        scannedAt: NOW - 25 * 3_600_000,
+        scannedAt: NOW - 20 * 60_000,
       });
       expect(validateCertificateTimestamp(cert, NOW).ok).toBe(false);
     });
@@ -424,13 +424,13 @@ describe("Anti-cheating simulations", () => {
   });
 
   describe("Clock skew defense", () => {
-    it("rejects a certificate scanned 2 minutes in the future", () => {
+    it("rejects a certificate scanned 3 minutes in the future (beyond grace)", () => {
       const cert = createCertificate({
         eventId: EVENT_ID,
         token: "token",
         deviceFingerprint: "fp",
         subFrames: makeFakeSubFrames([0]),
-        scannedAt: NOW + 120_000, // 2 minutes ahead
+        scannedAt: NOW + 180_000, // 3 minutes ahead (beyond 120s grace)
       });
       const result = validateCertificateTimestamp(cert, NOW);
       expect(result.ok).toBe(false);
@@ -451,6 +451,59 @@ describe("Anti-cheating simulations", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.reason).toBe("clock_skew_too_large");
+      }
+    });
+  });
+
+  // ---- Time-out path anti-cheat (C1 fix) ----
+  // The time-out path previously skipped steps 6 (token HMAC), 7 (event
+  // match), and 8 (sub-frame liveness). These tests verify each step
+  // now rejects a forged time-out certificate.
+
+  describe("Time-out path anti-cheat (C1 fix)", () => {
+    it("rejects a forged time-out with a garbage token (step 6: validateQrPayload)", () => {
+      // A student with a registered device submits a certificate with any
+      // token (even garbage). Step 6 must reject it.
+      const garbageToken = "eventId.999.fakeBlock.fakeHmac";
+      const result = validateQrPayload(garbageToken, TEST_SECRET, NOW);
+      expect(result.ok).toBe(false);
+    });
+
+    it("rejects a forged time-out with insufficient sub-frames (step 8: liveness)", () => {
+      // Even if the token were valid, a certificate with <3 sub-frames
+      // must be rejected by the liveness check.
+      const subFrames = makeSubFrames(TEST_SECRET, EVENT_ID, 100, [0]); // only 1
+      const result = verifySubFrameLiveness(subFrames, TEST_SECRET, EVENT_ID, 100);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.reason).toBe("insufficient_subframes");
+      }
+    });
+
+    it("rejects a forged time-out with fabricated sub-frame HMACs (step 8)", () => {
+      // A certificate with 3 sub-frames but FAKE HMACs must be rejected.
+      const fakeFrames = makeFakeSubFrames([0, 1, 2]);
+      const result = verifySubFrameLiveness(fakeFrames, TEST_SECRET, EVENT_ID, 100);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.reason).toBe("invalid_signature");
+      }
+    });
+
+    it("accepts a LEGITIMATE time-out scan (valid token + 3 valid sub-frames)", () => {
+      // A real time-out scan: student scans the live QR during the time-out
+      // window. The token is valid and sub-frames are real.
+      const payload = generateQrPayload(EVENT_ID, TEST_SECRET, NOW);
+      const tokenResult = validateQrPayload(payload.payload, TEST_SECRET, NOW);
+      expect(tokenResult.ok).toBe(true);
+      if (tokenResult.ok && tokenResult.timeBlock !== undefined) {
+        const subFrames = makeSubFrames(
+          TEST_SECRET, EVENT_ID, tokenResult.timeBlock, [0, 1, 2]
+        );
+        const liveness = verifySubFrameLiveness(
+          subFrames, TEST_SECRET, EVENT_ID, tokenResult.timeBlock
+        );
+        expect(liveness.ok).toBe(true);
       }
     });
   });

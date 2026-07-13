@@ -157,9 +157,7 @@ function base64UrlToBytes(b64url: string): Uint8Array {
  *     "Failed to execute 'exportKey' on 'SubtleCrypto': key is not extractable"
  *   on every scan attempt (the scanner couldn't sign certificates).
  */
-export async function generateDeviceKeyPair(
-  accountId: string,
-): Promise<DeviceKeyPair> {
+export async function generateDeviceKeyPair(accountId: string): Promise<DeviceKeyPair> {
   const keyPair = await crypto.subtle.generateKey(
     "Ed25519",
     true, // extractable — required to export JWK for IndexedDB storage
@@ -192,9 +190,7 @@ export async function generateDeviceKeyPair(
  * a previous bug), it's regenerated. This ensures the scanner never
  * gets stuck with an unusable key.
  */
-export async function getOrCreateDeviceKeyPair(
-  accountId: string,
-): Promise<DeviceKeyPair> {
+export async function getOrCreateDeviceKeyPair(accountId: string): Promise<DeviceKeyPair> {
   const existing = await idbGet<DeviceKeyPair>(keyRecordId(accountId));
   // Validate the stored keypair has the required JWK fields.
   if (existing && existing.publicKeyJwk?.x && existing.privateKeyJwk?.d) {
@@ -207,9 +203,7 @@ export async function getOrCreateDeviceKeyPair(
 /**
  * Mark the stored keypair as registered with the server.
  */
-export async function markDeviceKeyRegistered(
-  accountId: string,
-): Promise<void> {
+export async function markDeviceKeyRegistered(accountId: string): Promise<void> {
   const existing = await idbGet<DeviceKeyPair>(keyRecordId(accountId));
   if (existing) {
     existing.registered = true;
@@ -221,9 +215,7 @@ export async function markDeviceKeyRegistered(
  * Get the device fingerprint (hash of the public key) for a given account.
  * Returns null if no keypair exists.
  */
-export async function getDeviceFingerprint(
-  accountId: string,
-): Promise<string | null> {
+export async function getDeviceFingerprint(accountId: string): Promise<string | null> {
   const keyPair = await idbGet<DeviceKeyPair>(keyRecordId(accountId));
   return keyPair?.fingerprint ?? null;
 }

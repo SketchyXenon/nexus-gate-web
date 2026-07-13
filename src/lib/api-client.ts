@@ -519,6 +519,38 @@ export const useRecentAttendance = (limit = 20) =>
     staleTime: 30_000,
   });
 
+// ---------------- Dashboard Stats (charts) ----------------
+export interface DashboardStats {
+  scansByDay: Array<{ date: string; count: number }>;
+  topEvents: Array<{
+    id: number;
+    title: string;
+    scheduledAt: string;
+    presentCount: number;
+  }>;
+  scansBySource: { qr: number; override: number };
+  scansByHour: Array<{ hour: number; count: number }>;
+}
+
+export const useDashboardStats = () =>
+  useQuery({
+    queryKey: ["dashboard-stats"],
+    queryFn: () => api<DashboardStats>("/api/dashboard/stats"),
+    staleTime: 60_000,
+  });
+
+// ---------------- CSV Export ----------------
+// Triggers a browser download of the attendance CSV for an event.
+export function exportAttendanceCsv(eventId: number): void {
+  const url = `/api/attendance/export?eventId=${eventId}`;
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 export interface EventDetails {
   id: number;
   title: string;
@@ -754,6 +786,92 @@ export const useDashboard = () =>
     staleTime: 30_000,
   });
 
+// ---------------- Student attendance history ----------------
+export interface MyAttendanceRecord {
+  id: number;
+  scannedAt: string;
+  timeOutAt: string | null;
+  source: string;
+  event: {
+    id: number;
+    title: string;
+    scheduledAt: string;
+    scope: string;
+    targetProgram: string | null;
+    targetSection: string | null;
+  };
+}
+
+export interface MyAttendanceResponse {
+  records: MyAttendanceRecord[];
+  stats: {
+    total: number;
+    qrCount: number;
+    overrideCount: number;
+    withTimeout: number;
+  };
+}
+
+export const useMyAttendance = (params?: {
+  from?: string;
+  to?: string;
+  scope?: string;
+}) => {
+  const sp = new URLSearchParams();
+  if (params?.from) sp.set("from", params.from);
+  if (params?.to) sp.set("to", params.to);
+  if (params?.scope) sp.set("scope", params.scope);
+  const qs = sp.toString();
+  return useQuery({
+    queryKey: ["my-attendance", params],
+    queryFn: () =>
+      api<MyAttendanceResponse>(`/api/profile/attendance${qs ? `?${qs}` : ""}`),
+    staleTime: 30_000,
+  });
+};
+
+// ---------------- Student attendance stats (trends chart) ----------------
+export interface MyStats {
+  scansByMonth: Array<{ month: string; count: number }>;
+  byScope: { academic: number; departmental: number };
+  streak: { current: number; longest: number };
+}
+
+export const useMyStats = () =>
+  useQuery({
+    queryKey: ["my-stats"],
+    queryFn: () => api<MyStats>("/api/profile/stats"),
+    staleTime: 60_000,
+  });
+
+// ---------------- Notification preferences ----------------
+export interface NotificationPrefs {
+  eventReminders: boolean;
+  attendanceSummary: boolean;
+  accountSecurity: boolean;
+}
+
+export const useNotificationPrefs = () =>
+  useQuery({
+    queryKey: ["notification-prefs"],
+    queryFn: () => api<{ prefs: NotificationPrefs }>("/api/profile/notification-prefs"),
+    staleTime: 60_000,
+  });
+
+export const useUpdateNotificationPrefs = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (prefs: NotificationPrefs) =>
+      api<{ ok: boolean; prefs: NotificationPrefs }>(
+        "/api/profile/notification-prefs",
+        { method: "PATCH", body: JSON.stringify(prefs) },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notification-prefs"] });
+    },
+  });
+};
+
 // ---------------- Audit logs ----------------
 export const useAuditLogs = (params?: { page?: number; action?: string }) => {
   const sp = new URLSearchParams();
@@ -875,12 +993,9 @@ export const useRevokeDeviceKey = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (keyId: string) =>
-      api<{ ok: boolean }>(
-        `/api/profile/device-key?keyId=${encodeURIComponent(keyId)}`,
-        {
-          method: "DELETE",
-        },
-      ),
+      api<{ ok: boolean }>(`/api/profile/device-key?keyId=${encodeURIComponent(keyId)}`, {
+        method: "DELETE",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["device-keys"] }),
   });
 };

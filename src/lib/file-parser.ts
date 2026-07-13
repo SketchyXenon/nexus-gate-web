@@ -229,7 +229,11 @@ export async function parsePdf(buffer: Buffer): Promise<ParseResult> {
     const doc = await pdfjs.getDocument({ data }).promise;
     let text = "";
 
-    for (let i = 1; i <= doc.numPages; i++) {
+    // Cap at 500 pages to prevent OOM on pathologically large PDFs.
+    // A student whitelist realistically fits in 1-10 pages.
+    const MAX_PDF_PAGES = 500;
+    const pageCount = Math.min(doc.numPages, MAX_PDF_PAGES);
+    for (let i = 1; i <= pageCount; i++) {
       const page = await doc.getPage(i);
       const content = await page.getTextContent();
       // Join text items, inserting newlines for block-level breaks.

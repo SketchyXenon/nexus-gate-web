@@ -179,7 +179,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     },
     {
       headers: {
-        "Cache-Control": "private, s-maxage=15, stale-while-revalidate=60",
+        "Cache-Control": "private, no-cache",
       },
     },
   );

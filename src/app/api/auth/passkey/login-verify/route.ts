@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyAuthenticationResponse } from "@simplewebauthn/server";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { db } from "@/lib/db";
-import { checkRateLimit } from "@/lib/api";
+import { checkRateLimit, checkRateLimitByKey } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import { getWebAuthnContext } from "@/lib/webauthn-context";
 import {
@@ -14,9 +14,7 @@ import {
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
 
-function toFixedArrayBuffer(
-  bytes: Uint8Array<ArrayBufferLike>,
-): Uint8Array<ArrayBuffer> {
+function toFixedArrayBuffer(bytes: Uint8Array<ArrayBufferLike>): Uint8Array<ArrayBuffer> {
   const fixed = new Uint8Array(bytes.byteLength);
   fixed.set(bytes);
   return fixed;
@@ -28,27 +26,18 @@ function decodeStoredPublicKey(
   if (publicKey instanceof Uint8Array) return toFixedArrayBuffer(publicKey);
   if (typeof publicKey === "string" && publicKey.trim()) {
     try {
-      return toFixedArrayBuffer(
-        Uint8Array.from(Buffer.from(publicKey.trim(), "base64")),
-      );
+      return toFixedArrayBuffer(Uint8Array.from(Buffer.from(publicKey.trim(), "base64")));
     } catch {
       try {
-        const normalized = publicKey
-          .trim()
-          .replace(/-/g, "+")
-          .replace(/_/g, "/");
-        return toFixedArrayBuffer(
-          Uint8Array.from(Buffer.from(normalized, "base64")),
-        );
+        const normalized = publicKey.trim().replace(/-/g, "+").replace(/_/g, "/");
+        return toFixedArrayBuffer(Uint8Array.from(Buffer.from(normalized, "base64")));
       } catch {
         return null;
       }
     }
   }
   if (Array.isArray(publicKey)) {
-    return toFixedArrayBuffer(
-      Uint8Array.from(publicKey.map((n) => Number(n) || 0)),
-    );
+    return toFixedArrayBuffer(Uint8Array.from(publicKey.map((n) => Number(n) || 0)));
   }
   if (publicKey && typeof publicKey === "object") {
     const entries = Object.entries(publicKey)
@@ -64,8 +53,8 @@ function decodeStoredPublicKey(
 
 // POST /api/auth/passkey/login-verify
 // Verifies the WebAuthn assertion and signs the user in via Supabase.
-// Uses admin.generateLink to get a magic link, extracts the token, and
-// consumes it via verifyOtp to establish a session.
+// Uses admin.generateLink to get a magic link, extracts the hashed_token,
+// and consumes it via verifyOtp to establish a session.
 export async function POST(req: NextRequest) {
   const failWithCookieDelete = (body: object, status: number) => {
     const resp = NextResponse.json(body, { status });
@@ -82,8 +71,13 @@ export async function POST(req: NextRequest) {
       { status: 503 },
     );
   }
-  const rl = await checkRateLimit(req, "login");
-  if (rl) return rl;
+
+  // Per-IP checkpoint (passkeyVerify: 10/min). More lenient than the old
+  // login preset (5/min) so a NAT'd campus doesn't lock out after 5 attempts
+  // from different students. The per-account checkpoint below is the real
+  // brute-force defense.
+  const ipRl = await checkRateLimit(req, "passkeyVerify");
+  if (ipRl) return ipRl;
 
   const challenge = req.cookies.get("ng_passkey_challenge")?.value;
   if (!challenge) {
@@ -109,7 +103,6 @@ export async function POST(req: NextRequest) {
 
   // O(log N) lookup: extract the credential ID from the assertion and find
   // the owning account via the indexed passkeyCredentialId column.
-  // Previously this scanned ALL passkey holders and ran N crypto verifications.
   const assertion = body.assertion as AuthenticationResponseJSON;
   const credentialId = assertion?.id;
   if (!credentialId) {
@@ -121,22 +114,19 @@ export async function POST(req: NextRequest) {
 
   // O(log N) lookup: find the account by credential ID via the indexed
   // passkey_credential_id column. Uses raw SQL to avoid Prisma client
-  // type issues on Vercel's cached builds (the column exists in the DB
-  // and both Prisma schemas, but the generated client may be stale).
-  const rows = await db.$queryRaw<
-    Array<{
-      id: string;
-      email: string;
-      fullName: string;
-      role: string;
-      status: string;
-      studentId: number | null;
-      program: string | null;
-      section: string | null;
-      supabaseAuthUid: string | null;
-      passkeyCredential: string | null;
-    }>
-  >`
+  // type issues on Vercel's cached builds.
+  const rows = await db.$queryRaw<Array<{
+    id: string;
+    email: string;
+    fullName: string;
+    role: string;
+    status: string;
+    studentId: number | null;
+    program: string | null;
+    section: string | null;
+    supabaseAuthUid: string | null;
+    passkeyCredential: string | null;
+  }>>`
     SELECT id, email, full_name as "fullName", role, status,
            student_id as "studentId", program, section,
            supabase_auth_uid as "supabaseAuthUid",
@@ -146,6 +136,17 @@ export async function POST(req: NextRequest) {
     LIMIT 1
   `;
   const account = rows[0] ?? null;
+
+  // Per-account checkpoint (user_id rate limit): now that we know which
+  // account this credential belongs to, throttle by account ID. This stops
+  // an attacker with many IPs from hammering one credential.
+  if (account) {
+    const acctRl = await checkRateLimitByKey(account.id, "passkeyAccount");
+    if (acctRl) return failWithCookieDelete(
+      { error: "Too many passkey attempts. Please slow down.", code: "RATE_LIMITED" },
+      429,
+    );
+  }
 
   let verifiedAccount: typeof account | null = null;
   if (account) {
@@ -173,16 +174,26 @@ export async function POST(req: NextRequest) {
             data: { passkeyCredential: JSON.stringify(stored) },
           });
         }
+      } else {
+        console.warn(
+          "[passkey/login-verify] stored credential missing id or publicKey for account",
+          account.id,
+        );
       }
-    } catch {
-      console.warn("[passkey/login-verify] verification threw for account");
+    } catch (e) {
+      // Log the ACTUAL error so operators can diagnose RP ID / origin
+      // mismatches, challenge mismatches, etc. Previously swallowed silently.
+      console.error(
+        "[passkey/login-verify] verification threw for account",
+        account.id,
+        ":",
+        e instanceof Error ? `${e.name}: ${e.message}` : e,
+      );
     }
   }
 
   if (!verifiedAccount) {
-    console.warn(
-      "[passkey/login-verify] no matching passkey credential verified",
-    );
+    console.warn("[passkey/login-verify] no matching passkey credential verified");
     return failWithCookieDelete(
       { error: "Passkey verification failed.", code: "VERIFICATION_FAILED" },
       400,
@@ -208,12 +219,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Activate pending accounts BEFORE establishing the session, so the
+  // session is for an ACTIVE account (not a pending one).
+  if (verifiedAccount.status === "PENDING_VERIFICATION") {
+    await db.account.update({
+      where: { id: verifiedAccount.id },
+      data: { status: "ACTIVE" },
+    });
+    (verifiedAccount as { status: string }).status = "ACTIVE";
+  }
+
   // Establish a Supabase session for the verified user.
   // Strategy: use admin.generateLink to get a magic link, then use the
-  // ANON client's verifyOtp with the hashed_token (NOT the raw token from
-  // the action_link URL). The Supabase JS SDK verifyOtp method expects
-  // the hashed_token, not the raw token. Using the anon client (not admin)
-  // ensures the session cookie is set via @supabase/ssr.
+  // ANON client's verifyOtp with the hashed_token. The anon client (not
+  // admin) ensures the session cookie is set via @supabase/ssr.
   const admin = createSupabaseAdminClient();
   const { data: linkData, error: linkError } =
     await admin.auth.admin.generateLink({
@@ -231,7 +250,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // The hashed_token is what verifyOtp expects as token_hash.
   const hashedToken = linkData.properties?.hashed_token || "";
   if (!hashedToken) {
     console.error("[passkey] no hashed_token in linkData properties");
@@ -241,15 +259,29 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Use the ANON (cookie-based) client to verify the OTP.
+  // Reset failed-login counters and stamp lastLoginAt now that the
+  // identity is verified and the account is active.
+  await db.account.update({
+    where: { id: verifiedAccount.id },
+    data: {
+      failedLoginAttempts: 0,
+      lockedUntil: null,
+      lastLoginAt: new Date(),
+    },
+  });
+
+  // Use the ANON (cookie-based) client to verify the OTP. This sets the
+  // session cookies via @supabase/ssr's setAll callback.
   const anonClient = await createSupabaseServerClient();
   const { data: sessionData, error: sessionError } =
     await anonClient.auth.verifyOtp({
       token_hash: hashedToken,
       type: "magiclink",
     });
-  if (sessionError || !sessionData.session) {
-    // If the anon client fails (PKCE mismatch), try the admin client as fallback.
+
+  let session = sessionData?.session;
+  if (sessionError || !session) {
+    // Anon client may fail (PKCE state mismatch). Fall back to admin client.
     console.warn(
       "[passkey] anon verifyOtp failed, trying admin:",
       sessionError?.message,
@@ -272,63 +304,8 @@ export async function POST(req: NextRequest) {
         500,
       );
     }
-    // Admin client got a session — set cookies manually.
-    const session = adminSession.session;
-    const isProduction = process.env.NODE_ENV === "production";
-    const cookieOpts = {
-      httpOnly: true,
-      sameSite: "lax" as const,
-      secure: isProduction,
-      path: "/",
-      maxAge: 60 * 60 * 24 * 7,
-    };
-    const response = NextResponse.json({
-      ok: true,
-      account: {
-        id: verifiedAccount.id,
-        email: verifiedAccount.email,
-        fullName: verifiedAccount.fullName,
-        role: verifiedAccount.role,
-        status: verifiedAccount.status,
-        studentId: verifiedAccount.studentId,
-        program: verifiedAccount.program,
-        section: verifiedAccount.section,
-      },
-    });
-    response.cookies.set("sb-access-token", session.access_token, cookieOpts);
-    response.cookies.set("sb-refresh-token", session.refresh_token, cookieOpts);
-    if (isProduction) {
-      response.cookies.set(
-        "__Secure-sb-access-token",
-        session.access_token,
-        cookieOpts,
-      );
-      response.cookies.set(
-        "__Secure-sb-refresh-token",
-        session.refresh_token,
-        cookieOpts,
-      );
-    }
-    response.cookies.delete("ng_passkey_challenge");
-    return response;
+    session = adminSession.session;
   }
-
-  // Activate pending accounts on first passkey login.
-  if (verifiedAccount.status === "PENDING_VERIFICATION") {
-    await db.account.update({
-      where: { id: verifiedAccount.id },
-      data: { status: "ACTIVE", lastLoginAt: new Date() },
-    });
-    (verifiedAccount as { status: string }).status = "ACTIVE";
-  }
-  await db.account.update({
-    where: { id: verifiedAccount.id },
-    data: {
-      failedLoginAttempts: 0,
-      lockedUntil: null,
-      lastLoginAt: new Date(),
-    },
-  });
 
   await audit({
     actorId: verifiedAccount.id,
@@ -338,12 +315,7 @@ export async function POST(req: NextRequest) {
     req,
   }).catch(() => {});
 
-  // The anon client (createSupabaseServerClient) already set the session
-  // cookies via @supabase/ssr's setAll callback. But in case that failed
-  // (cookies().set() can fail in some contexts), also set them manually
-  // on the response as a fallback.
-  const isProduction = process.env.NODE_ENV === "production";
-  const session = sessionData.session;
+  // Single cookie-set path (was previously duplicated across two branches).
   const response = NextResponse.json({
     ok: true,
     account: {
@@ -357,8 +329,7 @@ export async function POST(req: NextRequest) {
       section: verifiedAccount.section,
     },
   });
-
-  // Fallback: set cookies directly on the response.
+  const isProduction = process.env.NODE_ENV === "production";
   const cookieOpts = {
     httpOnly: true,
     sameSite: "lax" as const,
@@ -380,7 +351,6 @@ export async function POST(req: NextRequest) {
       cookieOpts,
     );
   }
-
   response.cookies.delete("ng_passkey_challenge");
   return response;
 }
