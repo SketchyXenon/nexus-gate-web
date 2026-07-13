@@ -56,7 +56,19 @@ export async function POST(req: NextRequest) {
     // ---- Pre-auth lockout check ----
     // Check if the account is locked BEFORE calling Supabase auth.
     // This prevents brute-force even if Supabase's own rate limit is bypassed.
-    const preCheck = await db.account.findUnique({ where: { email } });
+    // Select only the fields needed here (avoids fetching notification_prefs
+    // and other columns that may not exist if migrations aren't applied).
+    const preCheck = await db.account.findUnique({
+      where: { email },
+      select: {
+        id: true,
+        email: true,
+        supabaseAuthUid: true,
+        status: true,
+        failedLoginAttempts: true,
+        lockedUntil: true,
+      },
+    });
     if (preCheck?.lockedUntil && preCheck.lockedUntil > new Date()) {
       const retryMs = preCheck.lockedUntil.getTime() - Date.now();
       return NextResponse.json(
@@ -169,8 +181,20 @@ export async function POST(req: NextRequest) {
     const authUid = authData.user.id;
 
     // Load the linked accounts row.
+    // Load the linked accounts row (select only needed fields to avoid
+    // fetching columns that may not exist if migrations aren't applied).
     const account = await db.account.findFirst({
       where: { supabaseAuthUid: authUid },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        role: true,
+        status: true,
+        studentId: true,
+        program: true,
+        section: true,
+      },
     });
     if (!account) {
       // Auth user exists but no accounts row - sign them out (inconsistent state).

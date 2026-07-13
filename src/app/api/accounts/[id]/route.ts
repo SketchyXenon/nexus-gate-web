@@ -29,7 +29,10 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   if (!parsed.success)
     return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
 
-  const target = await db.account.findUnique({ where: { id } });
+  const target = await db.account.findUnique({
+    where: { id },
+    select: { id: true, email: true, role: true },
+  });
   if (!target) return notFound("Account not found");
 
   if (admin.id === id) {
@@ -61,6 +64,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   if (parsed.data.email && parsed.data.email !== target.email) {
     const emailExists = await db.account.findUnique({
       where: { email: parsed.data.email },
+      select: { id: true },
     });
     if (emailExists) {
       return badRequest("This email is already in use.", "EMAIL_TAKEN");

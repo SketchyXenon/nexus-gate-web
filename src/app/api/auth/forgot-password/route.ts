@@ -4,7 +4,13 @@ export const maxDuration = 15;
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { forgotPasswordSchema } from "@/lib/validation";
-import { checkRateLimit, parseBody, getClientIp, dbUnavailable, isDbUnavailableError } from "@/lib/api";
+import {
+  checkRateLimit,
+  parseBody,
+  getClientIp,
+  dbUnavailable,
+  isDbUnavailableError,
+} from "@/lib/api";
 import { rateLimit } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
 import {
@@ -20,34 +26,119 @@ import {
 // auth user + links it, then sends the reset email.
 export async function POST(req: NextRequest) {
   try {
-  if (!isSupabaseConfigured()) {
-    return NextResponse.json(
-      {
-        error: "Authentication is not configured. Contact your administrator.",
-        code: "AUTH_NOT_CONFIGURED",
-      },
-      { status: 503 },
-    );
-  }
-  const rl = await checkRateLimit(req, "otp");
-  if (rl) return rl;
+    if (!isSupabaseConfigured()) {
+      return NextResponse.json(
+        {
+          error:
+            "Authentication is not configured. Contact your administrator.",
+          code: "AUTH_NOT_CONFIGURED",
+        },
+        { status: 503 },
+      );
+    }
+    const rl = await checkRateLimit(req, "otp");
+    if (rl) return rl;
 
-  const ip = getClientIp(req);
-  const ipResult = await rateLimit(`forgotpw-strict:ip:${ip}`, "otp");
-  if (!ipResult.allowed) {
-    return NextResponse.json(
-      {
-        error:
-          "Too many password reset requests from this network. Please try again later.",
-        code: "IP_RATE_LIMITED",
-      },
-      { status: 429 },
-    );
-  }
+    const ip = getClientIp(req);
+    const ipResult = await rateLimit(`forgotpw-strict:ip:${ip}`, "otp");
+    if (!ipResult.allowed) {
+      return NextResponse.json(
+        {
+          error:
+            "Too many password reset requests from this network. Please try again later.",
+          code: "IP_RATE_LIMITED",
+        },
+        { status: 429 },
+      );
+    }
 
-  const body = await parseBody(req);
-  const parsed = forgotPasswordSchema.safeParse(body);
-  if (!parsed.success) {
+    const body = await parseBody(req);
+    const parsed = forgotPasswordSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          ok: true,
+          message:
+            "If an account with that email exists, a reset link has been sent.",
+        },
+        { status: 200 },
+      );
+    }
+    const { email, redirectTo } = parsed.data;
+
+    const supabase = await createSupabaseServerClient();
+
+    // Check if the account exists in our DB but has no Supabase Auth link.
+    // Only auto-link ACTIVE or PENDING_VERIFICATION accounts - not SUSPENDED
+    // (an attacker could otherwise create auth users for suspended accounts,
+    // locking the victim out of password login until they complete the email flow).
+    const dbAccount = await db.account.findUnique({
+      where: { email },
+      select: { id: true, fullName: true, supabaseAuthUid: true, status: true },
+    });
+    if (
+      dbAccount &&
+      !dbAccount.supabaseAuthUid &&
+      (dbAccount.status === "ACTIVE" ||
+        dbAccount.status === "PENDING_VERIFICATION")
+    ) {
+      try {
+        const admin = createSupabaseAdminClient();
+        const { data: authData, error: authError } =
+          await admin.auth.admin.createUser({
+            email,
+            email_confirm: true,
+            user_metadata: { fullName: dbAccount.fullName },
+          });
+        if (!authError && authData.user) {
+          await db.account.update({
+            where: { id: dbAccount.id },
+            data: { supabaseAuthUid: authData.user.id },
+          });
+          console.log(
+            `[forgot-password] auto-linked ${email} to Supabase Auth user ${authData.user.id}`,
+          );
+        }
+      } catch (e) {
+        console.error(`[forgot-password] auto-link failed for ${email}:`, e);
+      }
+    }
+
+    // Send the password-reset email via Supabase. Use the client-supplied
+    // redirectTo if provided and valid (same-origin, verified by Zod), else
+    // fall back to the app URL. Relative paths (e.g. "/reset") are resolved
+    // against the app URL to produce an absolute URL for Supabase.
+    const appUrl =
+      process.env.NEXT_PUBLIC_APP_URL?.trim() || req.nextUrl.origin;
+    let finalRedirectTo = appUrl;
+    if (redirectTo) {
+      if (redirectTo.startsWith("/")) {
+        finalRedirectTo = new URL(redirectTo, appUrl).toString();
+      } else {
+        finalRedirectTo = redirectTo;
+      }
+    }
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+      email,
+      {
+        redirectTo: finalRedirectTo,
+      },
+    );
+    if (resetError) {
+      console.error(
+        `[forgot-password] resetPasswordForEmail failed for ${email}:`,
+        resetError.message,
+      );
+    }
+
+    await audit({
+      actorId: null,
+      action: "auth.password_reset_requested",
+      targetType: "Account",
+      metadata: { email },
+      req,
+    }).catch(() => {});
+
     return NextResponse.json(
       {
         ok: true,
@@ -56,86 +147,6 @@ export async function POST(req: NextRequest) {
       },
       { status: 200 },
     );
-  }
-  const { email, redirectTo } = parsed.data;
-
-  const supabase = await createSupabaseServerClient();
-
-  // Check if the account exists in our DB but has no Supabase Auth link.
-  // Only auto-link ACTIVE or PENDING_VERIFICATION accounts - not SUSPENDED
-  // (an attacker could otherwise create auth users for suspended accounts,
-  // locking the victim out of password login until they complete the email flow).
-  const dbAccount = await db.account.findUnique({ where: { email } });
-  if (
-    dbAccount &&
-    !dbAccount.supabaseAuthUid &&
-    (dbAccount.status === "ACTIVE" ||
-      dbAccount.status === "PENDING_VERIFICATION")
-  ) {
-    try {
-      const admin = createSupabaseAdminClient();
-      const { data: authData, error: authError } =
-        await admin.auth.admin.createUser({
-          email,
-          email_confirm: true,
-          user_metadata: { fullName: dbAccount.fullName },
-        });
-      if (!authError && authData.user) {
-        await db.account.update({
-          where: { id: dbAccount.id },
-          data: { supabaseAuthUid: authData.user.id },
-        });
-        console.log(
-          `[forgot-password] auto-linked ${email} to Supabase Auth user ${authData.user.id}`,
-        );
-      }
-    } catch (e) {
-      console.error(`[forgot-password] auto-link failed for ${email}:`, e);
-    }
-  }
-
-  // Send the password-reset email via Supabase. Use the client-supplied
-  // redirectTo if provided and valid (same-origin, verified by Zod), else
-  // fall back to the app URL. Relative paths (e.g. "/reset") are resolved
-  // against the app URL to produce an absolute URL for Supabase.
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() || req.nextUrl.origin;
-  let finalRedirectTo = appUrl;
-  if (redirectTo) {
-    if (redirectTo.startsWith("/")) {
-      finalRedirectTo = new URL(redirectTo, appUrl).toString();
-    } else {
-      finalRedirectTo = redirectTo;
-    }
-  }
-  const { error: resetError } = await supabase.auth.resetPasswordForEmail(
-    email,
-    {
-      redirectTo: finalRedirectTo,
-    },
-  );
-  if (resetError) {
-    console.error(
-      `[forgot-password] resetPasswordForEmail failed for ${email}:`,
-      resetError.message,
-    );
-  }
-
-  await audit({
-    actorId: null,
-    action: "auth.password_reset_requested",
-    targetType: "Account",
-    metadata: { email },
-    req,
-  }).catch(() => {});
-
-  return NextResponse.json(
-    {
-      ok: true,
-      message:
-        "If an account with that email exists, a reset link has been sent.",
-    },
-    { status: 200 },
-  );
   } catch (e) {
     if (isDbUnavailableError(e)) return dbUnavailable(e);
     throw e;

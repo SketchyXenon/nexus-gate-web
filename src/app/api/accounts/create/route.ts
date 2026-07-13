@@ -35,7 +35,10 @@ export async function POST(req: NextRequest) {
 
     // Reconciliation: if the accounts row exists but has no supabaseAuthUid
     // (orphaned from a Supabase Dashboard deletion), clean it up first.
-    const existing = await db.account.findUnique({ where: { email: d.email } });
+    const existing = await db.account.findUnique({
+      where: { email: d.email },
+      select: { id: true, supabaseAuthUid: true },
+    });
     if (existing && !existing.supabaseAuthUid && isSupabaseConfigured()) {
       try {
         // Query auth.users directly via raw SQL (single-row lookup).

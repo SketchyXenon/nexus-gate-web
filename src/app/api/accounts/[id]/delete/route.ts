@@ -33,7 +33,10 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
       return forbidden("You cannot delete your own account.");
     }
 
-    const target = await db.account.findUnique({ where: { id } });
+    const target = await db.account.findUnique({
+      where: { id },
+      select: { id: true, email: true, role: true, supabaseAuthUid: true },
+    });
     if (!target) return notFound("Account not found");
 
     if (target.role === "ADMIN") {

@@ -21,10 +21,7 @@ export async function GET(req: NextRequest) {
   const where: Record<string, unknown> = {};
   if (role && role !== "ALL") where.role = role;
   if (q) {
-    where.OR = [
-      { fullName: { contains: q } },
-      { email: { contains: q } },
-    ];
+    where.OR = [{ fullName: { contains: q } }, { email: { contains: q } }];
   }
 
   const [accounts, total] = await Promise.all([
@@ -34,16 +31,33 @@ export async function GET(req: NextRequest) {
       skip: (page - 1) * pageSize,
       take: pageSize,
       select: {
-        id: true, email: true, fullName: true, role: true, status: true,
-        studentId: true, program: true, section: true, year: true,
-        organizationName: true, lastLoginAt: true, createdAt: true,
+        id: true,
+        email: true,
+        fullName: true,
+        role: true,
+        status: true,
+        studentId: true,
+        program: true,
+        section: true,
+        year: true,
+        organizationName: true,
+        lastLoginAt: true,
+        createdAt: true,
       },
     }),
     db.account.count({ where }),
   ]);
 
-  return NextResponse.json({
-    accounts,
-    pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
-  }, { headers: { "Cache-Control": "private, no-cache" } });
+  return NextResponse.json(
+    {
+      accounts,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
+    },
+    { headers: { "Cache-Control": "private, no-cache" } },
+  );
 }

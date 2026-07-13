@@ -45,9 +45,13 @@ export async function POST(req: NextRequest) {
       parsed.data;
 
     // Uniqueness checks - generic error (no enumeration).
-    const existingEmail = await db.account.findUnique({ where: { email } });
+    const existingEmail = await db.account.findUnique({
+      where: { email },
+      select: { id: true, supabaseAuthUid: true },
+    });
     const existingStudentId = await db.account.findUnique({
       where: { studentId },
+      select: { id: true },
     });
 
     // RECONCILIATION: if the accounts row exists but has no supabaseAuthUid,
@@ -79,7 +83,10 @@ export async function POST(req: NextRequest) {
     // Re-check after potential cleanup.
     const existingEmailAfter = existingEmail?.supabaseAuthUid
       ? existingEmail
-      : await db.account.findUnique({ where: { email } });
+      : await db.account.findUnique({
+          where: { email },
+          select: { id: true, supabaseAuthUid: true },
+        });
     if (existingEmailAfter || existingStudentId) {
       await audit({
         actorId: null,

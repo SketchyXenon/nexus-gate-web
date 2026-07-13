@@ -29,7 +29,12 @@ import { isSupabaseConfigured } from "@/lib/supabase-server";
 
 const checkSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(255).optional(),
-  studentId: z.union([z.number().int().min(1000000).max(9999999), z.string().regex(/^\d{7}$/)]).optional(),
+  studentId: z
+    .union([
+      z.number().int().min(1000000).max(9999999),
+      z.string().regex(/^\d{7}$/),
+    ])
+    .optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -43,7 +48,8 @@ export async function POST(req: NextRequest) {
       return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
     }
     const { email, studentId } = parsed.data;
-    const studentIdNum = typeof studentId === "string" ? Number(studentId) : studentId;
+    const studentIdNum =
+      typeof studentId === "string" ? Number(studentId) : studentId;
 
     if (!email && !studentIdNum) {
       return badRequest("Provide an email or studentId to check");
@@ -52,7 +58,10 @@ export async function POST(req: NextRequest) {
     const result: { emailTaken?: boolean; studentIdTaken?: boolean } = {};
 
     if (email) {
-      const existing = await db.account.findUnique({ where: { email } });
+      const existing = await db.account.findUnique({
+        where: { email },
+        select: { id: true, supabaseAuthUid: true },
+      });
       if (existing && !existing.supabaseAuthUid && isSupabaseConfigured()) {
         // Reconcile orphaned row: check if the Supabase auth user still exists.
         // Query auth.users directly via raw SQL (single-row lookup).
@@ -77,6 +86,7 @@ export async function POST(req: NextRequest) {
     if (studentIdNum) {
       const existing = await db.account.findUnique({
         where: { studentId: studentIdNum },
+        select: { id: true },
       });
       result.studentIdTaken = !!existing;
     }
