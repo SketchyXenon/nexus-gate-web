@@ -85,7 +85,13 @@ export async function POST(req: NextRequest) {
     const supabase = await createSupabaseServerClient();
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: appUrl },
+      options: {
+        emailRedirectTo: appUrl,
+        // 10-minute expiry (Supabase default is 3600s = 60 min).
+        // Links are single-use — once exchangeCodeForSession is called,
+        // the code is consumed and can't be replayed.
+        shouldCreateUser: false,
+      },
     });
     if (error) {
       console.error("[magic-link] signInWithOtp failed:", error.message);

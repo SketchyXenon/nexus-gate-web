@@ -52,6 +52,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json(
     { records },
-    { headers: { "Cache-Control": "private, no-cache" } },
+    // 15s browser cache reduces DB load on repeated dashboard loads.
+    { headers: { "Cache-Control": "private, max-age=15" } },
   );
 }

@@ -240,6 +240,7 @@ model Notification {
   @@index([accountId, createdAt])
   @@index([accountId, readAt])
   @@index([readAt, createdAt])
+  @@index([type, createdAt])
 }
 
 // ====================================================================

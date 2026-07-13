@@ -299,6 +299,8 @@ model Notification {
   @@index([accountId, readAt])
   // Cron sweep: delete old read notifications
   @@index([readAt, createdAt])
+  // Cron event-reminders dedup: WHERE type LIKE 'reminder:event:%' AND created_at > X
+  @@index([type, createdAt])
 
   @@map("notifications")
 }

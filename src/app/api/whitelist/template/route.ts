@@ -61,7 +61,9 @@ export async function GET(_req: NextRequest) {
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "Content-Disposition":
         'attachment; filename="nexus-gate-student-template.xlsx"',
-      "Cache-Control": "private, no-cache",
+      // Static template (same content every time). Cache for 1 hour on
+      // the browser, serve stale for up to 1 day while revalidating.
+      "Cache-Control": "private, max-age=3600, stale-while-revalidate=86400",
     },
   });
 }

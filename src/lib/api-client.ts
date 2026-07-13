@@ -528,7 +528,8 @@ export const useRecentAttendance = (limit = 20) =>
       api<{ records: RecentAttendanceRecord[] }>(
         `/api/attendance/recent?limit=${limit}`,
       ),
-    staleTime: 30_000,
+    // 60s staleTime reduces DB load on repeated dashboard loads.
+    staleTime: 60_000,
   });
 
 // ---------------- Dashboard Stats (charts) ----------------

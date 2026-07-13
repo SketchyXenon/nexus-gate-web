@@ -118,6 +118,10 @@ export async function POST(req: NextRequest) {
         finalRedirectTo = redirectTo;
       }
     }
+    // Note: the OTP expiry (single-use + time limit) is enforced by Supabase
+    // Auth. Configure in Supabase Dashboard → Auth → Configuration → OTP
+    // Settings → OTP Expiry. Recommended: 600s (10 min). The code is
+    // consumed on first use (exchangeCodeForSession) and cannot be replayed.
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(
       email,
       {

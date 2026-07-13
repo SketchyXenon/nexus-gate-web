@@ -146,8 +146,6 @@ export async function GET(req: NextRequest) {
         delegatable: true,
         delegationEnabled: true,
         status: true,
-        createdAt: true,
-        updatedAt: true,
         _count: { select: { attendances: true } },
       },
     }),
