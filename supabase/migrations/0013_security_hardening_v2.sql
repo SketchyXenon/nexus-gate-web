@@ -157,7 +157,7 @@ CREATE POLICY refresh_tokens_select_own
 -- 7. Recreate verification_tokens RLS policies
 -- ====================================================================
 DROP POLICY IF EXISTS verification_tokens_select_own ON verification_tokens;
-CREATE POLICY IF EXISTS verification_tokens_select_own
+CREATE POLICY verification_tokens_select_own
     ON verification_tokens FOR SELECT
     TO authenticated
     USING (

@@ -394,16 +394,22 @@ export const useEventSecret = (id: number | null) =>
       }>(`/api/events/${id}/secret`),
     enabled: id != null,
     staleTime: 5 * 60_000,
-    // Poll every 15s when the response is an error (e.g. UPCOMING 403).
-    // This auto-refreshes the QR when the check-in window opens.
+    // Poll every 15s when the error is UPCOMING (the check-in window
+    // hasn't opened yet — auto-refresh when it opens). Don't poll for
+    // FORBIDDEN errors (the user doesn't have permission — retrying
+    // just spams the server with 403s).
     refetchInterval: (query) => {
-      if (
-        query.state.error ||
-        (query.state.data as { code?: string })?.code === "UPCOMING"
-      ) {
+      const err = query.state.error as { code?: string } | undefined;
+      if (err?.code === "UPCOMING") {
         return 15_000;
       }
       return false;
+    },
+    // Don't retry FORBIDDEN errors — retrying just spams 403s.
+    retry: (failureCount, error) => {
+      const err = error as { code?: string; status?: number } | undefined;
+      if (err?.code === "FORBIDDEN" || err?.status === 403) return false;
+      return failureCount < 2;
     },
   });
 
@@ -854,7 +860,8 @@ export interface NotificationPrefs {
 export const useNotificationPrefs = () =>
   useQuery({
     queryKey: ["notification-prefs"],
-    queryFn: () => api<{ prefs: NotificationPrefs }>("/api/profile/notification-prefs"),
+    queryFn: () =>
+      api<{ prefs: NotificationPrefs }>("/api/profile/notification-prefs"),
     staleTime: 60_000,
   });
 
@@ -993,9 +1000,12 @@ export const useRevokeDeviceKey = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (keyId: string) =>
-      api<{ ok: boolean }>(`/api/profile/device-key?keyId=${encodeURIComponent(keyId)}`, {
-        method: "DELETE",
-      }),
+      api<{ ok: boolean }>(
+        `/api/profile/device-key?keyId=${encodeURIComponent(keyId)}`,
+        {
+          method: "DELETE",
+        },
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["device-keys"] }),
   });
 };

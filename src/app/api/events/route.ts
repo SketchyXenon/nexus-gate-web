@@ -109,11 +109,15 @@ export async function GET(req: NextRequest) {
   const canSeeSecret = account.role === "ADMIN" || account.role === "ORGANIZER";
 
   // Pagination: default page 1, 100 per page. Cap at 200 to prevent abuse.
-  const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
-  const pageSize = Math.min(
-    200,
-    Math.max(1, parseInt(searchParams.get("pageSize") || "100", 10)),
-  );
+  // Use Number() + isFinite to guard against NaN (parseInt("abc") = NaN).
+  const rawPage = Number(searchParams.get("page") || "1");
+  const rawPageSize = Number(searchParams.get("pageSize") || "100");
+  const page =
+    Number.isFinite(rawPage) && rawPage >= 1 ? Math.floor(rawPage) : 1;
+  const pageSize =
+    Number.isFinite(rawPageSize) && rawPageSize >= 1
+      ? Math.min(200, Math.floor(rawPageSize))
+      : 100;
   const skip = (page - 1) * pageSize;
 
   const [events, totalCount] = await Promise.all([
@@ -199,8 +203,7 @@ export async function GET(req: NextRequest) {
     },
     {
       headers: {
-        "Cache-Control":
-          "private, no-cache",
+        "Cache-Control": "private, no-cache",
       },
     },
   );

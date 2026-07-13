@@ -8,12 +8,13 @@ import Ably from "ably";
 // --------------------------------------------------------------------
 // Uses Ably Token Authentication: the client fetches a short-lived,
 // SUBSCRIBE-ONLY token from /api/ably/token. The full server key (which
-// can publish) is NEVER shipped to the client. This prevents anyone from
-// extracting a publish-capable key from the JS bundle to spam fake
-// attendance events.
+// can publish) is NEVER shipped to the client.
 //
-// Only organizers connect to Ably (students don't need realtime). Falls
-// back to polling if the token endpoint is unavailable.
+// If the token endpoint returns an error (e.g. Ably not configured, or
+// the ABLY_SERVER_KEY is invalid), the hook skips the Ably connection
+// entirely and falls back to polling (the caller's presenceQ polling).
+// This prevents the "Connection closed" uncaught rejection that occurred
+// when the Ably SDK tried to submit a token request to a non-existent app.
 // ====================================================================
 
 export interface LiveAttendance {
@@ -35,46 +36,67 @@ export function useAttendanceSocket(eventId: number | null) {
   useEffect(() => {
     if (eventId == null) return;
 
-    let client: Ably.Realtime;
-    try {
-      // Token auth: the SDK calls /api/ably/token?eventId=N to get a signed,
-      // subscribe-only TokenRequest scoped to THIS event's channel. No key
-      // is shipped to the client, and the token can't subscribe to other
-      // events' channels.
-      client = new Ably.Realtime({
-        authUrl: `/api/ably/token?eventId=${encodeURIComponent(eventId)}`,
-        autoConnect: true,
+    let cancelled = false;
+    let client: Ably.Realtime | null = null;
+
+    // First, check if the token endpoint is available and returns a valid
+    // token. If it returns an error (503 = not configured, 500 = misconfigured,
+    // 400 = bad eventId), skip the Ably connection entirely.
+    fetch(`/api/ably/token?eventId=${encodeURIComponent(eventId)}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`token endpoint returned ${res.status}`);
+        return res.json();
+      })
+      .then(() => {
+        if (cancelled) return;
+        try {
+          client = new Ably.Realtime({
+            authUrl: `/api/ably/token?eventId=${encodeURIComponent(eventId)}`,
+            autoConnect: true,
+          });
+        } catch (e) {
+          console.error("[useAttendanceSocket] Ably init failed:", e);
+          return;
+        }
+        clientRef.current = client;
+
+        const channel = client.channels.get(`event:${eventId}`);
+
+        channel.subscribe("attendance", (msg) => {
+          const payload = msg.data as LiveAttendance;
+          setLatest(payload);
+        });
+
+        client.connection.on("connected", () => setConnected(true));
+        client.connection.on("disconnected", () => setConnected(false));
+        client.connection.on("suspended", () => setConnected(false));
+        client.connection.on("failed", () => setConnected(false));
+        client.connection.on("closed", () => setConnected(false));
+      })
+      .catch((e) => {
+        // Token endpoint failed — Ably is not configured or misconfigured.
+        // Silently fall back to polling (the caller's presenceQ).
+        if (!cancelled) {
+          console.warn(
+            "[useAttendanceSocket] Ably unavailable, using polling:",
+            e,
+          );
+        }
       });
-    } catch (e) {
-      console.error("[useAttendanceSocket] Ably init failed:", e);
-      return;
-    }
-    clientRef.current = client;
-
-    const channel = client.channels.get(`event:${eventId}`);
-
-    channel.subscribe("attendance", (msg) => {
-      const payload = msg.data as LiveAttendance;
-      setLatest(payload);
-    });
-
-    client.connection.on("connected", () => setConnected(true));
-    client.connection.on("disconnected", () => setConnected(false));
-    client.connection.on("suspended", () => setConnected(false));
-    client.connection.on("failed", () => setConnected(false));
-    // "closed" fires on explicit close() — suppress the uncaught rejection.
-    client.connection.on("closed", () => setConnected(false));
 
     return () => {
-      // Unsubscribe listeners BEFORE closing so the SDK doesn't try to
-      // process events during shutdown (which causes uncaught rejections).
-      channel.unsubscribe();
-      client.connection.off();
-      // close() returns void in the Ably SDK. The "Connection closed"
-      // console error comes from Ably's internal Promise chain — removing
-      // listeners before close prevents it from firing.
-      client.close();
-      clientRef.current = null;
+      cancelled = true;
+      if (client) {
+        try {
+          const channel = client.channels.get(`event:${eventId}`);
+          channel.unsubscribe();
+          client.connection.off();
+          client.close();
+        } catch {
+          // ignore cleanup errors
+        }
+        clientRef.current = null;
+      }
       setConnected(false);
     };
   }, [eventId]);
