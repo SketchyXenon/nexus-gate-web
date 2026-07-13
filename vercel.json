@@ -1,19 +1,19 @@
 {
   "crons": [
     {
-      "path": "/api/cron/event-reminders",
+      "path": "api/cron/event-reminders",
       "schedule": "0 8 * * *"
     },
     {
-      "path": "/api/cron/cleanup",
+      "path": "api/cron/cleanup",
       "schedule": "0 3 * * *"
     }
   ],
   "functions": {
-    "/api/cron/cleanup": { "maxDuration": 60 },
-    "/api/cron/event-reminders": { "maxDuration": 60 },
-    "/api/attendance": { "maxDuration": 30 },
-    "/api/accounts/[id]/delete": { "maxDuration": 15 },
-    "/api/whitelist/import-file": { "maxDuration": 60 }
+    "api/cron/cleanup": { "maxDuration": 60 },
+    "api/cron/event-reminders": { "maxDuration": 60 },
+    "api/attendance": { "maxDuration": 30 },
+    "api/accounts/[id]/delete": { "maxDuration": 15 },
+    "api/whitelist/import-file": { "maxDuration": 60 }
   }
 }
