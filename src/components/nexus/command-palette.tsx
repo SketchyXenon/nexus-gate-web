@@ -23,10 +23,11 @@ import {
   UserCircle,
   CalendarRange,
   History,
-  Settings,
+  HelpCircle,
   type LucideIcon,
 } from "lucide-react";
 import type { Account } from "@/lib/api-client";
+import { openInfoModal } from "./info-modals";
 
 type ViewId =
   | "dashboard"
@@ -122,7 +123,6 @@ function getCommands(role: string): NavCommand[] {
         icon: ScanLine,
         view: "scanner",
         keywords: "camera check-in scan qr",
-        shortcut: "S",
       },
       {
         label: "My Attendance",
@@ -209,9 +209,10 @@ export function CommandPalette({
       onOpenChange={setOpen}
       title="Quick navigation"
       description="Search for a page or action..."
+      className="sm:max-w-lg"
     >
       <CommandInput placeholder="Type a page name or search..." />
-      <CommandList>
+      <CommandList className="max-h-[60vh] sm:max-h-[400px]">
         <CommandEmpty>No results found.</CommandEmpty>
         <CommandGroup heading="Pages">
           {commands.map((cmd) => {
@@ -226,12 +227,12 @@ export function CommandPalette({
                 <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div className="flex-1 min-w-0">
                   <span className="text-sm font-medium">{cmd.label}</span>
-                  <span className="text-xs text-muted-foreground ml-2">
+                  <span className="text-xs text-muted-foreground ml-2 hidden sm:inline">
                     {cmd.description}
                   </span>
                 </div>
                 {cmd.shortcut && (
-                  <kbd className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded border">
+                  <kbd className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded border shrink-0">
                     {cmd.shortcut}
                   </kbd>
                 )}
@@ -244,12 +245,32 @@ export function CommandPalette({
           <CommandItem
             onSelect={() => {
               setOpen(false);
-              window.open("/faq", "_self");
+              openInfoModal("faq");
             }}
             className="gap-2"
           >
-            <Settings className="h-4 w-4 text-muted-foreground shrink-0" />
+            <HelpCircle className="h-4 w-4 text-muted-foreground shrink-0" />
             <span className="text-sm">FAQ & Help</span>
+          </CommandItem>
+          <CommandItem
+            onSelect={() => {
+              setOpen(false);
+              openInfoModal("terms");
+            }}
+            className="gap-2"
+          >
+            <HelpCircle className="h-4 w-4 text-muted-foreground shrink-0" />
+            <span className="text-sm">Terms of Use</span>
+          </CommandItem>
+          <CommandItem
+            onSelect={() => {
+              setOpen(false);
+              openInfoModal("privacy");
+            }}
+            className="gap-2"
+          >
+            <HelpCircle className="h-4 w-4 text-muted-foreground shrink-0" />
+            <span className="text-sm">Privacy Policy</span>
           </CommandItem>
         </CommandGroup>
       </CommandList>

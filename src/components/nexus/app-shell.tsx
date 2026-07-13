@@ -320,6 +320,7 @@ export function AppShell({
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
+            {/* Desktop: search button with kbd hint */}
             <Button
               variant="outline"
               size="sm"
@@ -332,6 +333,18 @@ export function AppShell({
               <kbd className="text-[10px] font-mono text-muted-foreground">
                 ⌘K
               </kbd>
+            </Button>
+            {/* Mobile: icon-only search button */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 sm:hidden"
+              onClick={() =>
+                window.dispatchEvent(new Event("nexus-open-command-palette"))
+              }
+              aria-label="Search"
+            >
+              <Search className="h-4 w-4" />
             </Button>
             <NotificationBell />
             <Button
