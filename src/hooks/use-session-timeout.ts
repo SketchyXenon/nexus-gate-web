@@ -25,6 +25,7 @@ import { toast } from "@/hooks/use-toast";
 const INACTIVITY_MS = 30 * 60 * 1000; // 30 minutes
 const WARNING_MS = 25 * 60 * 1000; // 25 minutes
 const CHECK_INTERVAL_MS = 30 * 1000; // check every 30s
+const SERVER_CHECK_INTERVAL_MS = 5 * 60 * 1000; // verify session every 5 min
 
 export function useSessionTimeout(isAuthenticated: boolean) {
   const router = useRouter();
@@ -32,6 +33,7 @@ export function useSessionTimeout(isAuthenticated: boolean) {
   const lastActivityRef = useRef<number>(Date.now());
   const warningShownRef = useRef<boolean>(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const serverCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const updateActivity = useCallback(() => {
     lastActivityRef.current = Date.now();
@@ -40,38 +42,44 @@ export function useSessionTimeout(isAuthenticated: boolean) {
     }
   }, []);
 
+  // Force logout (shared by inactivity timeout and server-side check).
+  const forceLogout = useCallback(
+    (reason: string) => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (serverCheckRef.current) clearInterval(serverCheckRef.current);
+      toast({
+        title: "Session expired",
+        description: reason,
+        variant: "destructive",
+      });
+      logout.mutate(undefined, {
+        onSuccess: () => {
+          router.push("/");
+          setTimeout(() => window.location.reload(), 500);
+        },
+        onError: () => {
+          window.location.href = "/";
+        },
+      });
+    },
+    [logout, router],
+  );
+
   useEffect(() => {
     if (!isAuthenticated) return;
 
     // Activity listeners.
     const events = ["mousedown", "keydown", "touchstart", "scroll"];
-    events.forEach((e) => window.addEventListener(e, updateActivity, { passive: true }));
+    events.forEach((e) =>
+      window.addEventListener(e, updateActivity, { passive: true }),
+    );
 
-    // Check inactivity every 30s.
+    // Check inactivity every 30s (client-side).
     intervalRef.current = setInterval(() => {
       const inactive = Date.now() - lastActivityRef.current;
       if (inactive >= INACTIVITY_MS) {
-        // Session expired — log out.
-        if (intervalRef.current) clearInterval(intervalRef.current);
-        toast({
-          title: "Session expired",
-          description: "You've been signed out due to inactivity.",
-          variant: "destructive",
-        });
-        logout.mutate(undefined, {
-          onSuccess: () => {
-            router.push("/");
-            setTimeout(() => window.location.reload(), 500);
-          },
-          // If the network is down (flaky campus WiFi), the logout request
-          // fails. Force-redirect to "/" so the user isn't stuck on the
-          // authed page with a stale session toast.
-          onError: () => {
-            window.location.href = "/";
-          },
-        });
+        forceLogout("You've been signed out due to inactivity.");
       } else if (inactive >= WARNING_MS && !warningShownRef.current) {
-        // Show warning at 25 min.
         warningShownRef.current = true;
         const remaining = Math.ceil((INACTIVITY_MS - inactive) / 60000);
         toast({
@@ -81,9 +89,26 @@ export function useSessionTimeout(isAuthenticated: boolean) {
       }
     }, CHECK_INTERVAL_MS);
 
+    // Server-side session validation every 5 min.
+    // Catches the case where the user is active (mouse moves) but the
+    // server-side token has expired (Supabase access token TTL, or the
+    // account was suspended/demoted server-side).
+    serverCheckRef.current = setInterval(async () => {
+      try {
+        const res = await fetch("/api/auth/me", { credentials: "include" });
+        if (res.status === 401) {
+          forceLogout("Your session is no longer valid. Please sign in again.");
+        }
+      } catch {
+        // Network error — don't log out (flaky WiFi). The next successful
+        // API call will trigger the 401 refresh flow if the session expired.
+      }
+    }, SERVER_CHECK_INTERVAL_MS);
+
     return () => {
       events.forEach((e) => window.removeEventListener(e, updateActivity));
       if (intervalRef.current) clearInterval(intervalRef.current);
+      if (serverCheckRef.current) clearInterval(serverCheckRef.current);
     };
-  }, [isAuthenticated, updateActivity, logout, router]);
+  }, [isAuthenticated, updateActivity, forceLogout]);
 }

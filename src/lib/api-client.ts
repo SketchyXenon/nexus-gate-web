@@ -119,7 +119,7 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   if (res.status === 401 && !url.includes("/api/auth/")) {
     const refreshed = await refreshSession();
     if (refreshed) {
-      // Retry the original request with the new cookie
+      // Retry the original request with the refreshed cookie.
       const retryRes = await fetch(url, {
         ...init,
         headers: {
@@ -132,8 +132,14 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
         if (retryRes.status === 204) return undefined as T;
         return retryRes.json() as Promise<T>;
       }
+      // Retry also failed with 401 — the session is truly dead.
+      // Force redirect to login so the user isn't stuck on a broken page.
+      if (retryRes.status === 401 && typeof window !== "undefined") {
+        window.location.href = "/";
+        throw new Error("Session expired");
+      }
     }
-    // Refresh failed — the user will be redirected to login by useMe()
+    // Refresh failed — the user will be redirected to login by useMe().
   }
 
   if (!res.ok) {

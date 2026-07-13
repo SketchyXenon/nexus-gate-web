@@ -226,6 +226,13 @@ export async function proxy(request: NextRequest) {
   // XSS protection — set to 0 (modern browsers use CSP; old IE XSS Auditor was flawed)
   response.headers.set("X-XSS-Protection", "0");
 
+  // Cross-Origin isolation headers — defense-in-depth against Spectre-type
+  // side-channel attacks. COOP isolates the browsing context group (prevents
+  // cross-origin windows from referencing this document). CORP prevents
+  // cross-origin loads of this document's resources.
+  response.headers.set("Cross-Origin-Opener-Policy", "same-origin");
+  response.headers.set("Cross-Origin-Resource-Policy", "same-origin");
+
   return response;
 }
 
