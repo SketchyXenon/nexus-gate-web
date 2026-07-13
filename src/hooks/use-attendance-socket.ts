@@ -73,9 +73,6 @@ export function useAttendanceSocket(eventId: number | null) {
           client = new Ably.Realtime({
             authUrl: `/api/ably/token?eventId=${encodeURIComponent(eventId)}`,
             autoConnect: true,
-            // Stop retrying after 2 attempts — if Ably is down or the key
-            // is invalid, fall back to polling instead of spamming retries.
-            auth: { retryCount: 2 },
           });
         } catch (e) {
           console.error("[useAttendanceSocket] Ably init failed:", e);
