@@ -6,6 +6,9 @@ const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
 
 // GET /api/attendance/overrides
+// ADMIN-ONLY: override viewing is restricted to administrators to maintain
+// data integrity. Organizers no longer have access to manual overrides.
+//
 // Query params:
 //   page      — 1-indexed page number (default 1)
 //   pageSize  — items per page (default 25, max 100)
@@ -13,13 +16,8 @@ const MAX_PAGE_SIZE = 100;
 //   q         — search by student name, student ID, or reason (optional)
 //   from      — ISO date; only overrides createdAt >= from (optional)
 //   to        — ISO date; only overrides createdAt <= to (optional)
-//
-// Returns overrides the caller is allowed to see:
-//   - ADMIN: all overrides
-//   - ORGANIZER: only overrides for events they own
-//   - USER: forbidden (this is a staff-only view)
 export async function GET(req: NextRequest) {
-  const res = await requireAuth("ORGANIZER");
+  const res = await requireAuth("ADMIN");
   if ("error" in res) return res.error;
   const { account } = res;
 

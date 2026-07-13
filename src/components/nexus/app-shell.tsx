@@ -23,6 +23,7 @@ import {
   UserCircle,
   CalendarRange,
   History,
+  Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,6 +40,7 @@ import { toast } from "@/hooks/use-toast";
 import { ThemeToggle } from "./theme-toggle";
 import { CookieConsent } from "./cookie-consent";
 import { InfoModals, openInfoModal } from "./info-modals";
+import { CommandPalette } from "./command-palette";
 import { DiceBearAvatar } from "./dicebear-avatar";
 import { NexusLogo } from "./nexus-logo";
 import { NotificationBell } from "./notification-bell";
@@ -141,7 +143,7 @@ const NAV: NavItem[] = [
     id: "overrides",
     label: "Overrides",
     icon: AlertTriangle,
-    roles: ["ADMIN", "ORGANIZER"],
+    roles: ["ADMIN"],
     description: "Add manually",
   },
   {
@@ -167,7 +169,13 @@ const NAV: NavItem[] = [
   },
 ];
 
-export function AppShell({ user, initialView }: { user: Account; initialView?: ViewId }) {
+export function AppShell({
+  user,
+  initialView,
+}: {
+  user: Account;
+  initialView?: ViewId;
+}) {
   const [view, setView] = useState<ViewId>(initialView ?? "dashboard");
   const logout = useLogout();
   const online = useOnlineStatus();
@@ -312,6 +320,19 @@ export function AppShell({ user, initialView }: { user: Account; initialView?: V
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 gap-2 px-2.5 hidden sm:flex"
+              onClick={() =>
+                window.dispatchEvent(new Event("nexus-open-command-palette"))
+              }
+            >
+              <Search className="h-3.5 w-3.5 text-muted-foreground" />
+              <kbd className="text-[10px] font-mono text-muted-foreground">
+                ⌘K
+              </kbd>
+            </Button>
             <NotificationBell />
             <Button
               variant="ghost"
@@ -343,7 +364,9 @@ export function AppShell({ user, initialView }: { user: Account; initialView?: V
                 {activeView === "my-attendance" && <MyAttendanceView />}
                 {activeView === "attendance" && <AttendanceView />}
                 {activeView === "overrides" && <OverridesView />}
-                {activeView === "accounts" && <AccountsView currentUser={user} />}
+                {activeView === "accounts" && (
+                  <AccountsView currentUser={user} />
+                )}
                 {activeView === "audit-logs" && <AuditLogsView />}
                 {activeView === "profile" && <ProfileView />}
               </CardErrorBoundary>
@@ -353,6 +376,7 @@ export function AppShell({ user, initialView }: { user: Account; initialView?: V
       </div>
       <CookieConsent />
       <InfoModals />
+      <CommandPalette user={user} onNavigate={setView} />
     </div>
   );
 }

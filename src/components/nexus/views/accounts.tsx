@@ -760,7 +760,10 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                       <SelectTrigger>
                         <SelectValue placeholder="Select program" />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent
+                        position="popper"
+                        className="max-h-[200px] z-[100]"
+                      >
                         <SelectItem value="__none__">None</SelectItem>
                         {PROGRAMS.map((p) => (
                           <SelectItem key={p.code} value={p.code}>
@@ -956,7 +959,10 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent
+                    position="popper"
+                    className="max-h-[200px] z-[100]"
+                  >
                     <SelectItem value="__none__">— Not specified —</SelectItem>
                     {PROGRAMS.map((p) => (
                       <SelectItem key={p.code} value={p.code}>

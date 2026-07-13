@@ -14,8 +14,12 @@ import { notifyAttendance } from "@/lib/realtime";
 import { getEventTimeWindows } from "@/lib/event-time";
 
 // POST /api/attendance/override
+// ADMIN-ONLY: manual attendance overrides are restricted to administrators
+// to maintain data integrity and prevent cheating suspicion. Organizers
+// must use the QR scanning system; if a student's phone died, the admin
+// can add the override after verification.
 export async function POST(req: NextRequest) {
-  const res = await requireAuth("ORGANIZER");
+  const res = await requireAuth("ADMIN");
   if ("error" in res) return res.error;
   const { account } = res;
 
@@ -27,9 +31,6 @@ export async function POST(req: NextRequest) {
 
   const event = await db.event.findUnique({ where: { id: eventId } });
   if (!event) return notFound("Event not found");
-  if (account.role !== "ADMIN" && event.ownerId !== account.id) {
-    return forbidden("You can only add overrides for your own events");
-  }
 
   // Check if the student is on the whitelist OR has an account.
   // The whitelist is the primary source, but students who registered
