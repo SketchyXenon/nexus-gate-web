@@ -1,4 +1,4 @@
-// Allow up to 10s for the HMAC + response.
+// Allow up to 10s for the HMAC + Ably validation.
 export const maxDuration = 10;
 
 import { NextRequest, NextResponse } from "next/server";
@@ -6,14 +6,9 @@ import { createHmac, randomBytes } from "crypto";
 import { requireAuth } from "@/lib/api";
 
 // GET /api/ably/token?eventId=123
-// Issues a short-lived Ably TokenRequest with SUBSCRIBE-ONLY capability,
-// scoped to a SINGLE event channel. The client never receives the full
-// server key (which can publish); it gets a signed token that only allows
-// subscribing to the specific event:N channel requested.
-//
-// This closes the PII leak where a wildcard event:* capability let any
-// user subscribe to any event's real-time attendance (including events
-// for other programs/sections).
+// Issues a short-lived Ably TokenRequest with SUBSCRIBE-ONLY capability.
+// Validates the key against Ably's REST API before returning the token.
+// If the key is invalid (404), returns 503 so the client skips Ably.
 export async function GET(req: NextRequest) {
   const res = await requireAuth();
   if ("error" in res) return res.error;
@@ -26,7 +21,6 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Parse and validate eventId from the query string.
   const eventIdParam = req.nextUrl.searchParams.get("eventId");
   const eventId = Number(eventIdParam);
   if (!Number.isInteger(eventId) || eventId <= 0) {
@@ -36,17 +30,39 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Server key format: "keyName.keySecret"
   const [keyName, keySecret] = serverKey.split(".");
   if (!keyName || !keySecret) {
-    console.error("[ably/token] ABLY_SERVER_KEY is malformed (expected keyName.keySecret)");
+    console.error("[ably/token] ABLY_SERVER_KEY is malformed");
     return NextResponse.json(
       { error: "Realtime misconfiguration.", code: "REALTIME_MISCONFIGURED" },
       { status: 500 },
     );
   }
 
-  // Token params: 1-hour TTL, subscribe-only to the SPECIFIC event channel.
+  // Validate the key against Ably's REST API. This prevents returning
+  // a signed token for a non-existent app, which would cause the Ably
+  // SDK to retry indefinitely on the client.
+  try {
+    const validateRes = await fetch(`https://rest.ably.io/keys/${keyName}`, {
+      signal: AbortSignal.timeout(3000),
+      headers: {
+        Authorization: `Basic ${Buffer.from(serverKey).toString("base64")}`,
+      },
+    });
+    if (!validateRes.ok) {
+      console.error(
+        `[ably/token] Key validation failed: ${validateRes.status}`,
+      );
+      return NextResponse.json(
+        { error: "Realtime key is invalid.", code: "REALTIME_KEY_INVALID" },
+        { status: 503 },
+      );
+    }
+  } catch (e) {
+    // Network error validating — allow the token (non-fatal).
+    console.warn("[ably/token] Key validation skipped (network error):", e);
+  }
+
   const ttl = 3600 * 1000;
   const channel = `event:${eventId}`;
   const capability: Record<string, string[]> = {};
@@ -56,7 +72,9 @@ export async function GET(req: NextRequest) {
 
   const capabilityJson = JSON.stringify(capability);
   const signedString = `${keyName}\n${ttl}\n${capabilityJson}\n${timestamp}\n${nonce}`;
-  const mac = createHmac("sha256", keySecret).update(signedString).digest("hex");
+  const mac = createHmac("sha256", keySecret)
+    .update(signedString)
+    .digest("hex");
 
   return NextResponse.json({
     keyName,
