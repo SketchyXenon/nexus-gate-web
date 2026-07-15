@@ -37,7 +37,9 @@ export function useAttendanceSocket(eventId: number | null) {
     // (src/app/api/ably/token/route.ts). Catches null, undefined, 0,
     // NaN, negatives, and non-integers — all of which would produce a
     // 400 BAD_REQUEST from the token endpoint if we let them through.
-    if (!Number.isInteger(eventId) || eventId <= 0) return;
+    // The `eventId == null` check must come first so TypeScript narrows
+    // `number | null` -> `number` for the `<= 0` comparison.
+    if (eventId == null || !Number.isInteger(eventId) || eventId <= 0) return;
 
     let cancelled = false;
     let cleanedUp = false;
@@ -117,7 +119,8 @@ export function useAttendanceSocket(eventId: number | null) {
             // Defensive: re-validate eventId inside the callback too, since
             // the Ably SDK can call authCallback multiple times (renewal,
             // reconnection) and we want to guarantee a valid URL every time.
-            if (!Number.isInteger(eventId) || eventId <= 0) {
+            // Null check first for TypeScript narrowing (see effect guard).
+            if (eventId == null || !Number.isInteger(eventId) || eventId <= 0) {
               callback("Invalid eventId for Ably token request", null);
               return;
             }
