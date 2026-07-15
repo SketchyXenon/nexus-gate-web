@@ -676,7 +676,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
               themselves.
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleCreate} className="space-y-3" noValidate>
+          <form onSubmit={handleCreate} className="space-y-4" noValidate>
             <div className="space-y-1.5">
               <Label htmlFor="newFullName">Full name</Label>
               <Input
@@ -748,7 +748,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
             </div>
             {newRole === "ORGANIZER" && (
               <>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label htmlFor="newProgram">Program (optional)</Label>
                     <Select
@@ -757,13 +757,10 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                         setNewProgram(v === "__none__" ? "" : v)
                       }
                     >
-                      <SelectTrigger>
+                      <SelectTrigger className="h-9">
                         <SelectValue placeholder="Select program" />
                       </SelectTrigger>
-                      <SelectContent
-                        position="popper"
-                        className="max-h-[200px] z-[100]"
-                      >
+                      <SelectContent position="popper" className="max-h-[200px] z-[100]">
                         <SelectItem value="__none__">None</SelectItem>
                         {PROGRAMS.map((p) => (
                           <SelectItem key={p.code} value={p.code}>
@@ -777,6 +774,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                     <Label htmlFor="newSection">Section (optional)</Label>
                     <Input
                       id="newSection"
+                      className="h-9"
                       placeholder="2-B"
                       value={newSection}
                       onChange={(e) => setNewSection(e.target.value)}
@@ -794,6 +792,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                   </Label>
                   <Input
                     id="newOrgName"
+                    className="h-9"
                     placeholder="e.g. College of Technology"
                     value={newOrgName}
                     onChange={(e) => setNewOrgName(e.target.value)}
@@ -880,7 +879,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
             </DialogDescription>
           </DialogHeader>
           {editTarget && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="editFullName">Full name</Label>
                 <Input
@@ -902,7 +901,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                   }
                 />
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label>Role</Label>
                   <Select
@@ -914,7 +913,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                       })
                     }
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className="h-9">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -935,7 +934,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                       })
                     }
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className="h-9">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -956,13 +955,10 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                     setEditTarget({ ...editTarget, program: v })
                   }
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="h-9">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent
-                    position="popper"
-                    className="max-h-[200px] z-[100]"
-                  >
+                  <SelectContent position="popper" className="max-h-[200px] z-[100]">
                     <SelectItem value="__none__">— Not specified —</SelectItem>
                     {PROGRAMS.map((p) => (
                       <SelectItem key={p.code} value={p.code}>
@@ -972,7 +968,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="editSection">Section</Label>
                   <Input
@@ -1019,7 +1015,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                         organizationName: e.target.value,
                       })
                     }
-                    placeholder="e.g. College of Technology"
+                    placeholder="e.g. TechnoGadget Organization"
                   />
                 </div>
               )}

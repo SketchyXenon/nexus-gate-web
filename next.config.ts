@@ -1,5 +1,4 @@
 import type { NextConfig } from "next";
-import { withSentryConfig } from "@sentry/nextjs";
 
 const nextConfig: NextConfig = {
   output: "standalone",
@@ -42,16 +41,31 @@ const nextConfig: NextConfig = {
   },
 };
 
-// Only wrap with Sentry config if Sentry is configured.
-// When SENTRY_DSN is not set, Sentry's wrapper can cause runtime errors
-// on Vercel (the "Something went wrong" error page).
+// Only wrap with Sentry config if Sentry is configured AND the package is
+// importable. The import is deferred (dynamic require) so a missing
+// @sentry/nextjs package degrades gracefully — the app runs without Sentry
+// instead of failing to load next.config.ts (which caused the 404-on-every-
+// route cascade in a previous incident).
 const hasSentry = process.env.NEXT_PUBLIC_SENTRY_DSN || process.env.SENTRY_DSN;
 
-export default hasSentry
-  ? withSentryConfig(nextConfig, {
+let config = nextConfig;
+if (hasSentry) {
+  try {
+    // Dynamic require so a missing package doesn't crash config loading.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { withSentryConfig } = require("@sentry/nextjs");
+    config = withSentryConfig(nextConfig, {
       org: process.env.SENTRY_ORG,
       project: process.env.SENTRY_PROJECT,
       silent: true,
       sourcemaps: { deleteSourcemapsAfterUpload: true },
-    })
-  : nextConfig;
+    });
+  } catch {
+    // Package not installed — fall back to plain config. Sentry is optional.
+    console.warn(
+      "[next.config] SENTRY_DSN set but @sentry/nextjs not installed — running without Sentry.",
+    );
+  }
+}
+
+export default config;

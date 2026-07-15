@@ -34,7 +34,7 @@
 
         # Scan endpoint — allow bursts for legitimate students.
         @scan path /api/attendance
-        rate_limit @scan 60r/m
+        rate_limit @scan 200r/m
 
         # General API — 100 req/min per IP.
         @api path /api/*
@@ -85,7 +85,7 @@
 
         # Scan endpoint — allow bursts for legitimate students.
         @scan path /api/attendance
-        rate_limit @scan 60r/m
+        rate_limit @scan 200r/m
 
         # General API — 100 req/min per IP.
         @api path /api/*

@@ -46,6 +46,7 @@ export function useAttendanceSocket(eventId: number | null) {
     let client: Ably.Realtime | null = null;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let authFailed = false;
+    let messageHandler: ((msg: Ably.Message) => void) | null = null;
 
     // Ably's internal state machine can reject with "Connection closed"
     // when close() is called on a failed/closing connection. These rejections
@@ -81,7 +82,10 @@ export function useAttendanceSocket(eventId: number | null) {
       if (client) {
         try {
           const channel = client.channels.get(`event:${eventId}`);
-          channel.unsubscribe();
+          // Unsubscribe ONLY our handler — calling unsubscribe() with no
+          // args removes ALL listeners on the channel, which is fragile
+          // if a future change adds more handlers.
+          if (messageHandler) channel.unsubscribe("attendance", messageHandler);
           client.connection.off();
           // Only call close() if the connection is in a state where close
           // is meaningful. Calling close() on a "failed"/"closing"/"closed"
@@ -174,10 +178,11 @@ export function useAttendanceSocket(eventId: number | null) {
 
     const channel = client.channels.get(`event:${eventId}`);
 
-    channel.subscribe("attendance", (msg) => {
+    messageHandler = (msg: Ably.Message) => {
       const payload = msg.data as LiveAttendance;
       setLatest(payload);
-    });
+    };
+    channel.subscribe("attendance", messageHandler);
 
     client.connection.on("connected", () => {
       if (timeoutId) {

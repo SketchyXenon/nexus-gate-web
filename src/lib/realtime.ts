@@ -23,6 +23,8 @@ export interface AttendanceEvent {
 
 // Publish an attendance event to the event's Ably channel.
 // Fire-and-forget — fails silently if Ably is not configured.
+// One retry (after 2s) for transient failures (network errors, 5xx).
+// 4xx errors are not retried (they are permanent — bad key, bad channel).
 export async function notifyAttendance(
   eventId: number,
   payload: AttendanceEvent,
@@ -30,35 +32,55 @@ export async function notifyAttendance(
   const serverKey = process.env.ABLY_SERVER_KEY;
   if (!serverKey) return;
 
-  try {
-    const channel = `event:${eventId}`;
-    // Use Ably REST API directly (no SDK needed on server side).
-    // This avoids importing the Ably SDK in the serverless function.
-    const res = await fetch(
-      `https://rest.ably.io/channels/${encodeURIComponent(channel)}/publish`,
-      {
+  const channel = `event:${eventId}`;
+  // Use Ably REST API directly (no SDK needed on server side).
+  const url = `https://rest.ably.io/channels/${encodeURIComponent(channel)}/publish`;
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Basic ${Buffer.from(serverKey).toString("base64")}`,
+  };
+  const body = JSON.stringify({ name: "attendance", data: payload });
+
+  const attempt = async (): Promise<boolean> => {
+    try {
+      const res = await fetch(url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Basic ${Buffer.from(serverKey).toString("base64")}`,
-        },
-        body: JSON.stringify({
-          name: "attendance",
-          data: payload,
-        }),
+        headers,
+        body,
         // 5s timeout — prevents Ably from hanging the serverless function.
         signal: AbortSignal.timeout(5000),
-      },
-    );
-    if (!res.ok) {
-      console.error(
-        "[realtime] Ably publish failed:",
+      });
+      if (res.ok) return true;
+      // 4xx = permanent (bad key, bad request). Don't retry.
+      if (res.status >= 400 && res.status < 500) {
+        console.error(
+          "[realtime] Ably publish rejected (permanent):",
+          res.status,
+          await res.text(),
+        );
+        return false;
+      }
+      // 5xx = transient (Ably server error). Retry once.
+      console.warn(
+        "[realtime] Ably publish failed (transient):",
         res.status,
         await res.text(),
       );
+      return false;
+    } catch (e) {
+      // Network error / timeout — transient. Retry once.
+      console.warn(
+        "[realtime] Ably publish error (transient):",
+        e instanceof Error ? e.message : e,
+      );
+      return false;
     }
-  } catch (e) {
-    // Non-fatal — attendance is still recorded in the DB.
-    console.error("[realtime] Ably publish error:", e);
-  }
+  };
+
+  // First attempt.
+  if (await attempt()) return;
+
+  // One retry after 2s for transient failures only.
+  await new Promise((r) => setTimeout(r, 2000));
+  await attempt();
 }
