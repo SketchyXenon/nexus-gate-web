@@ -101,6 +101,10 @@ export async function GET(req: NextRequest) {
   const timestamp = Date.now();
   const nonce = randomBytes(16).toString("hex");
 
+  // Ably's REST API requires `capability` to be a STRING (JSON-encoded),
+  // not a nested object. The HMAC must be signed over this exact string,
+  // and the same string must be returned in the TokenRequest. Returning
+  // the object here causes Ably to reject with 40001 "capability must be string".
   const capabilityJson = JSON.stringify(capability);
   const signedString = `${keyName}\n${ttl}\n${capabilityJson}\n${timestamp}\n${nonce}`;
   const mac = createHmac("sha256", keySecret)
@@ -110,7 +114,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     keyName,
     ttl,
-    capability,
+    capability: capabilityJson,
     timestamp,
     nonce,
     mac,
