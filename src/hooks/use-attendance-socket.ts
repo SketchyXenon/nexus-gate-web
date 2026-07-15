@@ -33,7 +33,11 @@ export function useAttendanceSocket(eventId: number | null) {
   const clientRef = useRef<Ably.Realtime | null>(null);
 
   useEffect(() => {
-    if (eventId == null) return;
+    // Validate eventId with the SAME rules as the server route
+    // (src/app/api/ably/token/route.ts). Catches null, undefined, 0,
+    // NaN, negatives, and non-integers — all of which would produce a
+    // 400 BAD_REQUEST from the token endpoint if we let them through.
+    if (!Number.isInteger(eventId) || eventId <= 0) return;
 
     let cancelled = false;
     let cleanedUp = false;
@@ -110,6 +114,13 @@ export function useAttendanceSocket(eventId: number | null) {
             return;
           }
           try {
+            // Defensive: re-validate eventId inside the callback too, since
+            // the Ably SDK can call authCallback multiple times (renewal,
+            // reconnection) and we want to guarantee a valid URL every time.
+            if (!Number.isInteger(eventId) || eventId <= 0) {
+              callback("Invalid eventId for Ably token request", null);
+              return;
+            }
             const res = await fetch(
               `/api/ably/token?eventId=${encodeURIComponent(eventId)}`,
             );

@@ -43,7 +43,11 @@ export async function GET(req: NextRequest) {
   const eventId = Number(eventIdParam);
   if (!Number.isInteger(eventId) || eventId <= 0) {
     return NextResponse.json(
-      { error: "Valid eventId is required.", code: "BAD_REQUEST" },
+      {
+        error: "Valid eventId is required.",
+        code: "BAD_REQUEST",
+        hint: `Received eventId=${JSON.stringify(eventIdParam)}. Must be a positive integer (e.g. /api/ably/token?eventId=17).`,
+      },
       { status: 400 },
     );
   }
