@@ -1,32 +1,31 @@
-// Allow up to 10s for the HMAC + response.
+// Allow up to 10s for the token request signing.
 export const maxDuration = 10;
 
 import { NextRequest, NextResponse } from "next/server";
-import { createHmac, randomBytes } from "crypto";
+import Ably from "ably";
 import { requireAuth } from "@/lib/api";
 
 // GET /api/ably/token?eventId=123
 // Issues a short-lived Ably TokenRequest with SUBSCRIBE-ONLY capability,
 // scoped to a SINGLE event channel. The client never receives the full
-// server key (which can publish); it gets a signed token that only allows
-// subscribing to the specific event:N channel requested.
+// server key (which can publish); it gets a signed token request that
+// only allows subscribing to the specific event:N channel requested.
 //
-// This closes the PII leak where a wildcard event:* capability let any
-// user subscribe to any event's real-time attendance (including events
-// for other programs/sections).
+// Uses the Ably SDK's auth.createTokenRequest() for signing. This is the
+// officially recommended server-side approach and guarantees a spec-
+// compliant TokenRequest (correct key parsing, canonicalization, HMAC).
+// Hand-rolling the HMAC caused multiple spec-mismatch bugs (split char,
+// capability type, mac canonical form); the SDK eliminates that class.
 export async function GET(req: NextRequest) {
   const res = await requireAuth();
   if ("error" in res) return res.error;
 
   const serverKey = process.env.ABLY_SERVER_KEY;
   if (!serverKey) {
-    // Log with the env var name so this is obvious in Vercel function logs.
-    // The 503 the client sees is correct (realtime is off), but operators
-    // need to know WHY it's off without digging into the source.
     console.error(
       "[ably/token] 503 REALTIME_NOT_CONFIGURED: ABLY_SERVER_KEY env var is not set. " +
         "Get it from https://ably.com/dashboard -> your app -> API Keys " +
-        "(format: keyName.keySecret). Add it to your Vercel project environment variables.",
+        "(format: keyName:keySecret). Add it to your Vercel project environment variables.",
     );
     return NextResponse.json(
       {
@@ -35,6 +34,22 @@ export async function GET(req: NextRequest) {
         hint: "ABLY_SERVER_KEY is missing on the server. Live attendance will fall back to polling.",
       },
       { status: 503 },
+    );
+  }
+
+  // Validate the key format BEFORE constructing the client, so we return
+  // a clear 500 instead of an opaque SDK error. Ably keys are
+  // "keyName:keySecret" where keyName is "appId.keyId" (colon-separated).
+  const colonIdx = serverKey.indexOf(":");
+  if (colonIdx === -1 || !serverKey.slice(0, colonIdx).includes(".")) {
+    console.error(
+      "[ably/token] ABLY_SERVER_KEY is malformed. Expected format: " +
+        "keyName:keySecret (e.g. appId.keyId:secret). " +
+        "Copy the FULL key from the Ably dashboard.",
+    );
+    return NextResponse.json(
+      { error: "Realtime misconfiguration.", code: "REALTIME_MISCONFIGURED" },
+      { status: 500 },
     );
   }
 
@@ -52,71 +67,32 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Ably key format: "keyName:keySecret" where keyName is "appId.keyId".
-  // The separator between keyName and keySecret is a COLON, not a dot.
-  // (The dot inside keyName separates appId from keyId.)
-  // Splitting on "." was the bug — it produced keyName="appId" only,
-  // causing Ably to 40400 with "No application found with id <appId>".
-  const colonIdx = serverKey.indexOf(":");
-  if (colonIdx === -1) {
+  // Construct the Ably REST client with the server key. autoConnect:false
+  // prevents the SDK from opening a WebSocket (we only need REST for
+  // token signing, not realtime).
+  const rest = new Ably.Rest({ key: serverKey, autoConnect: false });
+
+  try {
+    // createTokenRequest handles: key parsing, capability canonicalization,
+    // HMAC-SHA256 signing, nonce generation, and timestamp. Returns a
+    // TokenRequest object matching Ably's REST API spec exactly.
+    const tokenRequest = await rest.auth.createTokenRequest({
+      capability: { [`event:${eventId}`]: ["subscribe"] },
+      ttl: 3600 * 1000,
+    });
+
+    return NextResponse.json(tokenRequest);
+  } catch (e) {
     console.error(
-      "[ably/token] ABLY_SERVER_KEY is malformed: no colon found. " +
-        "Expected format: keyName:keySecret (e.g. appId.keyId:secret). " +
-        "Got a value with no ':'. Copy the FULL key from the Ably dashboard.",
+      "[ably/token] createTokenRequest failed:",
+      e instanceof Error ? `${e.name}: ${e.message}` : e,
     );
     return NextResponse.json(
-      { error: "Realtime misconfiguration.", code: "REALTIME_MISCONFIGURED" },
+      {
+        error: "Failed to sign realtime token.",
+        code: "TOKEN_SIGN_FAILED",
+      },
       { status: 500 },
     );
   }
-  const keyName = serverKey.slice(0, colonIdx);
-  const keySecret = serverKey.slice(colonIdx + 1);
-  if (!keyName || !keySecret) {
-    console.error(
-      "[ably/token] ABLY_SERVER_KEY is malformed: empty keyName or keySecret. " +
-        `Got keyName=${JSON.stringify(keyName)}, keySecret=${keySecret ? "[present]" : "[empty]"}`,
-    );
-    return NextResponse.json(
-      { error: "Realtime misconfiguration.", code: "REALTIME_MISCONFIGURED" },
-      { status: 500 },
-    );
-  }
-  // Sanity-check: keyName should contain a dot (appId.keyId).
-  if (!keyName.includes(".")) {
-    console.error(
-      `[ably/token] ABLY_SERVER_KEY keyName has no dot (expected appId.keyId, got "${keyName}"). ` +
-        "You may have pasted only part of the key. Copy the FULL key from the Ably dashboard.",
-    );
-    return NextResponse.json(
-      { error: "Realtime misconfiguration.", code: "REALTIME_MISCONFIGURED" },
-      { status: 500 },
-    );
-  }
-
-  // Token params: 1-hour TTL, subscribe-only to the SPECIFIC event channel.
-  const ttl = 3600 * 1000;
-  const channel = `event:${eventId}`;
-  const capability: Record<string, string[]> = {};
-  capability[channel] = ["subscribe"];
-  const timestamp = Date.now();
-  const nonce = randomBytes(16).toString("hex");
-
-  // Ably's REST API requires `capability` to be a STRING (JSON-encoded),
-  // not a nested object. The HMAC must be signed over this exact string,
-  // and the same string must be returned in the TokenRequest. Returning
-  // the object here causes Ably to reject with 40001 "capability must be string".
-  const capabilityJson = JSON.stringify(capability);
-  const signedString = `${keyName}\n${ttl}\n${capabilityJson}\n${timestamp}\n${nonce}`;
-  const mac = createHmac("sha256", keySecret)
-    .update(signedString)
-    .digest("hex");
-
-  return NextResponse.json({
-    keyName,
-    ttl,
-    capability: capabilityJson,
-    timestamp,
-    nonce,
-    mac,
-  });
 }
