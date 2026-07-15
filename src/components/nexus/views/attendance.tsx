@@ -283,7 +283,8 @@ export function AttendanceView() {
     exportAttendanceCsv(Number(eventId));
     toast({
       title: "Downloading CSV",
-      description: "All attendance records for this event are being downloaded.",
+      description:
+        "All attendance records for this event are being downloaded.",
     });
   }
 
@@ -569,7 +570,6 @@ export function AttendanceView() {
                             return (
                               <motion.tr
                                 key={a.id}
-                                layout
                                 initial={
                                   isNew
                                     ? {
@@ -683,7 +683,6 @@ export function AttendanceView() {
                         return (
                           <motion.div
                             key={a.id}
-                            layout
                             initial={
                               isNew
                                 ? {

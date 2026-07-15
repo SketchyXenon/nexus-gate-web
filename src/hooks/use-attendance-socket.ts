@@ -36,11 +36,38 @@ export function useAttendanceSocket(eventId: number | null) {
     if (eventId == null) return;
 
     let cancelled = false;
+    let cleanedUp = false;
     let client: Ably.Realtime | null = null;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let authFailed = false;
 
+    // Ably's internal state machine can reject with "Connection closed"
+    // when close() is called on a failed/closing connection. These rejections
+    // have no .catch() inside the SDK and surface as uncaught promise
+    // rejections. Swallow them during teardown so the console stays clean
+    // and no error-tracking (Sentry) fires for expected teardown noise.
+    const onUnhandledRejection = (e: PromiseRejectionEvent) => {
+      const reason = e.reason;
+      const msg =
+        typeof reason === "string"
+          ? reason
+          : reason?.message || reason?.code || "";
+      if (
+        typeof msg === "string" &&
+        (msg.includes("Connection closed") ||
+          msg.includes("Ably auth aborted") ||
+          msg.includes("token endpoint returned"))
+      ) {
+        e.preventDefault();
+      }
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("unhandledrejection", onUnhandledRejection);
+    }
+
     const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
@@ -50,7 +77,20 @@ export function useAttendanceSocket(eventId: number | null) {
           const channel = client.channels.get(`event:${eventId}`);
           channel.unsubscribe();
           client.connection.off();
-          client.close();
+          // Only call close() if the connection is in a state where close
+          // is meaningful. Calling close() on a "failed"/"closing"/"closed"
+          // connection triggers Ably's internal requestState("closed") which
+          // rejects with "Connection closed" and leaks as an uncaught promise.
+          const state = client.connection.state;
+          if (
+            state === "initialized" ||
+            state === "connecting" ||
+            state === "connected" ||
+            state === "disconnected" ||
+            state === "suspended"
+          ) {
+            client.close();
+          }
         } catch {
           // ignore
         }
@@ -73,12 +113,23 @@ export function useAttendanceSocket(eventId: number | null) {
             const res = await fetch(
               `/api/ably/token?eventId=${encodeURIComponent(eventId)}`,
             );
+            // Re-check cancelled after the await: the effect may have torn
+            // down while the fetch was in flight. Delivering a token to a
+            // closing client causes Ably to throw internally.
+            if (cancelled || cleanedUp) {
+              callback("Ably auth aborted", null);
+              return;
+            }
             if (!res.ok) {
               authFailed = true;
               callback(`token endpoint returned ${res.status}`, null);
               return;
             }
             const token = await res.json();
+            if (cancelled || cleanedUp) {
+              callback("Ably auth aborted", null);
+              return;
+            }
             callback(null, token);
           } catch (e) {
             authFailed = true;
@@ -88,6 +139,9 @@ export function useAttendanceSocket(eventId: number | null) {
       });
     } catch (e) {
       console.error("[useAttendanceSocket] Ably init failed:", e);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("unhandledrejection", onUnhandledRejection);
+      }
       return;
     }
 
@@ -136,6 +190,9 @@ export function useAttendanceSocket(eventId: number | null) {
       cancelled = true;
       cleanup();
       setConnected(false);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("unhandledrejection", onUnhandledRejection);
+      }
     };
   }, [eventId]);
 
