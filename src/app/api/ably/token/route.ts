@@ -52,11 +52,40 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Server key format: "keyName.keySecret"
-  const [keyName, keySecret] = serverKey.split(".");
+  // Ably key format: "keyName:keySecret" where keyName is "appId.keyId".
+  // The separator between keyName and keySecret is a COLON, not a dot.
+  // (The dot inside keyName separates appId from keyId.)
+  // Splitting on "." was the bug — it produced keyName="appId" only,
+  // causing Ably to 40400 with "No application found with id <appId>".
+  const colonIdx = serverKey.indexOf(":");
+  if (colonIdx === -1) {
+    console.error(
+      "[ably/token] ABLY_SERVER_KEY is malformed: no colon found. " +
+        "Expected format: keyName:keySecret (e.g. appId.keyId:secret). " +
+        "Got a value with no ':'. Copy the FULL key from the Ably dashboard.",
+    );
+    return NextResponse.json(
+      { error: "Realtime misconfiguration.", code: "REALTIME_MISCONFIGURED" },
+      { status: 500 },
+    );
+  }
+  const keyName = serverKey.slice(0, colonIdx);
+  const keySecret = serverKey.slice(colonIdx + 1);
   if (!keyName || !keySecret) {
     console.error(
-      "[ably/token] ABLY_SERVER_KEY is malformed (expected keyName.keySecret)",
+      "[ably/token] ABLY_SERVER_KEY is malformed: empty keyName or keySecret. " +
+        `Got keyName=${JSON.stringify(keyName)}, keySecret=${keySecret ? "[present]" : "[empty]"}`,
+    );
+    return NextResponse.json(
+      { error: "Realtime misconfiguration.", code: "REALTIME_MISCONFIGURED" },
+      { status: 500 },
+    );
+  }
+  // Sanity-check: keyName should contain a dot (appId.keyId).
+  if (!keyName.includes(".")) {
+    console.error(
+      `[ably/token] ABLY_SERVER_KEY keyName has no dot (expected appId.keyId, got "${keyName}"). ` +
+        "You may have pasted only part of the key. Copy the FULL key from the Ably dashboard.",
     );
     return NextResponse.json(
       { error: "Realtime misconfiguration.", code: "REALTIME_MISCONFIGURED" },
