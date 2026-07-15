@@ -29,7 +29,7 @@ Nexus Gate is a production-ready attendance tracking system designed for educati
 - **Auth**: Supabase Auth (email/password + Google OAuth + magic link + passkey)
 - **Realtime**: Ably (managed realtime, free tier: 3M messages/month)
 - **File Parsing**: exceljs (Excel), pdfjs-dist (PDF), mammoth (DOCX), papaparse (CSV)
-- **Testing**: Vitest (250+ tests)
+- **Testing**: Vitest (361 tests)
 
 ## Quick Start
 
@@ -71,14 +71,16 @@ inline. The migration `0001_init.sql` also inserts a seed admin
 
 | Script | Description |
 |--------|-------------|
-| `bun run dev` | Start dev server (port 3000) |
+| `bun run dev` | Start dev server (port 3000, SQLite schema) |
 | `bun run lint` | Run ESLint |
 | `bun run test` | Run all unit + integration tests |
 | `bun run test:watch` | Run tests in watch mode |
 | `bun run bootstrap:admin` | Create the first admin account |
 | `bun run seed:events` | Seed test events for development |
-| `bun run db:push` | Push Prisma schema to database |
-| `bun run db:generate` | Regenerate Prisma client |
+| `bun run db:push` | Push Prisma schema (Postgres prod) |
+| `bun run db:push:sqlite` | Push Prisma schema (SQLite dev) |
+| `bun run db:generate` | Regenerate Prisma client (Postgres) |
+| `bun run db:generate:sqlite` | Regenerate Prisma client (SQLite) |
 
 ## Documentation
 
@@ -100,15 +102,23 @@ bunx vitest run src/lib/qr-token.test.ts
 
 | File | Tests | What it covers |
 |------|-------|----------------|
-| `auth.test.ts` | 15 | Password hashing, HMAC |
-| `qr-token.test.ts` | 37 | v8 token generation, validation, sub-frame liveness |
+| `auth.test.ts` | 6 | Password hashing, HMAC |
+| `qr-token.test.ts` | 46 | v8 token generation, validation, sub-frame liveness |
+| `validation.test.ts` | 48 | Zod schemas, event time validation |
+| `scan-flow.integration.test.ts` | 28 | Full end-to-end scan flow, anti-cheat simulations |
+| `event-visibility.test.ts` | 26 | Strict event filtering |
+| `password-strength.test.ts` | 27 | Password scoring |
+| `section-validation.test.ts` | 14 | Year/section consistency |
 | `scan-certificate.test.ts` | 21 | Certificate creation, canonicalization, idempotency |
-| `scan-flow.integration.test.ts` | 24 | Full end-to-end scan flow, anti-cheat simulations |
-| `validation.test.ts` | 39 | Zod schemas, event time validation |
-| `password-strength.test.ts` | 34 | Password scoring |
-| `section-validation.test.ts` | 42 | Year/section consistency |
-| `event-visibility.test.ts` | 32 | Strict event filtering |
+| `event-time.test.ts` | 19 | Event time window validation |
 | `cooldown.test.ts` | 18 | 30-day cooldown logic |
+| `pagination.test.ts` | 17 | Pagination schema + helpers |
+| `ics-export.test.ts` | 12 | ICS calendar export |
+| `ably/token/route.test.ts` | 10 | Token signing, key parsing, spec compliance |
+| `webauthn-context.test.ts` | 8 | WebAuthn React context |
+| `passkey-credential.test.ts` | 8 | WebAuthn credential storage |
+| `rate-limit.test.ts` | 8 | Upstash + in-memory rate limiter |
+| `device-key-server.test.ts` | 4 | Ed25519 device key verification |
 
 ## Infrastructure ($0/month)
 

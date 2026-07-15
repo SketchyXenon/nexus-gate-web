@@ -74,7 +74,7 @@
 │  - Free tier: 3M messages/month, 200 connections              │
 │  - Only organizers connect (~10-20 concurrent)                │
 │  - Server publishes via REST API (ABLY_SERVER_KEY)            │
-│  - Browser subscribes via Ably SDK (NEXT_PUBLIC_ABLY_KEY)     │
+│  - Browser subscribes via token auth (/api/ably/token)        │
 │  - Falls back to 15s polling if Ably is not configured        │
 └─────────────────────────────────────────────────────────────┘
 
@@ -178,7 +178,7 @@
 
 ### Ably (Managed Realtime)
 - Server publishes attendance events via Ably REST API (`ABLY_SERVER_KEY`)
-- Browser subscribes via Ably SDK (`NEXT_PUBLIC_ABLY_KEY`)
+- Browser subscribes via Ably SDK with token authentication (`/api/ably/token` endpoint signs TokenRequests server-side using the SDK's `createTokenRequest`)
 - Only organizers connect (students don't need realtime)
 - Falls back to 15s polling if Ably is not configured
 - CSP allows `*.ably.io` (REST) and `*.ably.net` (WebSocket)

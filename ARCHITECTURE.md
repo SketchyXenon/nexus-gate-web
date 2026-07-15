@@ -105,7 +105,7 @@ A multi-layer anti-cheating stack that defeats screenshot, photo-replay, and off
 ### Testing
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| Vitest | 4.1.9 | Unit + integration tests (node env, 280 tests) |
+| Vitest | 4.1.9 | Unit + integration tests (node env, 361 tests) |
 
 ---
 
@@ -411,9 +411,9 @@ Scanner captures **≥3 consecutive sub-frames**. Boundary-aware: sub-frame 29 o
 ```
 Server (attendance route)                Client (organizer views)
     │                                       │
-    │ POST rest.ably.io                     │ Ably.Realtime(key)
+    │ POST rest.ably.io                     │ Ably.Realtime({ authCallback })
     │ /channels/event:${id}/publish         │   .channels.get(`event:${id}`)
-    │ (5s timeout, fire-and-forget)         │   .subscribe("attendance")
+    │ (5s timeout, 1 retry on transient)    │   .subscribe("attendance")
     │                                       │
     ▼                                       ▼
 ┌─────────────────┐                  ┌─────────────────┐
@@ -423,10 +423,11 @@ Server (attendance route)                Client (organizer views)
 └─────────────────┘                  └─────────────────┘
 ```
 
-- **Server**: `notifyAttendance()` in `realtime.ts` — REST POST to Ably, 5s timeout, fire-and-forget
-- **Client**: `useAttendanceSocket(eventId)` hook — Ably SDK subscribe, `{ connected, latest }` state, polling fallback
-- **Scope**: organizers only (students don't connect — keeps under 200-connection free-tier limit)
-- **Cleanup**: `channel.unsubscribe()` + `client.connection.off()` before `client.close().catch(() => {})` (prevents "Uncaught (in promise) Connection closed" console error)
+- **Server publish**: `notifyAttendance()` in `realtime.ts` — REST POST to Ably, 5s timeout, 1 retry after 2s for transient failures (network errors, 5xx). 4xx errors are not retried (permanent).
+- **Token endpoint**: `/api/ably/token?eventId=N` — uses Ably SDK's `auth.createTokenRequest()` to sign a TokenRequest with subscribe-only capability scoped to `event:N`. 1h TTL. The browser never receives the server key.
+- **Client**: `useAttendanceSocket(eventId)` hook — Ably SDK with `authCallback` (fetches token from the endpoint), `{ connected, latest }` state, 10s connect timeout, polling fallback when Ably is unavailable.
+- **Scope**: organizers only (students don't connect — keeps under 200-connection free-tier limit).
+- **Cleanup**: scoped `channel.unsubscribe("attendance", handler)` + `client.connection.off()` before `client.close()` (guarded by connection state to prevent "Uncaught (in promise) Connection closed" rejection).
 
 ---
 
@@ -690,7 +691,6 @@ SMTP_FROM_NAME=Nexus Gate
 
 # Realtime
 ABLY_SERVER_KEY=
-NEXT_PUBLIC_ABLY_KEY=
 
 # Error monitoring
 SENTRY_DSN=
@@ -713,7 +713,7 @@ BOOTSTRAP_ADMIN_NAME=
 
 ### Caddyfile
 
-Production block on `:80` (HTTP, no domain required). Tiered rate limits (scan 60r/m, general 100r/m). zstd/gzip compression. Reverse proxy health checks + keepalive (100 idle conns). To enable auto-TLS: replace `:80` with a domain.
+Production block on `:80` (HTTP, no domain required). Tiered rate limits (scan 200r/m, auth 5r/m, general 100r/m). zstd/gzip compression. Reverse proxy health checks + keepalive (100 idle conns). To enable auto-TLS: replace `:80` with a domain.
 
 ---
 
@@ -721,9 +721,9 @@ Production block on `:80` (HTTP, no domain required). Tiered rate limits (scan 6
 
 ### Test suite
 
-- **11 test files**, **280 tests**, all passing
+- **17 test files**, **361 tests**, all passing
 - Vitest configured for node environment (no DOM)
-- Tests co-located as `*.test.ts` in `src/lib/`
+- Tests co-located as `*.test.ts` in `src/lib/` and `src/app/api/ably/`
 
 ### Test coverage
 
@@ -731,15 +731,21 @@ Production block on `:80` (HTTP, no domain required). Tiered rate limits (scan 6
 |------|-------|----------|
 | `auth.test.ts` | 6 | bcrypt hashing + HMAC |
 | `cooldown.test.ts` | 18 | 30-day cooldown logic |
-| `event-visibility.test.ts` | 32 | Student/organizer/admin visibility rules |
-| `password-strength.test.ts` | 34 | Scoring + penalties (sequential, repeated) |
-| `qr-token.test.ts` | 37 | Token generation + liveness (boundary-aware) |
-| `scan-certificate.test.ts` | 21 | Timestamp validation (15-min window, 120s grace) |
-| `scan-flow.integration.test.ts` | 24 | Full 10-step pipeline |
-| `section-validation.test.ts` | 42 | Section format + year-prefix consistency |
-| `validation.test.ts` | 25 | Zod schemas (password, email, studentId) |
-| `pagination.test.ts` | 17 | Pagination schema + cron dedup logic |
-| `passkey-credential.test.ts` | 8 | Credential ID extraction + storage |
+| `event-visibility.test.ts` | 26 | Student/organizer/admin visibility rules |
+| `event-time.test.ts` | 19 | Event time window validation |
+| `password-strength.test.ts` | 27 | Scoring + penalties (sequential, repeated) |
+| `qr-token.test.ts` | 46 | Token generation + liveness (boundary-aware) |
+| `scan-certificate.test.ts` | 21 | Certificate creation + idempotency |
+| `scan-flow.integration.test.ts` | 28 | Full 10-step pipeline + anti-cheat sims |
+| `section-validation.test.ts` | 14 | Section format + year-prefix consistency |
+| `validation.test.ts` | 48 | Zod schemas (password, email, studentId) |
+| `pagination.test.ts` | 17 | Pagination schema + helpers |
+| `ics-export.test.ts` | 12 | ICS calendar export |
+| `ably/token/route.test.ts` | 10 | Token signing, key parsing, spec compliance |
+| `webauthn-context.test.ts` | 8 | WebAuthn React context |
+| `passkey-credential.test.ts` | 8 | WebAuthn credential storage |
+| `rate-limit.test.ts` | 8 | Upstash + in-memory rate limiter |
+| `device-key-server.test.ts` | 4 | Ed25519 device key verification |
 
 ### E2E verification
 

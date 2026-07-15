@@ -43,7 +43,7 @@ The app will be available at `http://localhost:3000`.
 5. Go to **Settings → Database → Connection string**:
    - Copy the **Transaction** URL (port 6543) → this is your `DATABASE_URL`
    - Copy the **Session** URL (port 5432) → this is your `DIRECT_URL`
-6. Go to **SQL Editor** → run the migration files from `supabase/migrations/` in order (0001 through 0010)
+6. Go to **SQL Editor** → run the migration files from `supabase/migrations/` in order (0001 through 0016)
 7. Go to **Authentication → URL Configuration**:
    - Set **Site URL** to your Vercel URL (e.g., `https://nexus-gate-web.vercel.app`)
    - Add your Vercel URL to **Redirect URLs**
@@ -53,8 +53,11 @@ The app will be available at `http://localhost:3000`.
 1. Go to [ably.com](https://ably.com) → Sign up (free)
 2. Create a new app → name it `nexus-gate`
 3. Go to **Settings → API Keys**
-4. Copy the root API key
-5. This key is used for both `ABLY_SERVER_KEY` (server) and `NEXT_PUBLIC_ABLY_KEY` (browser)
+4. Copy the **root API key** (format: `keyName:keySecret`, e.g. `KyAKwA.hI9kKQ:xxxx`)
+5. Set this as `ABLY_SERVER_KEY` on Vercel. This is the ONLY Ably env var needed —
+   the browser uses token authentication via `/api/ably/token` (signed by the
+   server key). Do NOT set `NEXT_PUBLIC_ABLY_KEY` — it is unused and will
+   cause confusion.
 
 ### Step 3: Deploy to Vercel (Free)
 
@@ -69,8 +72,9 @@ NEXT_PUBLIC_SUPABASE_URL=https://[REF].supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=[your-anon-key]
 SUPABASE_SERVICE_ROLE_KEY=[your-service-role-key]
 NEXT_PUBLIC_APP_URL=https://nexus-gate-web.vercel.app
-ABLY_SERVER_KEY=[your-ably-key]
-NEXT_PUBLIC_ABLY_KEY=[your-ably-key]
+ABLY_SERVER_KEY=[your-ably-keyName:keySecret]
+AUTH_SECRET=[generate-with: openssl rand -base64 32]
+REFRESH_SECRET=[generate-with: openssl rand -base64 32]
 CRON_SECRET=[generate-with: openssl rand -base64 32]
 ```
 
@@ -129,8 +133,9 @@ terminator or deploy on Vercel for HTTPS.
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon/public key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Supabase service role key (server-only) |
 | `NEXT_PUBLIC_APP_URL` | Yes | Your production URL |
-| `ABLY_SERVER_KEY` | Yes | Ably API key (server-side, can publish) |
-| `NEXT_PUBLIC_ABLY_KEY` | Yes | Ably API key (browser-side, can subscribe) |
+| `ABLY_SERVER_KEY` | Yes | Ably server key (`keyName:keySecret`). Signs token requests server-side. |
+| `AUTH_SECRET` | Yes | HMAC signing secret (generate with `openssl rand -base64 32`) |
+| `REFRESH_SECRET` | Yes | Refresh token signing secret (separate from AUTH_SECRET) |
 | `CRON_SECRET` | Yes | Secret for cron endpoint authentication |
 | `SENTRY_DSN` | No | Error monitoring (Sentry) |
 | `SMTP_HOST` | No | Email server (for password reset) |
@@ -153,8 +158,11 @@ terminator or deploy on Vercel for HTTPS.
 
 ## Troubleshooting
 
-### Build fails with "Cannot find module 'xlsx'"
-Run `bun install` to install dependencies. The `xlsx` package was replaced with `exceljs`.
+### Ably returns 40400 "No application found"
+`ABLY_SERVER_KEY` is malformed. The key must be `keyName:keySecret` (colon-separated), where keyName is `appId.keyId` (dot-separated). Copy the FULL key from the Ably dashboard — do not split it manually.
+
+### Ably returns 40101 "Request mac does not match"
+The token route now uses the Ably SDK's `createTokenRequest` for signing. If you see this error, ensure you redeployed after the latest code changes — old deployments used hand-rolled HMAC that produced the mac in hex instead of base64.
 
 ### Magic link redirects to localhost:3000
 Set `NEXT_PUBLIC_APP_URL` on Vercel to your production URL. The register route uses this for the `emailRedirectTo` parameter.

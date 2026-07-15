@@ -344,7 +344,7 @@ All filter/sort toolbars follow a consistent pattern:
 
 ## 10. Testing
 
-### Unit Tests (262 tests)
+### Unit Tests (361 tests)
 
 ```bash
 bun run test
@@ -354,15 +354,22 @@ bun run test
 
 | Category | Tests | Key Files |
 |----------|-------|-----------|
-| Auth | 15 | `auth.test.ts` — bcrypt, JWT, refresh tokens |
-| QR Tokens | 37 | `qr-token.test.ts` — v8 format, sub-frames, liveness |
-| Certificates | 21 | `scan-certificate.test.ts` — creation, canonicalization, idempotency |
-| Integration | 24 | `scan-flow.integration.test.ts` — full flow, anti-cheat |
-| Validation | 39 | `validation.test.ts` — Zod schemas, OTP removal |
-| Password | 34 | `password-strength.test.ts` — scoring |
-| Section | 42 | `section-validation.test.ts` — year/section consistency |
-| Visibility | 32 | `event-visibility.test.ts` — strict filtering |
+| Auth | 6 | `auth.test.ts` — bcrypt, HMAC |
+| QR Tokens | 46 | `qr-token.test.ts` — v8 format, sub-frames, liveness |
+| Validation | 48 | `validation.test.ts` — Zod schemas |
+| Integration | 28 | `scan-flow.integration.test.ts` — full flow, anti-cheat |
+| Visibility | 26 | `event-visibility.test.ts` — strict filtering |
+| Password | 27 | `password-strength.test.ts` — scoring |
+| Certificates | 21 | `scan-certificate.test.ts` — creation, idempotency |
+| Event Time | 19 | `event-time.test.ts` — time window validation |
 | Cooldowns | 18 | `cooldown.test.ts` — 30-day logic |
+| Pagination | 17 | `pagination.test.ts` — schema + helpers |
+| Section | 14 | `section-validation.test.ts` — year/section consistency |
+| ICS Export | 12 | `ics-export.test.ts` — calendar export |
+| Ably Token | 10 | `ably/token/route.test.ts` — signing, key parsing |
+| WebAuthn | 16 | `webauthn-context.test.ts` + `passkey-credential.test.ts` |
+| Rate Limit | 8 | `rate-limit.test.ts` — Upstash + in-memory |
+| Device Key | 4 | `device-key-server.test.ts` — Ed25519 verification |
 
 ### E2E Testing
 
