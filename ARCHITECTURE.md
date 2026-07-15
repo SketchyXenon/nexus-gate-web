@@ -88,7 +88,6 @@ A multi-layer anti-cheating stack that defeats screenshot, photo-replay, and off
 | shadcn/ui | — | Component library (new-york style, ~55 primitives) |
 | TanStack Query | 5.82.0 | Server state (auto-refresh on 401, polling fallback) |
 | TanStack Table | 8.21.3 | Data tables |
-| Zustand | 5.0.6 | Client state |
 | react-hook-form + Zod | 7.60 / 4.0.2 | Forms + validation (shared schemas client/server) |
 | framer-motion | 12.23.2 | Animations (landing page, transitions) |
 

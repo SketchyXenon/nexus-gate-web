@@ -132,7 +132,7 @@ Every API route uses `requireAuth(minimumRole)`:
 1. Zod schema validation
 2. One-attempt early check (before crypto)
 3. Ed25519 signature verification (device key must be registered)
-4. Certificate timestamp validation (±60s skew, 24h sync window)
+4. Certificate timestamp validation (±60s skew, 15-min sync window)
 5. Token HMAC validation (against cert's `scannedAt`, not sync time)
 6. Multi-frame liveness (3+ consecutive sub-frames with valid HMACs)
 7. Event match (cert eventId = token eventId)

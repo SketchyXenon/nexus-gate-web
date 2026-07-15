@@ -79,9 +79,9 @@
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
-│              CLOUDFLARE (Optional, Free)                      │
-│  - DDoS protection (unlimited, free)                          │
-│  - Requires custom domain for edge caching                    │
+│         CLOUDFLARE TURNSTILE (Optional, Free)                │
+│  - Bot protection (CAPTCHA alternative, invisible to users)  │
+│  - No edge caching (no Cloudflare Worker in this codebase)   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -91,7 +91,7 @@
 - Each device has an Ed25519 keypair (private in IndexedDB, public registered with server)
 - Scan certificates bind the QR token to the device + timestamp + nonce
 - Server validates token HMAC against the certificate's `scannedAt` (not sync time)
-- Enables offline sync: a scan made at 9 AM that syncs at 2 PM is still valid
+- Enables offline sync: a scan made in a WiFi dead zone is still valid if synced within 15 minutes (token HMAC validated against `scannedAt`, not sync time)
 
 ### Tier 2: Multi-Frame Liveness
 - QR refreshes at 2 FPS (every 500ms) with sub-frame-specific HMACs
@@ -248,6 +248,6 @@ bun run test
 | Vercel | Hobby | Next.js hosting + API | 100GB bandwidth/mo |
 | Supabase | Free | PostgreSQL + Auth | 500MB DB, 50k MAU |
 | Ably | Free | Realtime attendance | 3M messages/mo, 200 conn |
-| Cloudflare | Free | Optional edge caching + DDoS | 100k Worker req/day |
+| Cloudflare Turnstile | Free | Optional bot protection (CAPTCHA alternative) | — |
 
 **Scalability:** Handles 2000-3000 users with 150-200 concurrent/min.
