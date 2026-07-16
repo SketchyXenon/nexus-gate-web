@@ -8,7 +8,7 @@
 // Security:
 //   - Requires an authenticated session (requireAuth).
 //   - Requires re-authentication with the current password (prevents
-//     session-hijack deactivation).
+//     session-hijack deactivation) via Supabase signIn.
 //   - Revokes all refresh tokens + signs out the active session.
 //   - Invalidates the in-memory account cache (immediate effect).
 //   - Audit-logged as "profile.deactivate".
@@ -27,7 +27,6 @@ import {
   isDbUnavailableError,
 } from "@/lib/api";
 import { audit } from "@/lib/audit";
-import { verifyPassword } from "@/lib/auth";
 import {
   createSupabaseServerClient,
   isSupabaseConfigured,
@@ -47,34 +46,21 @@ export async function POST(req: NextRequest) {
     }
     const { currentPassword, reason } = parsed.data;
 
-    // ---- Re-authenticate: verify the current password ----
+    // Re-authenticate: verify the current password via Supabase signIn.
     // This prevents deactivation from a hijacked session.
-    if (isDevAuthMode()) {
-      // Dev mode: verify bcrypt hash directly.
-      const acct = await db.account.findUnique({
-        where: { id: account.id },
-        select: { passwordHash: true },
-      });
-      if (!acct?.passwordHash) {
-        return badRequest("Unable to verify password. Please try again.");
-      }
-      const valid = await verifyPassword(currentPassword, acct.passwordHash);
-      if (!valid) {
-        return badRequest("Incorrect password. Deactivation cancelled.");
-      }
-    } else if (isSupabaseConfigured()) {
-      // Production: re-verify via Supabase signIn.
-      const supabase = await createSupabaseServerClient();
-      const { error } = await supabase.auth.signInWithPassword({
-        email: account.email,
-        password: currentPassword,
-      });
-      if (error) {
-        return badRequest("Incorrect password. Deactivation cancelled.");
-      }
+    if (!isSupabaseConfigured()) {
+      return badRequest("Unable to verify password. Please try again.");
+    }
+    const supabase = await createSupabaseServerClient();
+    const { error } = await supabase.auth.signInWithPassword({
+      email: account.email,
+      password: currentPassword,
+    });
+    if (error) {
+      return badRequest("Incorrect password. Deactivation cancelled.");
     }
 
-    // ---- Soft-delete: flag as deactivated (never hard-delete) ----
+    // Soft-delete: flag as deactivated (never hard-delete).
     await db.account.update({
       where: { id: account.id },
       data: {
@@ -82,7 +68,6 @@ export async function POST(req: NextRequest) {
         deactivatedAt: new Date(),
         deactivatedReason: reason || null,
         status: "DEACTIVATED",
-        // Revoke all sessions immediately.
         failedLoginAttempts: 0,
         lockedUntil: null,
       },
@@ -97,17 +82,17 @@ export async function POST(req: NextRequest) {
       .catch(() => {});
 
     // Invalidate the in-memory cache so the next request sees the deactivation.
-    invalidateAccountCache(
-      isDevAuthMode()
-        ? account.id
-        : ((account as any).supabaseAuthUid ?? account.id),
-    );
-
-    // Sign out the active Supabase session (production).
-    if (isSupabaseConfigured()) {
-      const supabase = await createSupabaseServerClient();
-      await supabase.auth.signOut().catch(() => {});
+    // Fetch the supabaseAuthUid for cache invalidation.
+    const acct = await db.account.findUnique({
+      where: { id: account.id },
+      select: { supabaseAuthUid: true },
+    });
+    if (acct?.supabaseAuthUid) {
+      invalidateAccountCache(acct.supabaseAuthUid);
     }
+
+    // Sign out the active Supabase session.
+    await supabase.auth.signOut().catch(() => {});
 
     await audit({
       actorId: account.id,
@@ -118,14 +103,10 @@ export async function POST(req: NextRequest) {
       req,
     });
 
-    const res = NextResponse.json({
-      ok: true,
-      message: "Your account has been deactivated.",
-    });
-    if (isDevAuthMode()) {
-      clearDevSessionCookie(res);
-    }
-    return res;
+    return NextResponse.json(
+      { ok: true, message: "Your account has been deactivated." },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (e) {
     if (isDbUnavailableError(e)) return dbUnavailable(e);
     console.error("[deactivate] error:", e);

@@ -7,7 +7,7 @@ import {
 } from "@/lib/supabase-server";
 
 // POST /api/auth/logout
-// Signs out of Supabase Auth (production) or clears the dev session cookie.
+// Signs out of Supabase Auth (clears the session cookie).
 export async function POST(req: NextRequest) {
   const account = await getCurrentAccountSupabase().catch(() => null);
   if (isSupabaseConfigured()) {
@@ -23,9 +23,8 @@ export async function POST(req: NextRequest) {
       req,
     }).catch(() => {});
   }
-  const res = NextResponse.json({ ok: true });
-  if (isDevAuthMode()) {
-    clearDevSessionCookie(res);
-  }
-  return res;
+  return NextResponse.json(
+    { ok: true },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

@@ -45,14 +45,6 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
 const NO_STORE = { "Cache-Control": "no-store, no-cache, must-revalidate" };
 
 export async function GET(req: NextRequest) {
-  // Dev mode has no Supabase, so no callback is expected.
-  if (isDevAuthMode()) {
-    return NextResponse.json(
-      { error: "Not available in dev mode.", code: "DEV_MODE" },
-      { status: 503, headers: NO_STORE },
-    );
-  }
-
   if (!isSupabaseConfigured()) {
     return NextResponse.json(
       {

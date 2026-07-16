@@ -1,7 +1,6 @@
 // Nexus Gate - Supabase Auth session layer.
-// Replaces the old dual system (custom JWT + NextAuth) with one
-// Supabase Auth session. Reads the session cookie via @supabase/ssr,
-// resolves the Supabase user, then loads the linked accounts row.
+// Reads the session cookie via @supabase/ssr, resolves the Supabase
+// user, then loads the linked accounts row.
 
 import {
   createSupabaseServerClient,
@@ -36,7 +35,7 @@ export function invalidateAccountCache(authUid: string): void {
 
 // Evict expired entries and enforce the max-size bound. Called on every
 // cache write. Uses Map insertion-order iteration for LRU eviction (oldest
-// entries are evicted first — Map preserves insertion order in JS).
+// entries are evicted first - Map preserves insertion order in JS).
 function evictAccountCache(): void {
   // First pass: drop expired entries.
   const now = Date.now();
@@ -53,16 +52,9 @@ function evictAccountCache(): void {
   }
 }
 
-// Read the session. In production this is the Supabase Auth cookie.
-// In dev (no Supabase configured), falls back to the dev-mode cookie.
+// Read the Supabase session from cookies. Returns null if no session
+// or if Supabase isn't configured.
 export async function getSupabaseSession(): Promise<SupabaseSession | null> {
-  // Dev-mode fallback: use the signed cookie when Supabase isn't configured.
-  if (isDevAuthMode()) {
-    const accountId = await getDevSessionAccountId();
-    if (!accountId) return null;
-    return { authUid: accountId, email: "" };
-  }
-
   if (!isSupabaseConfigured()) return null;
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.auth.getUser();
@@ -72,7 +64,7 @@ export async function getSupabaseSession(): Promise<SupabaseSession | null> {
 
 // Resolve the current account from the Supabase session.
 // Uses a 30s in-memory cache to avoid a DB query on every request.
-// Status changes (suspend) take effect within 30s.
+// Status changes (suspend/deactivate) take effect within 30s.
 export async function getCurrentAccountSupabase(): Promise<ApiAccount | null> {
   const session = await getSupabaseSession();
   if (!session) return null;
@@ -83,44 +75,24 @@ export async function getCurrentAccountSupabase(): Promise<ApiAccount | null> {
     return cached.account;
   }
 
-  // Cache miss or expired — fetch from DB.
-  // In dev mode, authUid is the account ID; in production it's the
-  // Supabase auth UID. Look up by the right field.
-  const account = isDevAuthMode()
-    ? await db.account.findUnique({
-        where: { id: session.authUid },
-        select: {
-          id: true,
-          email: true,
-          fullName: true,
-          role: true,
-          status: true,
-          studentId: true,
-          program: true,
-          section: true,
-          organizationName: true,
-          year: true,
-          lastLoginAt: true,
-          isDeactivated: true,
-        },
-      })
-    : await db.account.findFirst({
-        where: { supabaseAuthUid: session.authUid },
-        select: {
-          id: true,
-          email: true,
-          fullName: true,
-          role: true,
-          status: true,
-          studentId: true,
-          program: true,
-          section: true,
-          organizationName: true,
-          year: true,
-          lastLoginAt: true,
-          isDeactivated: true,
-        },
-      });
+  // Cache miss or expired - fetch from DB.
+  const account = await db.account.findFirst({
+    where: { supabaseAuthUid: session.authUid },
+    select: {
+      id: true,
+      email: true,
+      fullName: true,
+      role: true,
+      status: true,
+      studentId: true,
+      program: true,
+      section: true,
+      organizationName: true,
+      year: true,
+      lastLoginAt: true,
+      isDeactivated: true,
+    },
+  });
 
   // Reject deactivated accounts (soft-deleted). They cannot access any API.
   const result =
