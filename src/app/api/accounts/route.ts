@@ -1,4 +1,4 @@
-mport { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { paginationSchema } from "@/lib/validation";
 import { requireAuth, badRequest } from "@/lib/api";
@@ -26,10 +26,7 @@ export async function GET(req: NextRequest) {
   const where: Record<string, unknown> = {};
   if (role && role !== "ALL") where.role = role;
   if (q) {
-    where.OR = [
-      { fullName: { contains: q } },
-      { email: { contains: q } },
-    ];
+    where.OR = [{ fullName: { contains: q } }, { email: { contains: q } }];
   }
 
   // Soft-delete filtering: only apply if migration 0017 applied.
@@ -42,13 +39,23 @@ export async function GET(req: NextRequest) {
   }
 
   const selectLegacy = {
-    id: true, email: true, fullName: true, role: true, status: true,
-    studentId: true, program: true, section: true, year: true,
-    organizationName: true, lastLoginAt: true, createdAt: true,
+    id: true,
+    email: true,
+    fullName: true,
+    role: true,
+    status: true,
+    studentId: true,
+    program: true,
+    section: true,
+    year: true,
+    organizationName: true,
+    lastLoginAt: true,
+    createdAt: true,
   };
   const selectFull = {
     ...selectLegacy,
-    isDeactivated: true, deactivatedAt: true,
+    isDeactivated: true,
+    deactivatedAt: true,
   };
 
   try {
@@ -62,14 +69,27 @@ export async function GET(req: NextRequest) {
       }),
       db.account.count({ where }),
     ]);
-    return NextResponse.json({
-      accounts,
-      pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
-    }, { headers: { "Cache-Control": "private, no-cache" } });
+    return NextResponse.json(
+      {
+        accounts,
+        pagination: {
+          page,
+          pageSize,
+          total,
+          totalPages: Math.ceil(total / pageSize),
+        },
+      },
+      { headers: { "Cache-Control": "private, no-cache" } },
+    );
   } catch (e) {
     // P2022: column missing (migration 0017 not applied). Retry without
     // the new columns and the isDeactivated filter.
-    if (typeof e === "object" && e !== null && "code" in e && (e as { code: string }).code === "P2022") {
+    if (
+      typeof e === "object" &&
+      e !== null &&
+      "code" in e &&
+      (e as { code: string }).code === "P2022"
+    ) {
       const legacyWhere = { ...where };
       delete legacyWhere.isDeactivated;
       const [accounts, total] = await Promise.all([
@@ -82,10 +102,18 @@ export async function GET(req: NextRequest) {
         }),
         db.account.count({ where: legacyWhere }),
       ]);
-      return NextResponse.json({
-        accounts,
-        pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
-      }, { headers: { "Cache-Control": "private, no-cache" } });
+      return NextResponse.json(
+        {
+          accounts,
+          pagination: {
+            page,
+            pageSize,
+            total,
+            totalPages: Math.ceil(total / pageSize),
+          },
+        },
+        { headers: { "Cache-Control": "private, no-cache" } },
+      );
     }
     throw e;
   }
