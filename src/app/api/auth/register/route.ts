@@ -17,6 +17,10 @@ import {
   createSupabaseAdminClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
+import {
+  safeFindAccountByEmail,
+  isAccountDeactivated,
+} from "@/lib/safe-account";
 
 // POST /api/auth/register
 //
@@ -48,33 +52,28 @@ export async function POST(req: NextRequest) {
       parsed.data;
 
     // Uniqueness checks - generic error (no enumeration).
-    // Safe lookup: degrades gracefully if migration 0017 not applied.
-    const existingEmail = await db.account.findUnique({
-      where: { email },
-      select: { id: true, supabaseAuthUid: true },
-    });
+    // Single safe lookup (includes isDeactivated if migration applied).
+    const existingEmail = await safeFindAccountByEmail(email);
     const existingStudentId = await db.account.findUnique({
       where: { studentId },
       select: { id: true },
     });
 
-    // Check deactivation separately (safe - won't crash if column missing).
-    let existingDeactivated = false;
-    if (existingEmail) {
-      try {
-        const row = await db.account.findUnique({
-          where: { email },
-          select: { isDeactivated: true },
-        });
-        existingDeactivated = Boolean(row?.isDeactivated);
-      } catch {
-        // Column missing - treat as not deactivated.
-      }
-    }
-
     // If the existing email account is deactivated, allow re-registration
-    // by removing the soft-deleted row (the user explicitly left).
-    if (existingEmail && existingDeactivated) {
+    // by removing the soft-deleted row AND the linked Supabase auth user.
+    // Without deleting the Supabase user, signUp() returns "already registered".
+    if (existingEmail && isAccountDeactivated(existingEmail)) {
+      // Delete the Supabase auth user first (if linked).
+      if (existingEmail.supabaseAuthUid) {
+        try {
+          const adminClient = createSupabaseAdminClient();
+          await adminClient.auth.admin
+            .deleteUser(existingEmail.supabaseAuthUid)
+            .catch(() => {});
+        } catch {
+          // Non-critical - the accounts row deletion still proceeds.
+        }
+      }
       await db.account
         .delete({ where: { id: existingEmail.id } })
         .catch(() => {});
@@ -86,7 +85,7 @@ export async function POST(req: NextRequest) {
     if (
       existingEmail &&
       !existingEmail.supabaseAuthUid &&
-      !existingDeactivated
+      !isAccountDeactivated(existingEmail)
     ) {
       try {
         const rows = await db.$queryRaw<Array<{ id: string }>>`
@@ -103,13 +102,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Re-check after potential cleanup.
-    const existingEmailAfter = existingEmail?.supabaseAuthUid
-      ? existingEmail
-      : await db.account.findUnique({
-          where: { email },
-          select: { id: true, supabaseAuthUid: true },
-        });
+    // Re-check after potential cleanup (always re-query to avoid stale data).
+    const existingEmailAfter = await db.account.findUnique({
+      where: { email },
+      select: { id: true, supabaseAuthUid: true },
+    });
     if (existingEmailAfter || existingStudentId) {
       await audit({
         actorId: null,

@@ -13,6 +13,7 @@ import {
   safeFindAccountByAuthUid,
   isAccountDeactivated,
 } from "@/lib/safe-account";
+import { checkRateLimit } from "@/lib/api";
 
 // ====================================================================
 // GET /api/auth/callback?code=<pkce_code>&type=<magiclink|recovery|...>
@@ -58,6 +59,12 @@ export async function GET(req: NextRequest) {
       { status: 503, headers: NO_STORE },
     );
   }
+
+  // Rate-limit: the callback is unauthenticated and hits Supabase on every
+  // request. Without this, an attacker can amplify DoS by hammering this
+  // endpoint (each call triggers a Supabase PKCE exchange).
+  const rl = await checkRateLimit(req, "api");
+  if (rl) return rl;
 
   const code = req.nextUrl.searchParams.get("code");
   const urlType = req.nextUrl.searchParams.get("type");
@@ -123,11 +130,11 @@ export async function GET(req: NextRequest) {
       const account = await safeFindAccountByAuthUid(authUid);
 
       if (account && !isAccountDeactivated(account)) {
-        // Idempotent: only update if not already verified.
-        if (
-          !account.emailVerifiedAt ||
-          account.status === "PENDING_VERIFICATION"
-        ) {
+        // Only activate PENDING_VERIFICATION accounts. This prevents a
+        // suspended user from un-suspending themselves by requesting a
+        // magic link and clicking it (the callback would otherwise flip
+        // any non-deactivated account to ACTIVE).
+        if (account.status === "PENDING_VERIFICATION") {
           // Safe update: sets emailVerifiedAt only if the column exists.
           try {
             await db.account.update({

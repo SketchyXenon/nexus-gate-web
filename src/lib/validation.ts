@@ -356,9 +356,11 @@ export const overrideSchema = z.object({
 // are optional and only persisted when provided (PATCH semantics).
 export const updateAccountSchema = z.object({
   role: z.enum(["ADMIN", "ORGANIZER", "USER"]).optional(),
-  status: z
-    .enum(["PENDING_VERIFICATION", "ACTIVE", "SUSPENDED", "DEACTIVATED"])
-    .optional(),
+  // Admin PATCH can only set these 3 statuses. DEACTIVATED is reserved for
+  // the self-service deactivate endpoint (sets isDeactivated=true atomically).
+  // Allowing DEACTIVATED here would create inconsistent rows (status=DEACTIVATED
+  // but isDeactivated=false), breaking the restore endpoint.
+  status: z.enum(["PENDING_VERIFICATION", "ACTIVE", "SUSPENDED"]).optional(),
   fullName: fullNameSchema.optional(),
   email: emailSchema.optional(),
   program: z.string().trim().max(50).optional().nullable(),

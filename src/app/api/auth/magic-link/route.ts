@@ -16,6 +16,10 @@ import {
   createSupabaseAdminClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
+import {
+  safeFindAccountByEmail,
+  isAccountDeactivated,
+} from "@/lib/safe-account";
 
 const magicLinkSchema = z.object({
   email: z.string().email().max(255),
@@ -50,14 +54,15 @@ export async function POST(req: NextRequest) {
     const { email } = parsed.data;
 
     // Auto-link pre-migration accounts (same logic as forgot-password).
-    // Only ACTIVE or PENDING_VERIFICATION - not SUSPENDED (DoS prevention).
-    const dbAccount = await db.account.findUnique({
-      where: { email },
-      select: { id: true, fullName: true, supabaseAuthUid: true, status: true },
+    // Only ACTIVE or PENDING_VERIFICATION, and NOT deactivated - prevents a
+    // deactivated user from bypassing deactivation via magic link auto-link.
+    const dbAccount = await safeFindAccountByEmail(email, {
+      fullName: true,
     });
     if (
       dbAccount &&
       !dbAccount.supabaseAuthUid &&
+      !isAccountDeactivated(dbAccount) &&
       (dbAccount.status === "ACTIVE" ||
         dbAccount.status === "PENDING_VERIFICATION")
     ) {

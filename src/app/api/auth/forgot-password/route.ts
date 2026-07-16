@@ -18,6 +18,10 @@ import {
   createSupabaseAdminClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
+import {
+  safeFindAccountByEmail,
+  isAccountDeactivated,
+} from "@/lib/safe-account";
 
 // POST /api/auth/forgot-password
 // Sends a Supabase password-reset email. Enumeration-safe (same response
@@ -69,16 +73,16 @@ export async function POST(req: NextRequest) {
     const supabase = await createSupabaseServerClient();
 
     // Check if the account exists in our DB but has no Supabase Auth link.
-    // Only auto-link ACTIVE or PENDING_VERIFICATION accounts - not SUSPENDED
-    // (an attacker could otherwise create auth users for suspended accounts,
-    // locking the victim out of password login until they complete the email flow).
-    const dbAccount = await db.account.findUnique({
-      where: { email },
-      select: { id: true, fullName: true, supabaseAuthUid: true, status: true },
+    // Only auto-link ACTIVE or PENDING_VERIFICATION accounts, and NOT
+    // deactivated ones - prevents a deactivated user from bypassing
+    // deactivation via password-reset auto-link.
+    const dbAccount = await safeFindAccountByEmail(email, {
+      fullName: true,
     });
     if (
       dbAccount &&
       !dbAccount.supabaseAuthUid &&
+      !isAccountDeactivated(dbAccount) &&
       (dbAccount.status === "ACTIVE" ||
         dbAccount.status === "PENDING_VERIFICATION")
     ) {
