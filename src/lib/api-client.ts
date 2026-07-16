@@ -11,7 +11,7 @@ export interface Account {
   email: string;
   fullName: string;
   role: Role;
-  status: "PENDING_VERIFICATION" | "ACTIVE" | "SUSPENDED";
+  status: "PENDING_VERIFICATION" | "ACTIVE" | "SUSPENDED" | "DEACTIVATED";
   studentId: number | null;
   program: string | null;
   section: string | null;
@@ -21,6 +21,8 @@ export interface Account {
   lastProfileUpdateAt?: string | null;
   lastLoginAt?: string | null;
   createdAt?: string;
+  isDeactivated?: boolean;
+  deactivatedAt?: string | null;
 }
 
 export interface Profile extends Account {
@@ -710,11 +712,15 @@ export const useAccounts = (params?: {
   role?: string;
   q?: string;
   page?: number;
+  includeDeactivated?: boolean;
+  deactivatedOnly?: boolean;
 }) => {
   const sp = new URLSearchParams();
   if (params?.role) sp.set("role", params.role);
   if (params?.q) sp.set("q", params.q);
   if (params?.page) sp.set("page", String(params.page));
+  if (params?.includeDeactivated) sp.set("includeDeactivated", "true");
+  if (params?.deactivatedOnly) sp.set("deactivatedOnly", "true");
   return useQuery({
     queryKey: ["accounts", params],
     queryFn: () =>
@@ -1085,5 +1091,41 @@ export const useUnsubscribeNotifications = () => {
       }),
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["notification-status"] }),
+  });
+};
+
+// ---------------- Account Deactivation (self-service soft-delete) ----------------
+export const useDeactivateAccount = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { currentPassword: string; reason?: string }) =>
+      api<{ ok: boolean; message: string }>("/api/profile/deactivate", {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
+    onSuccess: () => {
+      // The account is now deactivated - clear all cached data.
+      qc.setQueryData(["me"], null);
+      qc.clear();
+    },
+  });
+};
+
+// ---------------- Admin: Restore Deactivated Account ----------------
+export const useRestoreAccount = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api<{
+        ok: boolean;
+        message: string;
+        account: {
+          id: string;
+          email: string;
+          status: string;
+          isDeactivated: boolean;
+        };
+      }>(`/api/accounts/${id}/restore`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
   });
 };

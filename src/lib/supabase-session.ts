@@ -9,6 +9,7 @@ import {
 } from "@/lib/supabase-server";
 import { db } from "@/lib/db";
 import type { ApiAccount } from "@/lib/api";
+import { isDevAuthMode, getDevSessionAccountId } from "@/lib/dev-auth";
 
 export interface SupabaseSession {
   authUid: string;
@@ -53,9 +54,16 @@ function evictAccountCache(): void {
   }
 }
 
-// Read the Supabase session from cookies. Returns null if no session
-// or if Supabase isn't configured (dev without env vars).
+// Read the session. In production this is the Supabase Auth cookie.
+// In dev (no Supabase configured), falls back to the dev-mode cookie.
 export async function getSupabaseSession(): Promise<SupabaseSession | null> {
+  // Dev-mode fallback: use the signed cookie when Supabase isn't configured.
+  if (isDevAuthMode()) {
+    const accountId = await getDevSessionAccountId();
+    if (!accountId) return null;
+    return { authUid: accountId, email: "" };
+  }
+
   if (!isSupabaseConfigured()) return null;
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.auth.getUser();
@@ -77,25 +85,47 @@ export async function getCurrentAccountSupabase(): Promise<ApiAccount | null> {
   }
 
   // Cache miss or expired — fetch from DB.
-  const account = await db.account.findFirst({
-    where: { supabaseAuthUid: session.authUid },
-    select: {
-      id: true,
-      email: true,
-      fullName: true,
-      role: true,
-      status: true,
-      studentId: true,
-      program: true,
-      section: true,
-      organizationName: true,
-      year: true,
-      lastLoginAt: true,
-    },
-  });
+  // In dev mode, authUid is the account ID; in production it's the
+  // Supabase auth UID. Look up by the right field.
+  const account = isDevAuthMode()
+    ? await db.account.findUnique({
+        where: { id: session.authUid },
+        select: {
+          id: true,
+          email: true,
+          fullName: true,
+          role: true,
+          status: true,
+          studentId: true,
+          program: true,
+          section: true,
+          organizationName: true,
+          year: true,
+          lastLoginAt: true,
+          isDeactivated: true,
+        },
+      })
+    : await db.account.findFirst({
+        where: { supabaseAuthUid: session.authUid },
+        select: {
+          id: true,
+          email: true,
+          fullName: true,
+          role: true,
+          status: true,
+          studentId: true,
+          program: true,
+          section: true,
+          organizationName: true,
+          year: true,
+          lastLoginAt: true,
+          isDeactivated: true,
+        },
+      });
 
+  // Reject deactivated accounts (soft-deleted). They cannot access any API.
   const result =
-    account && account.status === "ACTIVE"
+    account && account.status === "ACTIVE" && !account.isDeactivated
       ? {
           ...account,
           role: account.role as ApiAccount["role"],

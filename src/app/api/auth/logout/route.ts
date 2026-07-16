@@ -1,13 +1,14 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { audit } from "@/lib/audit";
 import { getCurrentAccountSupabase } from "@/lib/supabase-session";
 import {
   createSupabaseServerClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
+import { isDevAuthMode, clearDevSessionCookie } from "@/lib/dev-auth";
 
 // POST /api/auth/logout
-// Signs out of Supabase Auth (clears the single session cookie).
+// Signs out of Supabase Auth (production) or clears the dev session cookie.
 export async function POST(req: NextRequest) {
   const account = await getCurrentAccountSupabase().catch(() => null);
   if (isSupabaseConfigured()) {
@@ -23,5 +24,9 @@ export async function POST(req: NextRequest) {
       req,
     }).catch(() => {});
   }
-  return Response.json({ ok: true });
+  const res = NextResponse.json({ ok: true });
+  if (isDevAuthMode()) {
+    clearDevSessionCookie(res);
+  }
+  return res;
 }

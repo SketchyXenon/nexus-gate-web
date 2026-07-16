@@ -4,6 +4,8 @@ import { paginationSchema } from "@/lib/validation";
 import { requireAuth, badRequest } from "@/lib/api";
 
 // GET /api/accounts (ADMIN)
+// Lists accounts. Deactivated (soft-deleted) accounts are hidden by default.
+// Pass ?includeDeactivated=true to include them.
 export async function GET(req: NextRequest) {
   const res = await requireAuth("ADMIN");
   if ("error" in res) return res.error;
@@ -17,11 +19,19 @@ export async function GET(req: NextRequest) {
   const { page, pageSize } = parsed.data;
   const role = searchParams.get("role") || undefined;
   const q = searchParams.get("q") || undefined;
+  const includeDeactivated = searchParams.get("includeDeactivated") === "true";
+  const deactivatedOnly = searchParams.get("deactivatedOnly") === "true";
 
   const where: Record<string, unknown> = {};
   if (role && role !== "ALL") where.role = role;
   if (q) {
     where.OR = [{ fullName: { contains: q } }, { email: { contains: q } }];
+  }
+  // Soft-delete filtering: hide deactivated accounts unless explicitly requested.
+  if (deactivatedOnly) {
+    where.isDeactivated = true;
+  } else if (!includeDeactivated) {
+    where.isDeactivated = false;
   }
 
   const [accounts, total] = await Promise.all([
@@ -43,6 +53,8 @@ export async function GET(req: NextRequest) {
         organizationName: true,
         lastLoginAt: true,
         createdAt: true,
+        isDeactivated: true,
+        deactivatedAt: true,
       },
     }),
     db.account.count({ where }),

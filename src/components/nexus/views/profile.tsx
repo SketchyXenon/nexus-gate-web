@@ -22,6 +22,8 @@ import {
   Trash2,
   CheckCircle2,
   XCircle,
+  AlertTriangle,
+  UserX,
 } from "lucide-react";
 import {
   Card,
@@ -63,6 +65,7 @@ import {
 import { ROLE_LABELS } from "@/lib/rbac";
 import { DiceBearAvatar } from "@/components/nexus/dicebear-avatar";
 import { NotificationPreferences } from "@/components/nexus/notification-preferences";
+import { DeactivateAccountDialog } from "@/components/nexus/deactivate-account-dialog";
 import { PasswordStrengthMeter } from "@/components/nexus/password-meter";
 import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -98,6 +101,8 @@ export function ProfileView() {
   // Password dialog
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
+  // Deactivate account dialog
+  const [deactivateDialogOpen, setDeactivateDialogOpen] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
@@ -267,7 +272,9 @@ export function ProfileView() {
               <div className="relative">
                 <DiceBearAvatar fullName={profile.fullName} size={72} />
                 <div className="absolute -bottom-1 -right-1 grid place-items-center h-6 w-6 rounded-full bg-background border-2 border-background">
-                  <div className={`h-3 w-3 rounded-full ${profile.status === "ACTIVE" ? "bg-emerald-500" : profile.status === "SUSPENDED" ? "bg-red-500" : "bg-amber-500"}`} />
+                  <div
+                    className={`h-3 w-3 rounded-full ${profile.status === "ACTIVE" ? "bg-emerald-500" : profile.status === "SUSPENDED" ? "bg-red-500" : "bg-amber-500"}`}
+                  />
                 </div>
               </div>
               <div className="flex-1 min-w-0">
@@ -296,9 +303,13 @@ export function ProfileView() {
                     {profile.status}
                   </Badge>
                   {profile.lastLoginAt && (
-                    <Badge variant="outline" className="text-muted-foreground gap-1">
+                    <Badge
+                      variant="outline"
+                      className="text-muted-foreground gap-1"
+                    >
                       <Clock className="h-3 w-3" />
-                      Last login: {new Date(profile.lastLoginAt).toLocaleDateString()}
+                      Last login:{" "}
+                      {new Date(profile.lastLoginAt).toLocaleDateString()}
                     </Badge>
                   )}
                 </div>
@@ -612,6 +623,45 @@ export function ProfileView() {
 
       {/* Notification preferences */}
       <NotificationPreferences />
+
+      {/* Danger Zone — account deactivation (soft delete) */}
+      <Card className="border-destructive/30">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-destructive">
+            <AlertTriangle className="h-5 w-5" />
+            Danger Zone
+          </CardTitle>
+          <CardDescription>
+            Deactivating your account is a soft-delete: your data is preserved
+            for institutional records but you lose all access. An administrator
+            can restore it if you change your mind.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Deactivate account</p>
+              <p className="text-xs text-muted-foreground">
+                Requires your password and double confirmation.
+              </p>
+            </div>
+            <Button
+              variant="destructive"
+              className="gap-2"
+              onClick={() => setDeactivateDialogOpen(true)}
+            >
+              <UserX className="h-4 w-4" />
+              Deactivate account
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <DeactivateAccountDialog
+        open={deactivateDialogOpen}
+        onOpenChange={setDeactivateDialogOpen}
+        email={profile.email}
+      />
 
       {/* Save confirmation dialog */}
       <AlertDialog open={saveConfirmOpen} onOpenChange={setSaveConfirmOpen}>

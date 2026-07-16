@@ -56,6 +56,12 @@ model Account {
   lastLoginAt     DateTime?     @map("last_login_at")
   failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
   lockedUntil     DateTime?     @map("locked_until")
+  // Email verification timestamp (set when user clicks the verification link).
+  emailVerifiedAt DateTime?     @map("email_verified_at")
+  // Soft-delete / deactivation fields (never hard-delete user data).
+  isDeactivated   Boolean       @default(false) @map("is_deactivated")
+  deactivatedAt   DateTime?     @map("deactivated_at")
+  deactivatedReason String?     @map("deactivated_reason")
   createdAt       DateTime      @default(now()) @map("created_at")
   updatedAt       DateTime      @updatedAt @map("updated_at")
 
@@ -83,6 +89,8 @@ model Account {
   @@index([passkeyCredentialId])
   // Admin roster sort
   @@index([createdAt])
+  // Deactivation filter: list active accounts excluding soft-deleted
+  @@index([isDeactivated])
 
   @@map("accounts")
 }

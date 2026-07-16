@@ -5,7 +5,11 @@
 // ====================================================================
 
 export type Role = "ADMIN" | "ORGANIZER" | "USER";
-export type AccountStatus = "PENDING_VERIFICATION" | "ACTIVE" | "SUSPENDED";
+export type AccountStatus =
+  | "PENDING_VERIFICATION"
+  | "ACTIVE"
+  | "SUSPENDED"
+  | "DEACTIVATED";
 
 export const ROLE_HIERARCHY: Record<Role, number> = {
   USER: 1,

@@ -17,13 +17,22 @@ import {
   createSupabaseAdminClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
+import { isDevAuthMode } from "@/lib/dev-auth";
+import { hashPassword } from "@/lib/auth";
+import { sendWelcomeEmail } from "@/lib/email";
 
 // POST /api/auth/register
-// Creates a Supabase Auth user + a linked accounts row (PENDING_VERIFICATION).
-// The user must sign in to activate (login flips status to ACTIVE).
+//
+// Production: calls supabase.auth.signUp() which creates the auth user AND
+// sends Supabase's built-in confirmation email (one-time link with a
+// configurable expiration, default 24h). The user clicks the link ->
+// /api/auth/callback exchanges the PKCE code -> account is activated.
+//
+// Dev mode (no Supabase configured): auto-activates the account since
+// there is no email service. The user can sign in immediately.
 export async function POST(req: NextRequest) {
   try {
-    if (!isSupabaseConfigured()) {
+    if (!isSupabaseConfigured() && !isDevAuthMode()) {
       return NextResponse.json(
         {
           error:
@@ -47,33 +56,38 @@ export async function POST(req: NextRequest) {
     // Uniqueness checks - generic error (no enumeration).
     const existingEmail = await db.account.findUnique({
       where: { email },
-      select: { id: true, supabaseAuthUid: true },
+      select: { id: true, supabaseAuthUid: true, isDeactivated: true },
     });
     const existingStudentId = await db.account.findUnique({
       where: { studentId },
       select: { id: true },
     });
 
-    // RECONCILIATION: if the accounts row exists but has no supabaseAuthUid,
-    // the auth user may have been deleted in Supabase Dashboard. Clean up
-    // the orphaned accounts row so registration can proceed.
+    // If the existing email account is deactivated, allow re-registration
+    // by removing the soft-deleted row (the user explicitly left).
+    if (existingEmail?.isDeactivated) {
+      await db.account
+        .delete({ where: { id: existingEmail.id } })
+        .catch(() => {});
+    }
+
+    // RECONCILIATION (production only): orphaned accounts row cleanup.
     if (
+      !isDevAuthMode() &&
       existingEmail &&
       !existingEmail.supabaseAuthUid &&
+      !existingEmail.isDeactivated &&
       isSupabaseConfigured()
     ) {
       try {
-        // Query auth.users directly via raw SQL (single-row lookup).
         const rows = await db.$queryRaw<Array<{ id: string }>>`
           SELECT id FROM auth.users WHERE email = ${email} LIMIT 1
         `;
         if (rows.length === 0) {
-          // Orphaned accounts row - delete it so registration can proceed.
           console.log(
             `[register] cleaning orphaned accounts row for ${email} (no auth user found)`,
           );
           await db.account.delete({ where: { id: existingEmail.id } });
-          // Fall through to normal registration.
         }
       } catch (e) {
         console.error("[register] reconciliation check failed:", e);
@@ -110,52 +124,61 @@ export async function POST(req: NextRequest) {
     });
     const isWhitelisted = !!whitelisted;
 
-    // 1. Create the Supabase Auth user (identity layer).
-    // If Supabase has email confirmation enabled (default), signUp creates
-    // the user with email_confirmed=false and sends a confirmation link.
-    // The user cannot log in until they click that link.
-    // emailRedirectTo: use NEXT_PUBLIC_APP_URL (production URL) with
-    // req.nextUrl.origin as fallback. Without this, Supabase uses its
-    // dashboard Site URL (often localhost:3000) as the redirect.
-    const supabase = await createSupabaseServerClient();
-    const appUrl =
-      process.env.NEXT_PUBLIC_APP_URL?.trim() || req.nextUrl.origin;
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { fullName }, emailRedirectTo: appUrl },
-    });
-    if (authError || !authData.user) {
-      const msg = authError?.message ?? "Registration failed";
-      if (
-        msg.toLowerCase().includes("already registered") ||
-        msg.toLowerCase().includes("user already")
-      ) {
+    // ---- Create the auth identity + accounts row ----
+    let authUid: string | null = null;
+    let needsEmailConfirmation = true;
+    let passwordHash = "";
+
+    if (isDevAuthMode()) {
+      // Dev mode: hash the password with bcrypt, no Supabase user.
+      // Auto-activate since there is no email service to verify with.
+      passwordHash = await hashPassword(password);
+      needsEmailConfirmation = false;
+    } else {
+      // Production: create the Supabase Auth user.
+      // Supabase sends a confirmation email automatically (one-time link,
+      // expires per dashboard config). The user clicks it -> callback
+      // exchanges the PKCE code -> account is activated.
+      const supabase = await createSupabaseServerClient();
+      const appUrl =
+        process.env.NEXT_PUBLIC_APP_URL?.trim() || req.nextUrl.origin;
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { fullName }, emailRedirectTo: appUrl },
+      });
+      if (authError || !authData.user) {
+        const msg = authError?.message ?? "Registration failed";
+        if (
+          msg.toLowerCase().includes("already registered") ||
+          msg.toLowerCase().includes("user already")
+        ) {
+          return badRequest(
+            "This email is already registered. Try signing in instead, or use 'Forgot password' if you can't log in.",
+            "REGISTRATION_FAILED",
+          );
+        }
         return badRequest(
-          "This email is already registered. Try signing in instead, or use 'Forgot password' if you can't log in.",
+          "Unable to create account. Please try again.",
           "REGISTRATION_FAILED",
         );
       }
-      return badRequest(
-        "Unable to create account. Please try again.",
-        "REGISTRATION_FAILED",
-      );
+      authUid = authData.user.id;
+      // If Supabase returns a session, email confirmation is disabled.
+      needsEmailConfirmation = !authData.session;
     }
-    const authUid = authData.user.id;
-    // If authData.session is null, email confirmation is pending — Supabase
-    // sent a confirmation link and the user must click it before logging in.
-    const needsEmailConfirmation = !authData.session;
 
-    // 2. Create the accounts row linked to the Supabase user (profile + RBAC).
+    // Create the accounts row.
     let account;
     try {
       account = await db.account.create({
         data: {
           email,
-          passwordHash: "",
+          passwordHash,
           fullName,
           role: "USER",
-          status: "PENDING_VERIFICATION",
+          status: isDevAuthMode() ? "ACTIVE" : "PENDING_VERIFICATION",
+          emailVerifiedAt: isDevAuthMode() ? new Date() : null,
           studentId,
           program: program || (whitelisted?.program ?? null),
           section: section || (whitelisted?.section ?? null),
@@ -164,10 +187,10 @@ export async function POST(req: NextRequest) {
       });
     } catch (e) {
       // Roll back the Supabase user if the accounts row fails.
-      // Must use the ADMIN client (service role) - the anon client can't
-      // call auth.admin.deleteUser (it 403s silently).
-      const adminClient = createSupabaseAdminClient();
-      await adminClient.auth.admin.deleteUser(authUid).catch(() => {});
+      if (!isDevAuthMode() && authUid) {
+        const adminClient = createSupabaseAdminClient();
+        await adminClient.auth.admin.deleteUser(authUid).catch(() => {});
+      }
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("Unique constraint") || msg.includes("unique")) {
         return badRequest(
@@ -211,7 +234,8 @@ export async function POST(req: NextRequest) {
         email,
         studentId,
         whitelisted: isWhitelisted,
-        status: "PENDING_VERIFICATION",
+        status: account.status,
+        devMode: isDevAuthMode(),
       },
       req,
     });
@@ -236,7 +260,7 @@ export async function POST(req: NextRequest) {
         whitelisted: isWhitelisted,
         needsEmailConfirmation,
       },
-      { status: 201 },
+      { status: 201, headers: { "Cache-Control": "no-store" } },
     );
   } catch (e) {
     if (isDbUnavailableError(e)) return dbUnavailable(e);

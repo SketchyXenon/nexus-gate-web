@@ -356,7 +356,9 @@ export const overrideSchema = z.object({
 // are optional and only persisted when provided (PATCH semantics).
 export const updateAccountSchema = z.object({
   role: z.enum(["ADMIN", "ORGANIZER", "USER"]).optional(),
-  status: z.enum(["PENDING_VERIFICATION", "ACTIVE", "SUSPENDED"]).optional(),
+  status: z
+    .enum(["PENDING_VERIFICATION", "ACTIVE", "SUSPENDED", "DEACTIVATED"])
+    .optional(),
   fullName: fullNameSchema.optional(),
   email: emailSchema.optional(),
   program: z.string().trim().max(50).optional().nullable(),
@@ -422,6 +424,15 @@ export const updateProfileSchema = z.object({
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, "Enter your current password"),
   newPassword: strongPasswordSchema,
+});
+
+// ---- Account deactivation (self-service soft-delete) ----
+// Requires re-authentication with the current password to prevent
+// accidental or session-hijack deactivation. The reason is optional
+// but capped for storage safety.
+export const deactivateAccountSchema = z.object({
+  currentPassword: z.string().min(1, "Enter your current password to confirm"),
+  reason: z.string().trim().max(500).optional(),
 });
 
 // ---- Pagination ----

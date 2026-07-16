@@ -63,6 +63,7 @@ type Mode =
   | "login"
   | "register"
   | "success"
+  | "verify-success"
   | "forgot"
   | "forgot-success"
   | "reset"
@@ -109,7 +110,9 @@ export function LoginScreen({
 
   // If we recovered a token OR the recovery-pending flag is set, jump
   // straight into the reset flow on mount.
-  const recoveryPending = typeof window !== "undefined" && sessionStorage.getItem(RECOVERY_PENDING_KEY) === "1";
+  const recoveryPending =
+    typeof window !== "undefined" &&
+    sessionStorage.getItem(RECOVERY_PENDING_KEY) === "1";
   const [mode, setMode] = useState<Mode>(
     resetToken || recoveryPending ? "reset" : initialMode,
   );
@@ -141,8 +144,9 @@ export function LoginScreen({
         setResetToken("supabase-recovery");
         setMode("reset");
       } else {
-        // magiclink or signup - session established, reload to dashboard.
-        window.location.reload();
+        // Signup/magiclink confirmation: show the success dialog.
+        // The callback already activated the account server-side.
+        setMode("verify-success");
       }
     };
 
@@ -269,25 +273,35 @@ function AuthScreen({
   // ---- Debounced availability check for registration ----
   // Only check when email/studentId are format-valid. 400ms debounce.
   const [debouncedEmail, setDebouncedEmail] = useState<string | null>(null);
-  const [debouncedStudentId, setDebouncedStudentId] = useState<string | null>(null);
+  const [debouncedStudentId, setDebouncedStudentId] = useState<string | null>(
+    null,
+  );
   useEffect(() => {
     const t = setTimeout(() => {
       const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-      setDebouncedEmail(mode === "register" && emailValid ? email.toLowerCase() : null);
+      setDebouncedEmail(
+        mode === "register" && emailValid ? email.toLowerCase() : null,
+      );
       const sidValid = /^\d{7}$/.test(studentId.trim());
-      setDebouncedStudentId(mode === "register" && sidValid ? studentId.trim() : null);
+      setDebouncedStudentId(
+        mode === "register" && sidValid ? studentId.trim() : null,
+      );
     }, 400);
     return () => clearTimeout(t);
   }, [email, studentId, mode]);
 
   const availability = useCheckAvailability(debouncedEmail, debouncedStudentId);
-  const emailTaken = availability.data?.emailTaken === true && !availability.isError;
-  const studentIdTaken = availability.data?.studentIdTaken === true && !availability.isError;
+  const emailTaken =
+    availability.data?.emailTaken === true && !availability.isError;
+  const studentIdTaken =
+    availability.data?.studentIdTaken === true && !availability.isError;
   const emailChecking = !!debouncedEmail && availability.isLoading;
   const studentIdChecking = !!debouncedStudentId && availability.isLoading;
   // When the check fails (rate limited or network error), don't claim available.
-  const emailCheckFailed = !!debouncedEmail && !availability.isLoading && availability.isError;
-  const studentIdCheckFailed = !!debouncedStudentId && !availability.isLoading && availability.isError;
+  const emailCheckFailed =
+    !!debouncedEmail && !availability.isLoading && availability.isError;
+  const studentIdCheckFailed =
+    !!debouncedStudentId && !availability.isLoading && availability.isError;
 
   // Clear stale "Checking..." errors when the availability check completes.
   // Without this, validateRegStep's "Checking..." message stays even after
@@ -504,11 +518,17 @@ function AuthScreen({
     e.preventDefault();
     // Guard: if the user pressed Enter on step 1 or 2, advance instead of submit.
     if (regStep === 1) {
-      if (validateRegStep(1)) { setErrors({}); setRegStep(2); }
+      if (validateRegStep(1)) {
+        setErrors({});
+        setRegStep(2);
+      }
       return;
     }
     if (regStep === 2) {
-      if (validateRegStep(2)) { setErrors({}); setRegStep(3); }
+      if (validateRegStep(2)) {
+        setErrors({});
+        setRegStep(3);
+      }
       return;
     }
     // Step 3: program/section are optional, so just submit.
@@ -832,12 +852,13 @@ function AuthScreen({
                       {/* Step indicator */}
                       <div className="flex items-center gap-2">
                         {[1, 2, 3].map((s) => (
-                          <div key={s} className="flex-1 flex items-center gap-2">
+                          <div
+                            key={s}
+                            className="flex-1 flex items-center gap-2"
+                          >
                             <div
                               className={`flex-1 h-1.5 rounded-full transition-colors duration-300 ${
-                                s <= regStep
-                                  ? "bg-primary"
-                                  : "bg-muted"
+                                s <= regStep ? "bg-primary" : "bg-muted"
                               }`}
                             />
                           </div>
@@ -869,7 +890,9 @@ function AuthScreen({
                                   className={`pl-9 pr-10 ${
                                     emailTaken
                                       ? "border-destructive focus-visible:ring-destructive"
-                                      : debouncedEmail && !emailChecking && !emailTaken
+                                      : debouncedEmail &&
+                                          !emailChecking &&
+                                          !emailTaken
                                         ? "border-emerald-500/50 focus-visible:ring-emerald-500/50"
                                         : ""
                                   }`}
@@ -891,7 +914,9 @@ function AuthScreen({
                                 )}
                               </div>
                               {errors.email ? (
-                                <p className={`text-xs ${emailTaken ? "text-destructive" : "text-muted-foreground"}`}>
+                                <p
+                                  className={`text-xs ${emailTaken ? "text-destructive" : "text-muted-foreground"}`}
+                                >
                                   {errors.email}
                                 </p>
                               ) : emailTaken ? (
@@ -955,7 +980,9 @@ function AuthScreen({
                               )}
                             </div>
                             <div className="space-y-1.5">
-                              <Label htmlFor="confirmPass">Confirm password</Label>
+                              <Label htmlFor="confirmPass">
+                                Confirm password
+                              </Label>
                               <div className="relative">
                                 <Input
                                   id="confirmPass"
@@ -966,9 +993,11 @@ function AuthScreen({
                                     setConfirmPassword(e.target.value)
                                   }
                                   className={`pr-10 ${
-                                    confirmPassword && confirmPassword === password
+                                    confirmPassword &&
+                                    confirmPassword === password
                                       ? "border-emerald-500/50 focus-visible:ring-emerald-500/50"
-                                      : confirmPassword && confirmPassword !== password
+                                      : confirmPassword &&
+                                          confirmPassword !== password
                                         ? "border-destructive/50 focus-visible:ring-destructive/50"
                                         : ""
                                   }`}
@@ -989,7 +1018,8 @@ function AuthScreen({
                                 <p className="text-xs text-destructive">
                                   {errors.confirmPassword}
                                 </p>
-                              ) : confirmPassword && confirmPassword === password ? (
+                              ) : confirmPassword &&
+                                confirmPassword === password ? (
                                 <p className="text-xs text-emerald-600 dark:text-emerald-400">
                                   Passwords match
                                 </p>
@@ -1022,7 +1052,7 @@ function AuthScreen({
                                 value={fullName}
                                 onChange={(e) =>
                                   setFullName(
-                                    e.target.value.replace(/[0-9]/g, "")
+                                    e.target.value.replace(/[0-9]/g, ""),
                                   )
                                 }
                                 autoFocus
@@ -1063,13 +1093,15 @@ function AuthScreen({
                                     setStudentId(
                                       e.target.value
                                         .replace(/\D/g, "")
-                                        .slice(0, 7)
+                                        .slice(0, 7),
                                     )
                                   }
                                   className={`pl-9 pr-10 font-heading ${
                                     studentIdTaken
                                       ? "border-destructive focus-visible:ring-destructive"
-                                      : debouncedStudentId && !studentIdChecking && !studentIdTaken
+                                      : debouncedStudentId &&
+                                          !studentIdChecking &&
+                                          !studentIdTaken
                                         ? "border-emerald-500/50 focus-visible:ring-emerald-500/50"
                                         : ""
                                   }`}
@@ -1090,7 +1122,9 @@ function AuthScreen({
                                 )}
                               </div>
                               {errors.studentId ? (
-                                <p className={`text-xs ${studentIdTaken ? "text-destructive" : "text-muted-foreground"}`}>
+                                <p
+                                  className={`text-xs ${studentIdTaken ? "text-destructive" : "text-muted-foreground"}`}
+                                >
                                   {errors.studentId}
                                 </p>
                               ) : studentIdTaken ? (
@@ -1147,7 +1181,10 @@ function AuthScreen({
                                   value={program}
                                   onValueChange={setProgram}
                                 >
-                                  <SelectTrigger id="program" className="w-full">
+                                  <SelectTrigger
+                                    id="program"
+                                    className="w-full"
+                                  >
                                     <SelectValue placeholder="Select a program" />
                                   </SelectTrigger>
                                   <SelectContent className="max-w-[calc(100vw-1.5rem)]">
@@ -1173,8 +1210,8 @@ function AuthScreen({
                               </div>
                             </div>
                             <p className="text-xs text-muted-foreground">
-                              Program and section are optional — you can set them
-                              later in your profile.
+                              Program and section are optional — you can set
+                              them later in your profile.
                             </p>
                             <div className="flex gap-2">
                               <Button
@@ -1278,6 +1315,47 @@ function AuthScreen({
                           {needsEmailConfirmation
                             ? "I've confirmed — sign in"
                             : "Continue to sign in"}
+                          <ArrowRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* EMAIL VERIFIED SUCCESS (after Supabase callback) */}
+                  {mode === "verify-success" && (
+                    <div className="space-y-5 text-center">
+                      <motion.div
+                        initial={{ scale: 0.6, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{
+                          type: "spring",
+                          stiffness: 200,
+                          damping: 18,
+                        }}
+                        className="mx-auto grid place-items-center h-16 w-16 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                      >
+                        <CheckCircle2 className="h-9 w-9" />
+                      </motion.div>
+                      <div className="space-y-1">
+                        <p className="font-heading font-semibold text-base">
+                          Email verified!
+                        </p>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Your email has been confirmed and your account is now
+                        active. You can sign in with your email and password.
+                      </p>
+                      <div className="space-y-2">
+                        <Button
+                          type="button"
+                          className="w-full h-10"
+                          onClick={() => {
+                            setPassword("");
+                            setErrors({});
+                            setMode("login");
+                          }}
+                        >
+                          Sign in to your account
                           <ArrowRight className="h-4 w-4" />
                         </Button>
                       </div>
@@ -1435,9 +1513,11 @@ function AuthScreen({
                               setConfirmNewPassword(e.target.value)
                             }
                             className={`pr-10 ${
-                              confirmNewPassword && confirmNewPassword === newPassword
+                              confirmNewPassword &&
+                              confirmNewPassword === newPassword
                                 ? "border-emerald-500/50 focus-visible:ring-emerald-500/50"
-                                : confirmNewPassword && confirmNewPassword !== newPassword
+                                : confirmNewPassword &&
+                                    confirmNewPassword !== newPassword
                                   ? "border-destructive/50 focus-visible:ring-destructive/50"
                                   : ""
                             }`}
@@ -1456,7 +1536,8 @@ function AuthScreen({
                           <p className="text-xs text-destructive">
                             {errors.confirmNewPassword}
                           </p>
-                        ) : confirmNewPassword && confirmNewPassword === newPassword ? (
+                        ) : confirmNewPassword &&
+                          confirmNewPassword === newPassword ? (
                           <p className="text-xs text-emerald-600 dark:text-emerald-400">
                             Passwords match
                           </p>

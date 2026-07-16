@@ -18,6 +18,7 @@ import {
   Hash,
   Pencil,
   ShieldCheck,
+  RotateCcw,
 } from "lucide-react";
 import {
   Card,
@@ -64,6 +65,7 @@ import {
   useUpdateAccount,
   useAdminCreateAccount,
   useDeleteAccount,
+  useRestoreAccount,
   type Account,
 } from "@/lib/api-client";
 import { ROLE_LABELS } from "@/lib/rbac";
@@ -76,6 +78,7 @@ const STATUS_LABELS: Record<Account["status"], string> = {
   PENDING_VERIFICATION: "Pending",
   ACTIVE: "Active",
   SUSPENDED: "Suspended",
+  DEACTIVATED: "Deactivated",
 };
 
 type PendingAction = {
@@ -114,10 +117,13 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
     q: debouncedQ || undefined,
     role: roleFilter === "ALL" ? undefined : roleFilter,
     page,
+    includeDeactivated: statusFilter === "ALL",
+    deactivatedOnly: statusFilter === "DEACTIVATED",
   });
   const updateMut = useUpdateAccount();
   const createMut = useAdminCreateAccount();
   const deleteMut = useDeleteAccount();
+  const restoreMut = useRestoreAccount();
 
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(
     null,
@@ -380,6 +386,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                   <SelectItem value="ACTIVE">Active</SelectItem>
                   <SelectItem value="SUSPENDED">Suspended</SelectItem>
                   <SelectItem value="PENDING_VERIFICATION">Pending</SelectItem>
+                  <SelectItem value="DEACTIVATED">Deactivated</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={sortBy} onValueChange={setSortBy}>
@@ -507,11 +514,13 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                       <Badge
                         variant="outline"
                         className={
-                          a.status === "ACTIVE"
-                            ? "border-emerald-500/40 text-emerald-600"
-                            : a.status === "SUSPENDED"
-                              ? "border-red-500/40 text-red-600"
-                              : "border-amber-500/40 text-amber-600"
+                          a.isDeactivated || a.status === "DEACTIVATED"
+                            ? "border-zinc-500/40 text-zinc-500 line-through"
+                            : a.status === "ACTIVE"
+                              ? "border-emerald-500/40 text-emerald-600"
+                              : a.status === "SUSPENDED"
+                                ? "border-red-500/40 text-red-600"
+                                : "border-amber-500/40 text-amber-600"
                         }
                       >
                         {STATUS_LABELS[a.status]}
@@ -559,7 +568,43 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                           </TooltipTrigger>
                           <TooltipContent>Edit details</TooltipContent>
                         </Tooltip>
-                        {a.status === "ACTIVE" ? (
+                        {a.isDeactivated ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-emerald-600 hover:text-emerald-700"
+                                disabled={restoreMut.isPending}
+                                onClick={() =>
+                                  restoreMut.mutate(a.id, {
+                                    onSuccess: () =>
+                                      toast({
+                                        title: "Account restored",
+                                        description: `${a.email} can now sign in again.`,
+                                      }),
+                                    onError: () =>
+                                      toast({
+                                        title: "Restore failed",
+                                        description: "Please try again.",
+                                        variant: "destructive",
+                                      }),
+                                  })
+                                }
+                              >
+                                {restoreMut.isPending &&
+                                restoreMut.variables === a.id ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <RotateCcw className="h-3.5 w-3.5" />
+                                )}
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              Restore deactivated account
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : a.status === "ACTIVE" ? (
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
@@ -760,7 +805,10 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                       <SelectTrigger className="h-9">
                         <SelectValue placeholder="Select program" />
                       </SelectTrigger>
-                      <SelectContent position="popper" className="max-h-[200px] z-[100]">
+                      <SelectContent
+                        position="popper"
+                        className="max-h-[200px] z-[100]"
+                      >
                         <SelectItem value="__none__">None</SelectItem>
                         {PROGRAMS.map((p) => (
                           <SelectItem key={p.code} value={p.code}>
@@ -958,7 +1006,10 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                   <SelectTrigger className="h-9">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent position="popper" className="max-h-[200px] z-[100]">
+                  <SelectContent
+                    position="popper"
+                    className="max-h-[200px] z-[100]"
+                  >
                     <SelectItem value="__none__">— Not specified —</SelectItem>
                     {PROGRAMS.map((p) => (
                       <SelectItem key={p.code} value={p.code}>
@@ -1015,7 +1066,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                         organizationName: e.target.value,
                       })
                     }
-                    placeholder="e.g. TechnoGadget Organization"
+                    placeholder="e.g. College of Technology"
                   />
                 </div>
               )}

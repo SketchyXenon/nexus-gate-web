@@ -61,6 +61,12 @@ model Account {
   lastLoginAt     DateTime?
   failedLoginAttempts Int       @default(0)
   lockedUntil     DateTime?
+  // Email verification timestamp (set when user clicks the verification link).
+  emailVerifiedAt DateTime?
+  // Soft-delete / deactivation fields (never hard-delete user data).
+  isDeactivated   Boolean       @default(false)
+  deactivatedAt   DateTime?
+  deactivatedReason String?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
@@ -82,6 +88,8 @@ model Account {
   @@index([passkeyCredentialId])
   // Admin roster sort (mirrors Postgres schema)
   @@index([createdAt])
+  // Deactivation filter: list active accounts excluding soft-deleted
+  @@index([isDeactivated])
 }
 
 // ====================================================================

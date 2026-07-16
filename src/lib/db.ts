@@ -14,7 +14,7 @@ const logConfig = process.env.NODE_ENV === "production" ? [] : ["query"];
 // is invalidated and a fresh PrismaClient is created. Without this,
 // schema changes don't take effect until the dev server is manually
 // restarted.
-const SCHEMA_CACHE_KEY = "v14-timeout-fields-2026-07-04";
+const SCHEMA_CACHE_KEY = "v15-deactivation-email-verify-2026-07-16";
 
 const globalWithKey = globalThis as unknown as {
   __prismaCacheKey?: string;
