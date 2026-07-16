@@ -183,6 +183,7 @@ export async function POST(req: NextRequest) {
         program: true,
         section: true,
         isDeactivated: true,
+        emailVerifiedAt: true,
       },
     });
     if (!account) {
