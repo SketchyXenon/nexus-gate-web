@@ -9,7 +9,6 @@
 // cannot self-restore.
 
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import {
   requireAuth,
   notFound,
@@ -19,6 +18,11 @@ import {
 } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import { invalidateAccountCache } from "@/lib/supabase-session";
+import {
+  safeFindAccountById,
+  safeRestoreAccount,
+  isAccountDeactivated,
+} from "@/lib/safe-account";
 
 export async function POST(
   req: NextRequest,
@@ -30,22 +34,11 @@ export async function POST(
     const { account: admin } = auth;
 
     const { id } = await params;
-    const target = await db.account.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        status: true,
-        isDeactivated: true,
-        deactivatedAt: true,
-        emailVerifiedAt: true,
-        supabaseAuthUid: true,
-      },
-    });
+    // Safe lookup: degrades if migration 0017 not applied.
+    const target = await safeFindAccountById(id);
 
     if (!target) return notFound("Account not found.");
-    if (!target.isDeactivated) {
+    if (!isAccountDeactivated(target)) {
       return forbidden("This account is not deactivated.", "NOT_DEACTIVATED");
     }
 
@@ -53,15 +46,7 @@ export async function POST(
     const restoredStatus = target.emailVerifiedAt
       ? "ACTIVE"
       : "PENDING_VERIFICATION";
-    await db.account.update({
-      where: { id: target.id },
-      data: {
-        isDeactivated: false,
-        deactivatedAt: null,
-        deactivatedReason: null,
-        status: restoredStatus,
-      },
-    });
+    await safeRestoreAccount(target.id, Boolean(target.emailVerifiedAt));
 
     // Invalidate cache so the restored account can log in immediately.
     invalidateAccountCache(target.supabaseAuthUid ?? target.id);

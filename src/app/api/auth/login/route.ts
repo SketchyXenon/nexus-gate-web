@@ -20,6 +20,11 @@ import {
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
 import { invalidateAccountCache } from "@/lib/supabase-session";
+import {
+  safeFindAccountByEmail,
+  safeFindAccountByAuthUid,
+  isAccountDeactivated,
+} from "@/lib/safe-account";
 
 // Brute-force protection constants.
 const MAX_FAILED_ATTEMPTS = 5;
@@ -56,21 +61,14 @@ export async function POST(req: NextRequest) {
     if (rl) return rl;
 
     // ---- Pre-auth lockout + deactivation check ----
-    const preCheck = await db.account.findUnique({
-      where: { email },
-      select: {
-        id: true,
-        email: true,
-        supabaseAuthUid: true,
-        status: true,
-        isDeactivated: true,
-        failedLoginAttempts: true,
-        lockedUntil: true,
-      },
+    // Uses safe lookup that degrades gracefully if migration 0017 not applied.
+    const preCheck = await safeFindAccountByEmail(email, {
+      failedLoginAttempts: true,
+      lockedUntil: true,
     });
 
     // Reject deactivated accounts immediately (soft-deleted).
-    if (preCheck?.isDeactivated) {
+    if (isAccountDeactivated(preCheck)) {
       return NextResponse.json(
         {
           error:
@@ -170,29 +168,15 @@ export async function POST(req: NextRequest) {
     }
     const authUid = authData.user.id;
 
-    // Load the linked accounts row.
-    const account = await db.account.findFirst({
-      where: { supabaseAuthUid: authUid },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        role: true,
-        status: true,
-        studentId: true,
-        program: true,
-        section: true,
-        isDeactivated: true,
-        emailVerifiedAt: true,
-      },
-    });
+    // Load the linked accounts row (safe: degrades if migration 0017 missing).
+    const account = await safeFindAccountByAuthUid(authUid);
     if (!account) {
       await supabase.auth.signOut();
       return unauthorized("Account not found. Contact your administrator.");
     }
 
     // Reject deactivated accounts (defense-in-depth).
-    if (account.isDeactivated) {
+    if (isAccountDeactivated(account)) {
       await supabase.auth.signOut();
       return NextResponse.json(
         {
@@ -206,16 +190,30 @@ export async function POST(req: NextRequest) {
 
     // Activate PENDING_VERIFICATION accounts on first successful login.
     if (account.status === "PENDING_VERIFICATION") {
-      await db.account.update({
-        where: { id: account.id },
-        data: {
-          status: "ACTIVE",
-          emailVerifiedAt: account.emailVerifiedAt ?? new Date(),
-          failedLoginAttempts: 0,
-          lockedUntil: null,
-          lastLoginAt: new Date(),
-        },
-      });
+      // Safe update: sets emailVerifiedAt only if the column exists.
+      try {
+        await db.account.update({
+          where: { id: account.id },
+          data: {
+            status: "ACTIVE",
+            emailVerifiedAt: account.emailVerifiedAt ?? new Date(),
+            failedLoginAttempts: 0,
+            lockedUntil: null,
+            lastLoginAt: new Date(),
+          },
+        });
+      } catch (e) {
+        // Migration 0017 not applied - update without the new column.
+        await db.account.update({
+          where: { id: account.id },
+          data: {
+            status: "ACTIVE",
+            failedLoginAttempts: 0,
+            lockedUntil: null,
+            lastLoginAt: new Date(),
+          },
+        });
+      }
       (account as { status: string }).status = "ACTIVE";
       invalidateAccountCache(authUid);
       await audit({

@@ -9,6 +9,10 @@ import {
 } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { invalidateAccountCache } from "@/lib/supabase-session";
+import {
+  safeFindAccountByAuthUid,
+  isAccountDeactivated,
+} from "@/lib/safe-account";
 
 // ====================================================================
 // GET /api/auth/callback?code=<pkce_code>&type=<magiclink|recovery|...>
@@ -115,30 +119,31 @@ export async function GET(req: NextRequest) {
   // transitions our account from PENDING_VERIFICATION to ACTIVE.
   if (authUid && resolvedType !== "recovery") {
     try {
-      const account = await db.account.findFirst({
-        where: { supabaseAuthUid: authUid },
-        select: {
-          id: true,
-          status: true,
-          emailVerifiedAt: true,
-          isDeactivated: true,
-          email: true,
-        },
-      });
+      // Safe lookup: degrades if migration 0017 not applied.
+      const account = await safeFindAccountByAuthUid(authUid);
 
-      if (account && !account.isDeactivated) {
+      if (account && !isAccountDeactivated(account)) {
         // Idempotent: only update if not already verified.
         if (
           !account.emailVerifiedAt ||
           account.status === "PENDING_VERIFICATION"
         ) {
-          await db.account.update({
-            where: { id: account.id },
-            data: {
-              status: "ACTIVE",
-              emailVerifiedAt: account.emailVerifiedAt ?? new Date(),
-            },
-          });
+          // Safe update: sets emailVerifiedAt only if the column exists.
+          try {
+            await db.account.update({
+              where: { id: account.id },
+              data: {
+                status: "ACTIVE",
+                emailVerifiedAt: account.emailVerifiedAt ?? new Date(),
+              },
+            });
+          } catch {
+            // Migration 0017 not applied - update status only.
+            await db.account.update({
+              where: { id: account.id },
+              data: { status: "ACTIVE" },
+            });
+          }
           invalidateAccountCache(authUid);
           await audit({
             actorId: account.id,

@@ -48,18 +48,33 @@ export async function POST(req: NextRequest) {
       parsed.data;
 
     // Uniqueness checks - generic error (no enumeration).
+    // Safe lookup: degrades gracefully if migration 0017 not applied.
     const existingEmail = await db.account.findUnique({
       where: { email },
-      select: { id: true, supabaseAuthUid: true, isDeactivated: true },
+      select: { id: true, supabaseAuthUid: true },
     });
     const existingStudentId = await db.account.findUnique({
       where: { studentId },
       select: { id: true },
     });
 
+    // Check deactivation separately (safe - won't crash if column missing).
+    let existingDeactivated = false;
+    if (existingEmail) {
+      try {
+        const row = await db.account.findUnique({
+          where: { email },
+          select: { isDeactivated: true },
+        });
+        existingDeactivated = Boolean(row?.isDeactivated);
+      } catch {
+        // Column missing - treat as not deactivated.
+      }
+    }
+
     // If the existing email account is deactivated, allow re-registration
     // by removing the soft-deleted row (the user explicitly left).
-    if (existingEmail?.isDeactivated) {
+    if (existingEmail && existingDeactivated) {
       await db.account
         .delete({ where: { id: existingEmail.id } })
         .catch(() => {});
@@ -71,7 +86,7 @@ export async function POST(req: NextRequest) {
     if (
       existingEmail &&
       !existingEmail.supabaseAuthUid &&
-      !existingEmail.isDeactivated
+      !existingDeactivated
     ) {
       try {
         const rows = await db.$queryRaw<Array<{ id: string }>>`

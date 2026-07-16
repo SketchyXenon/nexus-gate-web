@@ -76,25 +76,72 @@ export async function getCurrentAccountSupabase(): Promise<ApiAccount | null> {
   }
 
   // Cache miss or expired - fetch from DB.
-  const account = await db.account.findFirst({
-    where: { supabaseAuthUid: session.authUid },
-    select: {
-      id: true,
-      email: true,
-      fullName: true,
-      role: true,
-      status: true,
-      studentId: true,
-      program: true,
-      section: true,
-      organizationName: true,
-      year: true,
-      lastLoginAt: true,
-      isDeactivated: true,
-    },
-  });
+  // Safe: degrades gracefully if migration 0017 (is_deactivated) not applied.
+  let account: {
+    id: string;
+    email: string;
+    fullName: string;
+    role: string;
+    status: string;
+    studentId: number | null;
+    program: string | null;
+    section: string | null;
+    organizationName: string | null;
+    year: number | null;
+    lastLoginAt: Date | null;
+    isDeactivated?: boolean;
+  } | null = null;
+
+  try {
+    account = await db.account.findFirst({
+      where: { supabaseAuthUid: session.authUid },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        role: true,
+        status: true,
+        studentId: true,
+        program: true,
+        section: true,
+        organizationName: true,
+        year: true,
+        lastLoginAt: true,
+        isDeactivated: true,
+      },
+    });
+  } catch (e) {
+    // P2022: is_deactivated column missing (migration 0017 not applied).
+    // Retry without the new column so the session still resolves.
+    if (
+      typeof e === "object" &&
+      e !== null &&
+      "code" in e &&
+      (e as { code: string }).code === "P2022"
+    ) {
+      account = await db.account.findFirst({
+        where: { supabaseAuthUid: session.authUid },
+        select: {
+          id: true,
+          email: true,
+          fullName: true,
+          role: true,
+          status: true,
+          studentId: true,
+          program: true,
+          section: true,
+          organizationName: true,
+          year: true,
+          lastLoginAt: true,
+        },
+      });
+    } else {
+      throw e;
+    }
+  }
 
   // Reject deactivated accounts (soft-deleted). They cannot access any API.
+  // If isDeactivated is undefined (migration not applied), treat as not deactivated.
   const result =
     account && account.status === "ACTIVE" && !account.isDeactivated
       ? {
