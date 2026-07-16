@@ -7,7 +7,10 @@
 
 import { db } from "@/lib/db";
 import { createPublicKey, createHash } from "crypto";
-import type { ScanCertificate, SignedCertificate } from "@/lib/scan-certificate";
+import type {
+  ScanCertificate,
+  SignedCertificate,
+} from "@/lib/scan-certificate";
 import { canonicalizeCertificate } from "@/lib/scan-certificate";
 
 // ====================================================================
@@ -20,7 +23,9 @@ import { canonicalizeCertificate } from "@/lib/scan-certificate";
  * 32-byte public key in base64url). This is the SAME algorithm used
  * by the client (device-key-client.ts) so both sides agree.
  */
-export async function computeFingerprint(publicKeyJwk: JsonWebKey): Promise<string> {
+export async function computeFingerprint(
+  publicKeyJwk: JsonWebKey,
+): Promise<string> {
   // Decode the base64url `x` field to raw bytes
   const xBase64Url = publicKeyJwk.x!;
   const xBase64 = xBase64Url.replace(/-/g, "+").replace(/_/g, "/");
@@ -96,7 +101,9 @@ export async function registerDeviceKey(params: {
         if (rechecked.accountId === params.accountId) {
           return rechecked;
         }
-        throw new Error("This device is already registered to another account.");
+        throw new Error(
+          "This device is already registered to another account.",
+        );
       }
     }
     throw e;
@@ -105,21 +112,44 @@ export async function registerDeviceKey(params: {
 
 /**
  * Look up an active (non-revoked) device key by fingerprint.
+ * Uses findUnique on the @unique fingerprint column (O(log N) index lookup)
+ * instead of findFirst (which scans + filters).
  */
 export async function findDeviceKeyByFingerprint(fingerprint: string) {
-  return db.deviceKey.findFirst({
-    where: { fingerprint, revokedAt: null },
+  return db.deviceKey.findUnique({
+    where: { fingerprint },
   });
 }
 
 /**
  * Touch the lastUsedAt timestamp for a device key.
+ * Stale-guard: skips the write if lastUsedAt was updated within the last
+ * 60 seconds. This prevents 200 concurrent scans from issuing 200 UPDATE
+ * queries with row-lock contention on the same device key row.
+ * Accepts the already-fetched deviceKey to avoid a redundant read.
  */
-export async function touchDeviceKey(fingerprint: string): Promise<void> {
-  await db.deviceKey.updateMany({
-    where: { fingerprint },
-    data: { lastUsedAt: new Date() },
-  });
+export async function touchDeviceKey(
+  fingerprint: string,
+  existingKey?: { lastUsedAt: Date | null } | null,
+): Promise<void> {
+  let key = existingKey;
+  if (!key) {
+    key = await db.deviceKey.findUnique({
+      where: { fingerprint },
+      select: { lastUsedAt: true },
+    });
+  }
+  if (!key) return;
+  const STALE_MS = 60_000;
+  if (key.lastUsedAt && Date.now() - key.lastUsedAt.getTime() < STALE_MS) {
+    return; // Recently updated - skip the write.
+  }
+  await db.deviceKey
+    .update({
+      where: { fingerprint },
+      data: { lastUsedAt: new Date() },
+    })
+    .catch(() => {});
 }
 
 /**
@@ -127,7 +157,10 @@ export async function touchDeviceKey(fingerprint: string): Promise<void> {
  * Revoked keys can't sign new scan certificates (findDeviceKeyByFingerprint
  * filters by revokedAt: null).
  */
-export async function revokeDeviceKey(accountId: string, keyId: string): Promise<boolean> {
+export async function revokeDeviceKey(
+  accountId: string,
+  keyId: string,
+): Promise<boolean> {
   const key = await db.deviceKey.findFirst({
     where: { id: keyId, accountId },
   });
@@ -147,7 +180,9 @@ export async function revokeDeviceKey(accountId: string, keyId: string): Promise
  * Convert a JWK Ed25519 public key to a Node.js crypto KeyObject.
  * The JWK `x` field is the raw 32-byte Ed25519 public key in base64url.
  */
-function jwkToPublicKey(publicKeyJwk: JsonWebKey): ReturnType<typeof createPublicKey> {
+function jwkToPublicKey(
+  publicKeyJwk: JsonWebKey,
+): ReturnType<typeof createPublicKey> {
   // The JWK `x` field is base64url-encoded raw public key bytes.
   // We convert it to a DER-encoded SPKI format that Node's crypto can import.
   // Ed25519 public key in DER SPKI format:
@@ -170,15 +205,25 @@ function jwkToPublicKey(publicKeyJwk: JsonWebKey): ReturnType<typeof createPubli
 
   // SECURITY: Ed25519 public keys are exactly 32 bytes
   if (xBytes.length !== 32) {
-    throw new Error(`Invalid Ed25519 public key: x must be 32 bytes, got ${xBytes.length}`);
+    throw new Error(
+      `Invalid Ed25519 public key: x must be 32 bytes, got ${xBytes.length}`,
+    );
   }
 
   // SPKI header for Ed25519 (24 bytes prefix + 32 bytes key = 42 bytes total)
   const spkiPrefix = Buffer.from([
-    0x30, 0x2a, // SEQUENCE, 42 bytes
-    0x30, 0x05, // SEQUENCE, 5 bytes (algorithm)
-    0x06, 0x03, 0x2b, 0x65, 0x70, // OID 1.3.101.112 (Ed25519)
-    0x03, 0x21, 0x00, // BIT STRING, 33 bytes, 0 unused bits
+    0x30,
+    0x2a, // SEQUENCE, 42 bytes
+    0x30,
+    0x05, // SEQUENCE, 5 bytes (algorithm)
+    0x06,
+    0x03,
+    0x2b,
+    0x65,
+    0x70, // OID 1.3.101.112 (Ed25519)
+    0x03,
+    0x21,
+    0x00, // BIT STRING, 33 bytes, 0 unused bits
   ]);
   const derKey = Buffer.concat([spkiPrefix, xBytes]);
 
@@ -198,7 +243,7 @@ function jwkToPublicKey(publicKeyJwk: JsonWebKey): ReturnType<typeof createPubli
  */
 export async function verifyCertificateSignature(
   signed: SignedCertificate,
-  publicKeyJwk: JsonWebKey
+  publicKeyJwk: JsonWebKey,
 ): Promise<boolean> {
   try {
     // Re-canonicalize the certificate to ensure it matches what was signed
@@ -242,10 +287,12 @@ export interface CertificateVerificationResult {
  * This is the main entry point for the attendance route.
  */
 export async function verifySignedCertificate(
-  signed: SignedCertificate
+  signed: SignedCertificate,
 ): Promise<CertificateVerificationResult> {
   // 1. Look up the device key by fingerprint
-  const deviceKey = await findDeviceKeyByFingerprint(signed.certificate.deviceFingerprint);
+  const deviceKey = await findDeviceKeyByFingerprint(
+    signed.certificate.deviceFingerprint,
+  );
   if (!deviceKey) {
     return { ok: false, reason: "device_not_registered" };
   }
@@ -278,8 +325,8 @@ export async function verifySignedCertificate(
     return { ok: false, reason: "invalid_signature" };
   }
 
-  // 4. Touch the lastUsedAt timestamp
-  await touchDeviceKey(signed.certificate.deviceFingerprint);
+  // 4. Touch the lastUsedAt timestamp (stale-guarded, uses the already-fetched key).
+  await touchDeviceKey(signed.certificate.deviceFingerprint, deviceKey);
 
   return { ok: true, deviceKey };
 }

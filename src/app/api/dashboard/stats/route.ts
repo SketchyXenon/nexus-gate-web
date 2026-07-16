@@ -2,13 +2,17 @@
 export const maxDuration = 10;
 
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { dbRead } from "@/lib/db";
 import { requireAuth } from "@/lib/api";
 import { hasMinimumRole } from "@/lib/rbac";
 
 // GET /api/dashboard/stats
 // Returns time-series + breakdown data for dashboard charts.
 // Organizer sees only their own events; admin sees all.
+//
+// Uses SQL GROUP BY for aggregations instead of fetching raw rows into
+// memory. This keeps the response time constant regardless of scan volume
+// (previously fetched up to 50,000 rows and bucketed in JS).
 //
 // Response:
 //   scansByDay: [{ date: "YYYY-MM-DD", count: number }] — last 30 days
@@ -21,53 +25,120 @@ export async function GET(_req: NextRequest) {
   const { account } = res;
 
   const isAdmin = hasMinimumRole(account.role, "ADMIN");
-  const eventWhere = isAdmin ? {} : { ownerId: account.id };
-  const attendanceWhere = isAdmin ? {} : { event: { ownerId: account.id } };
 
   // Last 30 days boundary.
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
   thirtyDaysAgo.setHours(0, 0, 0, 0);
 
-  // Run all queries in parallel. recentAttendance and hourCounts previously
-  // did two overlapping findMany on the same 30-day window; merged into one
-  // query (recentAttendance) and derived hourCounts from it below.
-  const [recentAttendance, topEvents, sourceCounts] =
-    await Promise.all([
-      // Scans in the last 30 days (for both the time-series and hour charts).
-      // Capped at 50000 to prevent OOM on very high-traffic organizers.
-      db.eventAttendance.findMany({
-        where: {
-          ...attendanceWhere,
-          scannedAt: { gte: thirtyDaysAgo },
-        },
-        select: { scannedAt: true, source: true },
-        orderBy: { scannedAt: "asc" },
-        take: 50_000,
-      }),
+  // For organizers, filter by their owned events. For admins, no filter.
+  // The raw SQL uses a JOIN to event_attendance -> events for the organizer
+  // scope, or a direct scan for admins.
+  if (isAdmin) {
+    return NextResponse.json(await buildAdminStats(thirtyDaysAgo), {
+      headers: { "Cache-Control": "private, no-cache" },
+    });
+  }
+  return NextResponse.json(
+    await buildOrganizerStats(account.id, thirtyDaysAgo),
+    {
+      headers: { "Cache-Control": "private, no-cache" },
+    },
+  );
+}
 
-      // Top events by attendance count.
-      db.event.findMany({
-        where: { ...eventWhere, status: "active" },
-        select: {
-          id: true,
-          title: true,
-          scheduledAt: true,
-          _count: { select: { attendances: true } },
-        },
-        orderBy: { attendances: { _count: "desc" } },
-        take: 10,
-      }),
+// Admin stats: no event-owner filter.
+// Uses dbRead (read replica if configured) for the heavy aggregate queries.
+async function buildAdminStats(thirtyDaysAgo: Date) {
+  const [dayRows, hourRows, sourceRows, topEvents] = await Promise.all([
+    // Scans per day (last 30 days) via SQL GROUP BY.
+    dbRead.$queryRaw<Array<{ day: string; count: bigint }>>`
+      SELECT DATE(scanned_at) AS day, COUNT(*) AS count
+      FROM event_attendance
+      WHERE scanned_at >= ${thirtyDaysAgo}
+      GROUP BY DATE(scanned_at)
+    `,
+    // Scans per hour-of-day (last 30 days) via SQL EXTRACT.
+    dbRead.$queryRaw<Array<{ hour: number; count: bigint }>>`
+      SELECT EXTRACT(HOUR FROM scanned_at)::int AS hour, COUNT(*) AS count
+      FROM event_attendance
+      WHERE scanned_at >= ${thirtyDaysAgo}
+      GROUP BY EXTRACT(HOUR FROM scanned_at)
+    `,
+    // Source breakdown.
+    dbRead.eventAttendance.groupBy({
+      by: ["source"],
+      _count: true,
+    }),
+    // Top events by attendance count.
+    dbRead.event.findMany({
+      where: { status: "active" },
+      select: {
+        id: true,
+        title: true,
+        scheduledAt: true,
+        _count: { select: { attendances: true } },
+      },
+      orderBy: { attendances: { _count: "desc" } },
+      take: 10,
+    }),
+  ]);
 
-      // Source breakdown (qr vs override).
-      db.eventAttendance.groupBy({
-        by: ["source"],
-        where: attendanceWhere,
-        _count: true,
-      }),
-    ]);
+  return formatStats(dayRows, hourRows, sourceRows, topEvents);
+}
 
-  // Build scansByDay: bucket by YYYY-MM-DD.
+// Organizer stats: scoped to their owned events.
+// Uses dbRead (read replica if configured) for the heavy aggregate queries.
+async function buildOrganizerStats(ownerId: string, thirtyDaysAgo: Date) {
+  const [dayRows, hourRows, sourceRows, topEvents] = await Promise.all([
+    dbRead.$queryRaw<Array<{ day: string; count: bigint }>>`
+      SELECT DATE(ea.scanned_at) AS day, COUNT(*) AS count
+      FROM event_attendance ea
+      JOIN events e ON e.id = ea.event_id
+      WHERE ea.scanned_at >= ${thirtyDaysAgo} AND e.owner_id = ${ownerId}
+      GROUP BY DATE(ea.scanned_at)
+    `,
+    dbRead.$queryRaw<Array<{ hour: number; count: bigint }>>`
+      SELECT EXTRACT(HOUR FROM ea.scanned_at)::int AS hour, COUNT(*) AS count
+      FROM event_attendance ea
+      JOIN events e ON e.id = ea.event_id
+      WHERE ea.scanned_at >= ${thirtyDaysAgo} AND e.owner_id = ${ownerId}
+      GROUP BY EXTRACT(HOUR FROM ea.scanned_at)
+    `,
+    dbRead.eventAttendance.groupBy({
+      by: ["source"],
+      where: { event: { ownerId } },
+      _count: true,
+    }),
+    dbRead.event.findMany({
+      where: { status: "active", ownerId },
+      select: {
+        id: true,
+        title: true,
+        scheduledAt: true,
+        _count: { select: { attendances: true } },
+      },
+      orderBy: { attendances: { _count: "desc" } },
+      take: 10,
+    }),
+  ]);
+
+  return formatStats(dayRows, hourRows, sourceRows, topEvents);
+}
+
+// Format the raw SQL results into the API response shape.
+function formatStats(
+  dayRows: Array<{ day: string; count: bigint }>,
+  hourRows: Array<{ hour: number; count: bigint }>,
+  sourceRows: Array<{ source: string; _count: number }>,
+  topEvents: Array<{
+    id: number;
+    title: string;
+    scheduledAt: Date;
+    _count: { attendances: number };
+  }>,
+) {
+  // Build scansByDay: fill all 30 days (0 for days with no scans).
   const dayMap = new Map<string, number>();
   for (let i = 0; i < 30; i++) {
     const d = new Date();
@@ -75,9 +146,9 @@ export async function GET(_req: NextRequest) {
     d.setHours(0, 0, 0, 0);
     dayMap.set(d.toISOString().slice(0, 10), 0);
   }
-  for (const a of recentAttendance) {
-    const key = a.scannedAt.toISOString().slice(0, 10);
-    if (dayMap.has(key)) dayMap.set(key, (dayMap.get(key) ?? 0) + 1);
+  for (const row of dayRows) {
+    const key = String(row.day).slice(0, 10);
+    if (dayMap.has(key)) dayMap.set(key, Number(row.count));
   }
   const scansByDay = Array.from(dayMap.entries())
     .sort(([a], [b]) => (a < b ? -1 : 1))
@@ -85,20 +156,22 @@ export async function GET(_req: NextRequest) {
 
   // Build scansByHour: 24 buckets.
   const hourBuckets = new Array(24).fill(0);
-  // Derive hour-of-day distribution from recentAttendance (no separate query).
-  for (const a of recentAttendance) {
-    hourBuckets[a.scannedAt.getHours()]++;
+  for (const row of hourRows) {
+    hourBuckets[row.hour] = Number(row.count);
   }
   const scansByHour = hourBuckets.map((count, hour) => ({ hour, count }));
 
   // Build scansBySource.
-  const scansBySource: { qr: number; override: number } = { qr: 0, override: 0 };
-  for (const s of sourceCounts) {
+  const scansBySource: { qr: number; override: number } = {
+    qr: 0,
+    override: 0,
+  };
+  for (const s of sourceRows) {
     if (s.source === "qr") scansBySource.qr = s._count;
     else if (s.source === "override") scansBySource.override = s._count;
   }
 
-  const statsRes = NextResponse.json({
+  return {
     scansByDay,
     topEvents: topEvents.map((e) => ({
       id: e.id,
@@ -108,10 +181,5 @@ export async function GET(_req: NextRequest) {
     })),
     scansBySource,
     scansByHour,
-  });
-  statsRes.headers.set(
-    "Cache-Control",
-    "private, no-cache",
-  );
-  return statsRes;
+  };
 }

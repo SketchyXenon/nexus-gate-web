@@ -19,6 +19,7 @@ const SCHEMA_CACHE_KEY = "v15-deactivation-email-verify-2026-07-16";
 const globalWithKey = globalThis as unknown as {
   __prismaCacheKey?: string;
   prisma?: PrismaClient;
+  prismaRead?: PrismaClient;
 };
 
 // If the cache key doesn't match (or there's no cached client),
@@ -34,3 +35,18 @@ if (
 }
 
 export const db = globalWithKey.prisma!;
+
+// ---- Optional read replica (for dashboard/stats heavy reads) ----
+// If DATABASE_REPLICA_URL is set, routes read-heavy queries through a
+// separate PrismaClient connected to the replica. Falls back to the
+// primary db if not configured. Set DATABASE_REPLICA_URL in your env
+// to a Supabase read replica connection string to enable.
+const REPLICA_URL = process.env.DATABASE_REPLICA_URL;
+if (REPLICA_URL && !globalWithKey.prismaRead) {
+  globalWithKey.prismaRead = new PrismaClient({
+    log: logConfig as any,
+    datasources: { db: { url: REPLICA_URL } },
+  });
+}
+// Export dbRead: the replica client if configured, else the primary db.
+export const dbRead = globalWithKey.prismaRead ?? db;

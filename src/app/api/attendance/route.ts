@@ -150,7 +150,10 @@ export async function POST(req: NextRequest) {
 
         // Step 7: validate event match (certificate eventId = token eventId).
         if (timeOutTokenValidation.eventId !== signed.certificate.eventId) {
-          return badRequest("This token does not match the event", "EVENT_MISMATCH");
+          return badRequest(
+            "This token does not match the event",
+            "EVENT_MISMATCH",
+          );
         }
         const timeOutEventMatch = validateCertificateEventMatch(
           signed.certificate,
@@ -186,7 +189,8 @@ export async function POST(req: NextRequest) {
         }
 
         // Offline grace: the scan must be synced within 15 minutes.
-        const timeOutScanAgeMs = Date.now() - new Date(signed.certificate.scannedAt).getTime();
+        const timeOutScanAgeMs =
+          Date.now() - new Date(signed.certificate.scannedAt).getTime();
         const MAX_OFFLINE_GRACE_MS = 15 * 60 * 1000;
         if (timeOutScanAgeMs > MAX_OFFLINE_GRACE_MS) {
           return forbidden(
@@ -216,7 +220,8 @@ export async function POST(req: NextRequest) {
           ok: true,
           action: "time_out",
           timeOutAt: updated.timeOutAt,
-          message: "Time-out recorded. You're marked as checked out for this event.",
+          message:
+            "Time-out recorded. You're marked as checked out for this event.",
         });
       }
     }
@@ -231,6 +236,16 @@ export async function POST(req: NextRequest) {
         "This QR was already scanned. You are already marked present for this event.",
     });
   }
+
+  // ---- Fetch the event BEFORE expensive crypto (fail fast on 404) ----
+  // Moving this before verifySignedCertificate saves an Ed25519 verify +
+  // device key DB lookup when the event doesn't exist or is inactive.
+  const event = await db.event.findUnique({
+    where: { id: signed.certificate.eventId },
+  });
+  if (!event) return notFound("Event not found");
+  if (event.status !== "active")
+    return forbidden("This event is no longer active");
 
   // ---- Verify the Ed25519 signature ----
   const sigResult = await verifySignedCertificate(signed);
@@ -255,14 +270,6 @@ export async function POST(req: NextRequest) {
       tsResult.reason?.toUpperCase(),
     );
   }
-
-  // ---- Fetch the event ----
-  const event = await db.event.findUnique({
-    where: { id: signed.certificate.eventId },
-  });
-  if (!event) return notFound("Event not found");
-  if (event.status !== "active")
-    return forbidden("This event is no longer active");
 
   // ---- Validate the token HMAC (against the certificate's scannedAt) ----
   // This is the KEY to offline resilience: we validate against the time
@@ -389,21 +396,11 @@ export async function POST(req: NextRequest) {
   }
 
   // ---- Derive the idempotency key (deterministic, tamper-proof) ----
+  // Stored for audit/replay detection, but NOT pre-checked via a separate
+  // SELECT. The unique constraint on (eventId, accountId) already catches
+  // duplicates atomically at the insert below. Removing the pre-check
+  // saves 1 DB round-trip per scan (the most common hot-path optimization).
   const idempotencyKey = deriveIdempotencyKey(signed.certificate);
-
-  // ---- Check idempotency (same scan already submitted?) ----
-  const existingByIdempotency = await db.eventAttendance.findUnique({
-    where: { idempotencyKey },
-  });
-  if (existingByIdempotency) {
-    return NextResponse.json({
-      ok: true,
-      alreadyPresent: true,
-      action: "already_scanned",
-      scannedAt: existingByIdempotency.scannedAt,
-      message: "This scan was already recorded.",
-    });
-  }
 
   // ---- ATOMIC ONE-ATTEMPT INSERT ----
   // The unique constraint on (eventId, accountId) guarantees that even
@@ -449,8 +446,12 @@ export async function POST(req: NextRequest) {
       source: "qr",
     }).catch(() => {});
 
-    // ---- Audit log ----
-    await audit({
+    // ---- Audit log (fire-and-forget: don't block the response) ----
+    // The audit write is non-critical (append-only log). Firing it without
+    // await lets the response return immediately while the write completes
+    // in the background. The audit() function has its own try/catch so a
+    // failure won't crash the serverless instance.
+    audit({
       actorId: account.id,
       action: "attendance.timein",
       targetType: "EventAttendance",
@@ -463,7 +464,7 @@ export async function POST(req: NextRequest) {
         driftMs: tsResult.driftMs,
       },
       req,
-    });
+    }).catch(() => {});
 
     return NextResponse.json(
       {

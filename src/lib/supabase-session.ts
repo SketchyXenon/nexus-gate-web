@@ -1,6 +1,10 @@
 // Nexus Gate - Supabase Auth session layer.
-// Reads the session cookie via @supabase/ssr, resolves the Supabase
-// user, then loads the linked accounts row.
+// Resolves the current user from the Supabase session cookie.
+//
+// Primary path: local JWT validation via jose (0ms network, just crypto).
+// Fallback path: supabase.auth.getUser() (50-150ms network round-trip).
+// The JWT path is used when SUPABASE_JWT_SECRET is configured; otherwise
+// the getUser() path is used.
 
 import {
   createSupabaseServerClient,
@@ -8,53 +12,31 @@ import {
 } from "@/lib/supabase-server";
 import { db } from "@/lib/db";
 import type { ApiAccount } from "@/lib/api";
+import { getJwtSession, isJwtValidationAvailable } from "@/lib/jwt-session";
+import { getAccountCache, setAccountCache } from "@/lib/account-cache";
 
 export interface SupabaseSession {
   authUid: string;
   email: string;
 }
 
-// ---- Account cache (30s TTL, bounded LRU) ----
-// Caches the account lookup by supabaseAuthUid to avoid a DB query on
-// every API request. The cache is in-memory (per serverless instance).
-// Status changes (suspend/activate) take effect within 30s.
-// Bounded to ACCOUNT_CACHE_MAX entries (LRU eviction) to prevent unbounded
-// memory growth from attacker-supplied fake session tokens.
-const ACCOUNT_CACHE_TTL_MS = 30_000;
-const ACCOUNT_CACHE_MAX = 2_000;
-interface AccountCacheEntry {
-  account: ApiAccount | null;
-  expiresAt: number;
-}
-const accountCache = new Map<string, AccountCacheEntry>();
-
 // Clear the cache for a specific user (called when account is updated).
 export function invalidateAccountCache(authUid: string): void {
-  accountCache.delete(authUid);
+  // Delegate to the unified cache module (handles both Redis + in-memory).
+  void setAccountCache(authUid, null, 0).catch(() => {});
 }
 
-// Evict expired entries and enforce the max-size bound. Called on every
-// cache write. Uses Map insertion-order iteration for LRU eviction (oldest
-// entries are evicted first - Map preserves insertion order in JS).
-function evictAccountCache(): void {
-  // First pass: drop expired entries.
-  const now = Date.now();
-  for (const [key, entry] of accountCache) {
-    if (entry.expiresAt <= now) {
-      accountCache.delete(key);
-    }
-  }
-  // Second pass: if still over the limit, evict oldest by insertion order.
-  while (accountCache.size > ACCOUNT_CACHE_MAX) {
-    const oldest = accountCache.keys().next().value;
-    if (oldest === undefined) break;
-    accountCache.delete(oldest);
-  }
-}
-
-// Read the Supabase session from cookies. Returns null if no session
-// or if Supabase isn't configured.
+// Read the session. Tries local JWT validation first (fast), falls back
+// to the Supabase network call (slow but always works).
 export async function getSupabaseSession(): Promise<SupabaseSession | null> {
+  // Fast path: local JWT validation (no network round-trip).
+  if (isJwtValidationAvailable()) {
+    const jwtSession = await getJwtSession();
+    if (jwtSession) return jwtSession;
+    // JWT validation failed (expired/invalid) - fall through to getUser()
+    // which will refresh the session if possible.
+  }
+
   if (!isSupabaseConfigured()) return null;
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.auth.getUser();
@@ -62,20 +44,17 @@ export async function getSupabaseSession(): Promise<SupabaseSession | null> {
   return { authUid: data.user.id, email: data.user.email ?? "" };
 }
 
-// Resolve the current account from the Supabase session.
-// Uses a 30s in-memory cache to avoid a DB query on every request.
-// Status changes (suspend/deactivate) take effect within 30s.
+// Resolve the current account from the session.
+// Uses a two-tier cache (Redis + in-memory) to avoid DB queries.
 export async function getCurrentAccountSupabase(): Promise<ApiAccount | null> {
   const session = await getSupabaseSession();
   if (!session) return null;
 
-  // Check cache first.
-  const cached = accountCache.get(session.authUid);
-  if (cached && Date.now() < cached.expiresAt) {
-    return cached.account;
-  }
+  // Check the unified cache (Redis first, then in-memory).
+  const cached = await getAccountCache(session.authUid);
+  if (cached !== undefined) return cached;
 
-  // Cache miss or expired - fetch from DB.
+  // Cache miss - fetch from DB.
   // Safe: degrades gracefully if migration 0017 (is_deactivated) not applied.
   let account: {
     id: string;
@@ -112,7 +91,6 @@ export async function getCurrentAccountSupabase(): Promise<ApiAccount | null> {
     });
   } catch (e) {
     // P2022: is_deactivated column missing (migration 0017 not applied).
-    // Retry without the new column so the session still resolves.
     if (
       typeof e === "object" &&
       e !== null &&
@@ -140,8 +118,7 @@ export async function getCurrentAccountSupabase(): Promise<ApiAccount | null> {
     }
   }
 
-  // Reject deactivated accounts (soft-deleted). They cannot access any API.
-  // If isDeactivated is undefined (migration not applied), treat as not deactivated.
+  // Reject deactivated accounts (soft-deleted).
   const result =
     account && account.status === "ACTIVE" && !account.isDeactivated
       ? {
@@ -154,11 +131,7 @@ export async function getCurrentAccountSupabase(): Promise<ApiAccount | null> {
       : null;
 
   // Cache the result (including nulls, so we don't re-query for invalid accounts).
-  evictAccountCache();
-  accountCache.set(session.authUid, {
-    account: result,
-    expiresAt: Date.now() + ACCOUNT_CACHE_TTL_MS,
-  });
+  await setAccountCache(session.authUid, result, 30_000).catch(() => {});
 
   return result;
 }
