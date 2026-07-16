@@ -9,7 +9,6 @@ import {
 } from "@/lib/supabase-server";
 import { db } from "@/lib/db";
 import type { ApiAccount } from "@/lib/api";
-import { isDevAuthMode, getDevSessionAccountId } from "@/lib/dev-auth";
 
 export interface SupabaseSession {
   authUid: string;

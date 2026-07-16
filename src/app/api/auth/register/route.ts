@@ -17,7 +17,6 @@ import {
   createSupabaseAdminClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
-import { isDevAuthMode } from "@/lib/dev-auth";
 import { hashPassword } from "@/lib/auth";
 import { sendWelcomeEmail } from "@/lib/email";
 

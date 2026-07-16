@@ -28,7 +28,6 @@ import {
 } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import { verifyPassword } from "@/lib/auth";
-import { isDevAuthMode, clearDevSessionCookie } from "@/lib/dev-auth";
 import {
   createSupabaseServerClient,
   isSupabaseConfigured,

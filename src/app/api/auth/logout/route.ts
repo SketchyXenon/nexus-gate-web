@@ -5,7 +5,6 @@ import {
   createSupabaseServerClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
-import { isDevAuthMode, clearDevSessionCookie } from "@/lib/dev-auth";
 
 // POST /api/auth/logout
 // Signs out of Supabase Auth (production) or clears the dev session cookie.

@@ -19,7 +19,6 @@ import {
   createSupabaseAdminClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
-import { isDevAuthMode, setDevSessionCookie } from "@/lib/dev-auth";
 import { verifyPassword } from "@/lib/auth";
 import { invalidateAccountCache } from "@/lib/supabase-session";
 

@@ -9,7 +9,6 @@ import {
 } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { invalidateAccountCache } from "@/lib/supabase-session";
-import { isDevAuthMode } from "@/lib/dev-auth";
 
 // ====================================================================
 // GET /api/auth/callback?code=<pkce_code>&type=<magiclink|recovery|...>
