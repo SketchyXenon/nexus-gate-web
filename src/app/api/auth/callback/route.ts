@@ -124,6 +124,7 @@ export async function GET(req: NextRequest) {
   // On signup/magiclink confirmation: activate the account.
   // This is the single point where Supabase's email confirmation
   // transitions our account from PENDING_VERIFICATION to ACTIVE.
+  let wasSignupConfirmation = false;
   if (authUid && resolvedType !== "recovery") {
     try {
       // Safe lookup: degrades if migration 0017 not applied.
@@ -135,6 +136,7 @@ export async function GET(req: NextRequest) {
         // magic link and clicking it (the callback would otherwise flip
         // any non-deactivated account to ACTIVE).
         if (account.status === "PENDING_VERIFICATION") {
+          wasSignupConfirmation = true;
           // Safe update: sets emailVerifiedAt only if the column exists.
           try {
             await db.account.update({
@@ -160,6 +162,13 @@ export async function GET(req: NextRequest) {
             metadata: { email: account.email, method: "supabase_callback" },
             req,
           }).catch(() => {});
+
+          // SECURITY: Sign out the session established by exchangeCodeForSession.
+          // For signup confirmation, the user verified their email but hasn't
+          // authenticated with a password. We want them to explicitly sign in.
+          // For magic-link sign-in (account was already ACTIVE), the session IS
+          // the authentication, so we keep it.
+          await supabase.auth.signOut().catch(() => {});
         }
       }
     } catch (e) {
@@ -169,7 +178,7 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json(
-    { ok: true, type: resolvedType },
+    { ok: true, type: resolvedType, wasSignupConfirmation },
     { headers: NO_STORE },
   );
 }

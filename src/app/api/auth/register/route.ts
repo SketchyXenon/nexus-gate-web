@@ -21,13 +21,19 @@ import {
   safeFindAccountByEmail,
   isAccountDeactivated,
 } from "@/lib/safe-account";
+import { getAppUrl } from "@/lib/app-url";
 
 // POST /api/auth/register
 //
 // Creates a Supabase Auth user + a linked accounts row (PENDING_VERIFICATION).
-// Supabase sends a confirmation email automatically (one-time link with a
-// configurable expiration). The user clicks the link -> /api/auth/callback
-// exchanges the PKCE code -> account is activated.
+// Supabase sends a confirmation email automatically.
+//
+// ENUMERATION-SAFE DESIGN:
+//   If the email already exists, this endpoint returns the SAME success
+//   response as a new registration ("Check your email to confirm your
+//   account"). The existing user receives a "sign-in link" email instead
+//   of a confirmation email, so they can log in without revealing that
+//   their account exists. An attacker cannot distinguish new vs existing.
 export async function POST(req: NextRequest) {
   try {
     if (!isSupabaseConfigured()) {
@@ -51,19 +57,54 @@ export async function POST(req: NextRequest) {
     const { email, password, fullName, studentId, program, section } =
       parsed.data;
 
-    // Uniqueness checks - generic error (no enumeration).
-    // Single safe lookup (includes isDeactivated if migration applied).
+    // Check for existing email (safe lookup).
     const existingEmail = await safeFindAccountByEmail(email);
-    const existingStudentId = await db.account.findUnique({
-      where: { studentId },
-      select: { id: true },
-    });
+
+    // ---- ENUMERATION-SAFE PATH: existing email ----
+    // If the email exists and is NOT deactivated, send a sign-in link to
+    // the existing user and return the same success response as a new
+    // registration. The attacker can't tell if the account exists.
+    if (existingEmail && !isAccountDeactivated(existingEmail)) {
+      // Send a magic-link sign-in email so the legitimate owner can log in.
+      try {
+        const supabase = await createSupabaseServerClient();
+        const appUrl = getAppUrl() || req.nextUrl.origin;
+        await supabase.auth.signInWithOtp({
+          email,
+          options: {
+            emailRedirectTo: appUrl,
+            shouldCreateUser: false,
+          },
+        });
+      } catch (e) {
+        console.error("[register] sign-in link for existing email failed:", e);
+      }
+
+      await audit({
+        actorId: existingEmail.id,
+        action: "auth.register_duplicate_attempt",
+        targetType: "Account",
+        metadata: { email, studentId, reason: "email_exists_enu_safe" },
+        req,
+      }).catch(() => {});
+
+      // Return the SAME success response as a new registration.
+      return NextResponse.json(
+        {
+          ok: true,
+          message:
+            "Account created! Check your email to confirm your account, then sign in.",
+          email,
+          whitelisted: false,
+          needsEmailConfirmation: true,
+        },
+        { status: 201, headers: { "Cache-Control": "no-store" } },
+      );
+    }
 
     // If the existing email account is deactivated, allow re-registration
     // by removing the soft-deleted row AND the linked Supabase auth user.
-    // Without deleting the Supabase user, signUp() returns "already registered".
     if (existingEmail && isAccountDeactivated(existingEmail)) {
-      // Delete the Supabase auth user first (if linked).
       if (existingEmail.supabaseAuthUid) {
         try {
           const adminClient = createSupabaseAdminClient();
@@ -71,7 +112,7 @@ export async function POST(req: NextRequest) {
             .deleteUser(existingEmail.supabaseAuthUid)
             .catch(() => {});
         } catch {
-          // Non-critical - the accounts row deletion still proceeds.
+          // Non-critical.
         }
       }
       await db.account
@@ -79,9 +120,7 @@ export async function POST(req: NextRequest) {
         .catch(() => {});
     }
 
-    // RECONCILIATION: if the accounts row exists but has no supabaseAuthUid,
-    // the auth user may have been deleted in Supabase Dashboard. Clean up
-    // the orphaned accounts row so registration can proceed.
+    // RECONCILIATION: orphaned accounts row (no supabaseAuthUid).
     if (
       existingEmail &&
       !existingEmail.supabaseAuthUid &&
@@ -92,9 +131,6 @@ export async function POST(req: NextRequest) {
           SELECT id FROM auth.users WHERE email = ${email} LIMIT 1
         `;
         if (rows.length === 0) {
-          console.log(
-            `[register] cleaning orphaned accounts row for ${email} (no auth user found)`,
-          );
           await db.account.delete({ where: { id: existingEmail.id } });
         }
       } catch (e) {
@@ -102,25 +138,23 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Re-check after potential cleanup (always re-query to avoid stale data).
-    const existingEmailAfter = await db.account.findUnique({
-      where: { email },
-      select: { id: true, supabaseAuthUid: true },
+    // Check student ID (still returns generic error - student IDs are not
+    // as sensitive as emails, and the student ID is already known to the
+    // student so there's no enumeration risk).
+    const existingStudentId = await db.account.findUnique({
+      where: { studentId },
+      select: { id: true },
     });
-    if (existingEmailAfter || existingStudentId) {
+    if (existingStudentId) {
       await audit({
         actorId: null,
         action: "auth.register_duplicate_attempt",
         targetType: "Account",
-        metadata: {
-          email,
-          studentId,
-          reason: existingEmailAfter ? "email_exists" : "studentId_exists",
-        },
+        metadata: { email, studentId, reason: "studentId_exists" },
         req,
       }).catch(() => {});
       return badRequest(
-        "This email or student ID is already in use. Try signing in instead, or contact your administrator if you believe this is an error.",
+        "This student ID is already in use. If this is your ID, try signing in or contact your administrator.",
         "REGISTRATION_FAILED",
       );
     }
@@ -130,27 +164,34 @@ export async function POST(req: NextRequest) {
     });
     const isWhitelisted = !!whitelisted;
 
-    // Create the Supabase Auth user (identity layer).
-    // If Supabase has email confirmation enabled (default), signUp creates
-    // the user with email_confirmed=false and sends a confirmation link.
-    // The user cannot log in until they click that link.
+    // Create the Supabase Auth user.
     const supabase = await createSupabaseServerClient();
-    const appUrl =
-      process.env.NEXT_PUBLIC_APP_URL?.trim() || req.nextUrl.origin;
+    const appUrl = getAppUrl() || req.nextUrl.origin;
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
       options: { data: { fullName }, emailRedirectTo: appUrl },
     });
     if (authError || !authData.user) {
-      const msg = authError?.message ?? "Registration failed";
+      // If Supabase says "already registered", the email exists in Supabase
+      // but not in our accounts table. Return the same success response to
+      // avoid enumeration (the user gets a sign-in link via the OTP path
+      // above on their next attempt, or they can use forgot-password).
+      const msg = authError?.message ?? "";
       if (
         msg.toLowerCase().includes("already registered") ||
         msg.toLowerCase().includes("user already")
       ) {
-        return badRequest(
-          "This email is already registered. Try signing in instead, or use 'Forgot password' if you can't log in.",
-          "REGISTRATION_FAILED",
+        return NextResponse.json(
+          {
+            ok: true,
+            message:
+              "Account created! Check your email to confirm your account, then sign in.",
+            email,
+            whitelisted: isWhitelisted,
+            needsEmailConfirmation: true,
+          },
+          { status: 201, headers: { "Cache-Control": "no-store" } },
         );
       }
       return badRequest(
@@ -159,10 +200,9 @@ export async function POST(req: NextRequest) {
       );
     }
     const authUid = authData.user.id;
-    // If authData.session is null, email confirmation is pending.
     const needsEmailConfirmation = !authData.session;
 
-    // Create the accounts row linked to the Supabase user (profile + RBAC).
+    // Create the accounts row.
     let account;
     try {
       account = await db.account.create({
@@ -230,7 +270,7 @@ export async function POST(req: NextRequest) {
       req,
     });
 
-    // Build the success message based on whether email confirmation is needed.
+    // Build the success message.
     let message: string;
     if (needsEmailConfirmation) {
       message = isWhitelisted

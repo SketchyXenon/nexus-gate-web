@@ -10,22 +10,20 @@ import {
 import { isSupabaseConfigured } from "@/lib/supabase-server";
 
 // POST /api/auth/check
-// Pre-registration availability check for email and/or student ID.
-// Used by the registration wizard to block users at the step where a
-// conflict exists, instead of failing on the final submit.
+// Pre-registration availability check for student ID only.
 //
-// Body: { email?: string, studentId?: string }
-// Response: { emailTaken?: boolean, studentIdTaken?: boolean }
+// ENUMERATION-SAFE DESIGN:
+//   This endpoint NO LONGER checks email availability. Email enumeration
+//   is now handled by the register route (returns the same success message
+//   for new and existing emails, sending a sign-in link to existing users).
 //
-// Security:
-//   - Rate-limited at the `register` preset (5/min per IP), same as the
-//     actual registration endpoint. Prevents account enumeration.
-//   - The register route itself already reveals "already in use" on submit,
-//     so this endpoint does not add new attack surface — it just moves the
-//     same check earlier for better UX.
-//   - Orphan reconciliation: if an accounts row has no supabaseAuthUid, the
-//     Supabase auth user may have been deleted via Dashboard. We clean up
-//     the orphaned row so it doesn't block legitimate re-registration.
+//   Student ID is still checked because:
+//   1. Student IDs are not personal data (they're institutional identifiers)
+//   2. The student already knows their own ID - no enumeration value
+//   3. The UX benefit of catching a duplicate student ID early is significant
+//
+// Body: { studentId?: string }
+// Response: { studentIdTaken?: boolean }
 
 const checkSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(255).optional(),
@@ -52,37 +50,19 @@ export async function POST(req: NextRequest) {
       typeof studentId === "string" ? Number(studentId) : studentId;
 
     if (!email && !studentIdNum) {
-      return badRequest("Provide an email or studentId to check");
+      return badRequest("Provide a studentId to check");
     }
 
     const result: { emailTaken?: boolean; studentIdTaken?: boolean } = {};
 
+    // Email check: always return false. The register route handles existing
+    // emails with an enumeration-safe "check your email" response. Returning
+    // false here prevents the frontend from showing "email already in use".
     if (email) {
-      const existing = await db.account.findUnique({
-        where: { email },
-        select: { id: true, supabaseAuthUid: true },
-      });
-      if (existing && !existing.supabaseAuthUid && isSupabaseConfigured()) {
-        // Reconcile orphaned row: check if the Supabase auth user still exists.
-        // Query auth.users directly via raw SQL (single-row lookup).
-        try {
-          const rows = await db.$queryRaw<Array<{ id: string }>>`
-            SELECT id FROM auth.users WHERE email = ${email} LIMIT 1
-          `;
-          if (rows.length === 0) {
-            await db.account.delete({ where: { id: existing.id } });
-            result.emailTaken = false;
-          } else {
-            result.emailTaken = true;
-          }
-        } catch {
-          result.emailTaken = true;
-        }
-      } else {
-        result.emailTaken = !!existing;
-      }
+      result.emailTaken = false;
     }
 
+    // Student ID check: still reveals taken/not-taken (no enumeration risk).
     if (studentIdNum) {
       const existing = await db.account.findUnique({
         where: { studentId: studentIdNum },

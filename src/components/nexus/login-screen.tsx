@@ -132,21 +132,35 @@ export function LoginScreen({
     const refreshToken = hashParams.get("refresh_token");
     if (!code && !accessToken) return;
 
-    const finalizeAuth = async (resolvedType?: string) => {
+    const finalizeAuth = async (
+      resolvedType?: string,
+      wasSignupConfirmation?: boolean,
+    ) => {
       window.history.replaceState({}, "", window.location.pathname);
-      // Use the resolved type from the callback response (AMR-based) if
-      // available; fall back to the URL type param.
       const effectiveType = resolvedType || type;
       if (effectiveType === "recovery") {
-        // Set the recovery-pending flag so page.tsx renders LoginScreen
-        // (not AppShell) even if useMe() succeeds with the recovery session.
+        // Password reset flow: show the new-password form.
         sessionStorage.setItem(RECOVERY_PENDING_KEY, "1");
         setResetToken("supabase-recovery");
         setMode("reset");
-      } else {
-        // Signup/magiclink confirmation: show the success dialog.
-        // The callback already activated the account server-side.
+      } else if (wasSignupConfirmation) {
+        // Signup email confirmation: the callback signed out the Supabase
+        // session (user verified email but hasn't authenticated). Show the
+        // success dialog with a "Sign in" button. The user must explicitly
+        // log in with their password.
+        // Clear any stale session cache so useMe() returns null.
+        try {
+          const { createSupabaseBrowserClient } =
+            await import("@/lib/supabase-browser");
+          await createSupabaseBrowserClient().auth.signOut();
+        } catch {
+          // Non-critical.
+        }
         setMode("verify-success");
+      } else {
+        // Magic-link sign-in (existing user): session is established, reload
+        // to the dashboard.
+        window.location.reload();
       }
     };
 
@@ -165,7 +179,11 @@ export function LoginScreen({
             const body = await res.json().catch(() => ({}));
             throw new Error(body.error || "Code exchange failed");
           }
-          return res.json() as Promise<{ ok: boolean; type: string }>;
+          return res.json() as Promise<{
+            ok: boolean;
+            type: string;
+            wasSignupConfirmation?: boolean;
+          }>;
         })
       : accessToken && refreshToken
         ? import("@/lib/supabase-browser").then(
@@ -179,7 +197,7 @@ export function LoginScreen({
 
     codeExchangePromise
       .then(async (result) => {
-        await finalizeAuth(result?.type);
+        await finalizeAuth(result?.type, result?.wasSignupConfirmation);
       })
       .catch((e) => {
         // Code exchange failed (expired, already used, cross-device PKCE mismatch).
@@ -291,15 +309,10 @@ function AuthScreen({
   }, [email, studentId, mode]);
 
   const availability = useCheckAvailability(debouncedEmail, debouncedStudentId);
-  const emailTaken =
-    availability.data?.emailTaken === true && !availability.isError;
   const studentIdTaken =
     availability.data?.studentIdTaken === true && !availability.isError;
-  const emailChecking = !!debouncedEmail && availability.isLoading;
   const studentIdChecking = !!debouncedStudentId && availability.isLoading;
   // When the check fails (rate limited or network error), don't claim available.
-  const emailCheckFailed =
-    !!debouncedEmail && !availability.isLoading && availability.isError;
   const studentIdCheckFailed =
     !!debouncedStudentId && !availability.isLoading && availability.isError;
 
@@ -419,22 +432,11 @@ function AuthScreen({
       if (!email) {
         e.email = "Enter your email";
       } else {
-        // Check if the availability check has fired for the CURRENT email.
-        // If the user typed fast and clicked Continue before the 400ms
-        // debounce, debouncedEmail may be stale — force it now and block.
+        // Email format validation only. Email existence is checked by the
+        // register route with an enumeration-safe response (same message
+        // for new and existing emails).
         const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-        if (emailValid) {
-          const normalizedEmail = email.toLowerCase();
-          if (debouncedEmail !== normalizedEmail) {
-            // Force the debounce immediately so the check fires now.
-            setDebouncedEmail(normalizedEmail);
-            e.email = "Checking email availability…";
-          } else if (emailTaken) {
-            e.email = "This email is already registered";
-          } else if (emailChecking) {
-            e.email = "Checking email availability…";
-          }
-        } else {
+        if (!emailValid) {
           e.email = "Enter a valid email address";
         }
       }
@@ -887,49 +889,17 @@ function AuthScreen({
                                   placeholder="yourname@gmail.com"
                                   value={email}
                                   onChange={(e) => setEmail(e.target.value)}
-                                  className={`pl-9 pr-10 ${
-                                    emailTaken
+                                  className={`pl-9 ${
+                                    errors.email
                                       ? "border-destructive focus-visible:ring-destructive"
-                                      : debouncedEmail &&
-                                          !emailChecking &&
-                                          !emailTaken
-                                        ? "border-emerald-500/50 focus-visible:ring-emerald-500/50"
-                                        : ""
+                                      : ""
                                   }`}
                                   autoFocus
                                 />
-                                {/* Inline availability indicator */}
-                                {debouncedEmail && (
-                                  <span className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center">
-                                    {emailChecking ? (
-                                      <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
-                                    ) : emailTaken ? (
-                                      <XCircle className="h-4 w-4 text-destructive" />
-                                    ) : emailCheckFailed ? (
-                                      <Info className="h-4 w-4 text-muted-foreground" />
-                                    ) : (
-                                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                                    )}
-                                  </span>
-                                )}
                               </div>
                               {errors.email ? (
-                                <p
-                                  className={`text-xs ${emailTaken ? "text-destructive" : "text-muted-foreground"}`}
-                                >
-                                  {errors.email}
-                                </p>
-                              ) : emailTaken ? (
                                 <p className="text-xs text-destructive">
-                                  This email is already registered
-                                </p>
-                              ) : emailCheckFailed ? (
-                                <p className="text-xs text-muted-foreground">
-                                  Couldn&apos;t verify — try again
-                                </p>
-                              ) : debouncedEmail && !emailChecking ? (
-                                <p className="text-xs text-emerald-600 dark:text-emerald-400">
-                                  Email is available
+                                  {errors.email}
                                 </p>
                               ) : null}
                             </div>
