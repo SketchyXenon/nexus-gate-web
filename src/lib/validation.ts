@@ -97,6 +97,11 @@ export const registerSchema = z.object({
   studentId: studentIdSchema,
   program: programSchema,
   section: sectionSchema,
+  // Server-side enforcement: user must accept Terms and Privacy Policy.
+  // z.literal(true) rejects false/undefined/missing - prevents bypass.
+  agreeToTerms: z.literal(true, {
+    message: "You must accept the Terms and Privacy Policy to register",
+  }),
 });
 
 export const loginSchema = z.object({

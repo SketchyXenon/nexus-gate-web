@@ -73,6 +73,7 @@ model Account {
   verificationTokens VerificationToken[]
   refreshTokens     RefreshToken[]
   deviceKeys        DeviceKey[]
+  termsAcceptances  TermsAcceptance[]
 
   // ---- High-quality indexes ----
   // Role + status: admin dashboard lists accounts by role/status frequently
@@ -382,4 +383,35 @@ model Setting {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("settings")
+}
+
+// ====================================================================
+// 12. TERMS ACCEPTANCES (immutable compliance record)
+// --------------------------------------------------------------------
+// Append-only table: every time a user accepts the Terms of Service and
+// Privacy Policy, a row is inserted. Rows are never updated or deleted
+// (immutable audit trail for legal compliance). If the Terms change,
+// a new row is inserted with the updated version hash.
+// ====================================================================
+
+model TermsAcceptance {
+  id          String   @id @default(cuid())
+  accountId   String   @map("account_id")
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  // Semantic version of the Terms document the user agreed to.
+  termsVersion String  @map("terms_version")
+  // SHA-256 hash of the Terms document content at acceptance time.
+  termsHash   String   @map("terms_hash")
+  // Semantic version of the Privacy Policy document.
+  policyVersion String @map("policy_version")
+  policyHash  String   @map("policy_hash")
+  // IP address and user agent for legal evidence.
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+  acceptedAt  DateTime @default(now()) @map("accepted_at")
+
+  // Lookup: "get all acceptances for this account" (compliance audit)
+  @@index([accountId, acceptedAt])
+
+  @@map("terms_acceptances")
 }

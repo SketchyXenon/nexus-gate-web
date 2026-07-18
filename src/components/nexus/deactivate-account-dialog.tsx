@@ -15,12 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import {
-  AlertTriangle,
-  Loader2,
-  ShieldAlert,
-  UserX,
-} from "lucide-react";
+import { AlertTriangle, Loader2, ShieldAlert, UserX } from "lucide-react";
 import { useDeactivateAccount } from "@/lib/api-client";
 import { toast } from "@/hooks/use-toast";
 
@@ -59,7 +54,9 @@ export function DeactivateAccountDialog({
 
   const expected = "DEACTIVATE";
   const canConfirm =
-    typed.toUpperCase() === expected && password.length > 0 && !deactivate.isPending;
+    typed.toUpperCase() === expected &&
+    password.length > 0 &&
+    !deactivate.isPending;
 
   function reset() {
     setStep(1);
@@ -81,7 +78,8 @@ export function DeactivateAccountDialog({
         onSuccess: () => {
           toast({
             title: "Account deactivated",
-            description: "Your account has been deactivated. You will be signed out.",
+            description:
+              "Your account has been deactivated. You will be signed out.",
           });
           handleClose(false);
           // Redirect to the root (login screen) after a brief delay.
@@ -139,15 +137,15 @@ export function DeactivateAccountDialog({
 
       {/* Step 2: Final warning with consequences + password + type-to-confirm */}
       <AlertDialog open={open && step === 2} onOpenChange={handleClose}>
-        <AlertDialogContent className="max-w-lg">
+        <AlertDialogContent className="max-w-lg max-h-[90vh] overflow-y-auto p-4 sm:p-6">
           <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
-              <AlertTriangle className="h-5 w-5" />
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive text-base sm:text-lg">
+              <AlertTriangle className="h-5 w-5 shrink-0" />
               Final warning: read carefully
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3 text-left">
-                <p className="font-medium text-foreground">
+                <p className="font-medium text-foreground text-sm">
                   If you proceed, the following will happen immediately:
                 </p>
                 <ul className="space-y-1.5">
@@ -162,7 +160,7 @@ export function DeactivateAccountDialog({
                 </ul>
                 <p className="text-sm font-medium text-foreground pt-2">
                   To confirm, enter your password and type{" "}
-                  <code className="font-mono bg-muted px-1.5 py-0.5 rounded text-xs">
+                  <code className="font-mono bg-muted px-1.5 py-0.5 rounded text-xs break-all">
                     {expected}
                   </code>{" "}
                   below.
@@ -215,12 +213,13 @@ export function DeactivateAccountDialog({
             </div>
           </div>
 
-          <AlertDialogFooter>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2 sm:gap-2">
             <AlertDialogCancel
               onClick={() => {
                 reset();
                 onOpenChange(false);
               }}
+              className="w-full sm:w-auto"
             >
               Cancel
             </AlertDialogCancel>
@@ -230,7 +229,7 @@ export function DeactivateAccountDialog({
                 handleFinalConfirm();
               }}
               disabled={!canConfirm}
-              className="bg-destructive text-white hover:bg-destructive/90"
+              className="bg-destructive text-white hover:bg-destructive/90 w-full sm:w-auto"
             >
               {deactivate.isPending ? (
                 <>

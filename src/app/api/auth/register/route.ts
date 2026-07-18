@@ -21,6 +21,7 @@ import {
   safeFindAccountByEmail,
   isAccountDeactivated,
 } from "@/lib/safe-account";
+import { recordTermsAcceptance } from "@/lib/terms-acceptance";
 import { getAppUrl } from "@/lib/app-url";
 
 // POST /api/auth/register
@@ -54,8 +55,15 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) {
       return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
     }
-    const { email, password, fullName, studentId, program, section } =
-      parsed.data;
+    const {
+      email,
+      password,
+      fullName,
+      studentId,
+      program,
+      section,
+      agreeToTerms,
+    } = parsed.data;
 
     // Check for existing email (safe lookup).
     const existingEmail = await safeFindAccountByEmail(email);
@@ -266,9 +274,16 @@ export async function POST(req: NextRequest) {
         studentId,
         whitelisted: isWhitelisted,
         status: "PENDING_VERIFICATION",
+        termsAccepted: agreeToTerms,
+        termsAcceptedAt: new Date().toISOString(),
       },
       req,
     });
+
+    // Record the terms acceptance in the immutable append-only table.
+    // Graceful degradation: if the table doesn't exist (migration 0018
+    // not applied), the audit log above still records the acceptance.
+    await recordTermsAcceptance(account.id, req);
 
     // Build the success message.
     let message: string;

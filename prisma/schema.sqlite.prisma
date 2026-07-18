@@ -78,6 +78,7 @@ model Account {
   verificationTokens VerificationToken[]
   refreshTokens     RefreshToken[]
   deviceKeys        DeviceKey[]
+  termsAcceptances  TermsAcceptance[]
 
   @@index([role, status])
   @@index([program, section])
@@ -301,4 +302,23 @@ model Setting {
   updatedAt DateTime @updatedAt
 
   @@map("settings")
+}
+
+// ====================================================================
+// 12. TERMS ACCEPTANCES (immutable compliance record)
+// ====================================================================
+
+model TermsAcceptance {
+  id          String   @id @default(cuid())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  termsVersion String
+  termsHash   String
+  policyVersion String
+  policyHash  String
+  ipAddress   String?
+  userAgent   String?
+  acceptedAt  DateTime @default(now())
+
+  @@index([accountId, acceptedAt])
 }

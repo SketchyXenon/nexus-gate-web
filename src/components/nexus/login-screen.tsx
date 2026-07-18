@@ -25,6 +25,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -110,9 +111,7 @@ export function LoginScreen({
 
   // If we recovered a token OR the recovery-pending flag is set, jump
   // straight into the reset flow on mount.
-  const recoveryPending =
-    typeof window !== "undefined" &&
-    sessionStorage.getItem(RECOVERY_PENDING_KEY) === "1";
+  const recoveryPending = typeof window !== "undefined" && sessionStorage.getItem(RECOVERY_PENDING_KEY) === "1";
   const [mode, setMode] = useState<Mode>(
     resetToken || recoveryPending ? "reset" : initialMode,
   );
@@ -150,8 +149,9 @@ export function LoginScreen({
         // log in with their password.
         // Clear any stale session cache so useMe() returns null.
         try {
-          const { createSupabaseBrowserClient } =
-            await import("@/lib/supabase-browser");
+          const { createSupabaseBrowserClient } = await import(
+            "@/lib/supabase-browser"
+          );
           await createSupabaseBrowserClient().auth.signOut();
         } catch {
           // Non-critical.
@@ -264,6 +264,7 @@ function AuthScreen({
   const [showRegPassword, setShowRegPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
+  const [agreeTerms, setAgreeTerms] = useState(false);
   // Multi-step registration wizard: 1=Account, 2=Identity, 3=Program.
   const [regStep, setRegStep] = useState(1);
   // New-password fields for the reset flow.
@@ -285,36 +286,31 @@ function AuthScreen({
 
   // Reset the registration wizard when leaving register mode.
   useEffect(() => {
-    if (mode !== "register") setRegStep(1);
+    if (mode !== "register") {
+      setRegStep(1);
+      setAgreeTerms(false);
+    }
   }, [mode]);
 
   // ---- Debounced availability check for registration ----
   // Only check when email/studentId are format-valid. 400ms debounce.
   const [debouncedEmail, setDebouncedEmail] = useState<string | null>(null);
-  const [debouncedStudentId, setDebouncedStudentId] = useState<string | null>(
-    null,
-  );
+  const [debouncedStudentId, setDebouncedStudentId] = useState<string | null>(null);
   useEffect(() => {
     const t = setTimeout(() => {
       const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-      setDebouncedEmail(
-        mode === "register" && emailValid ? email.toLowerCase() : null,
-      );
+      setDebouncedEmail(mode === "register" && emailValid ? email.toLowerCase() : null);
       const sidValid = /^\d{7}$/.test(studentId.trim());
-      setDebouncedStudentId(
-        mode === "register" && sidValid ? studentId.trim() : null,
-      );
+      setDebouncedStudentId(mode === "register" && sidValid ? studentId.trim() : null);
     }, 400);
     return () => clearTimeout(t);
   }, [email, studentId, mode]);
 
   const availability = useCheckAvailability(debouncedEmail, debouncedStudentId);
-  const studentIdTaken =
-    availability.data?.studentIdTaken === true && !availability.isError;
+  const studentIdTaken = availability.data?.studentIdTaken === true && !availability.isError;
   const studentIdChecking = !!debouncedStudentId && availability.isLoading;
   // When the check fails (rate limited or network error), don't claim available.
-  const studentIdCheckFailed =
-    !!debouncedStudentId && !availability.isLoading && availability.isError;
+  const studentIdCheckFailed = !!debouncedStudentId && !availability.isLoading && availability.isError;
 
   // Clear stale "Checking..." errors when the availability check completes.
   // Without this, validateRegStep's "Checking..." message stays even after
@@ -469,6 +465,10 @@ function AuthScreen({
           e.studentId = "Checking student ID availability…";
         }
       }
+    } else if (step === 3) {
+      // Terms must be accepted before the account can be created.
+      if (!agreeTerms)
+        e.terms = "You must accept the Terms and Privacy Policy to continue";
     }
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -520,20 +520,15 @@ function AuthScreen({
     e.preventDefault();
     // Guard: if the user pressed Enter on step 1 or 2, advance instead of submit.
     if (regStep === 1) {
-      if (validateRegStep(1)) {
-        setErrors({});
-        setRegStep(2);
-      }
+      if (validateRegStep(1)) { setErrors({}); setRegStep(2); }
       return;
     }
     if (regStep === 2) {
-      if (validateRegStep(2)) {
-        setErrors({});
-        setRegStep(3);
-      }
+      if (validateRegStep(2)) { setErrors({}); setRegStep(3); }
       return;
     }
-    // Step 3: program/section are optional, so just submit.
+    // Step 3: validate terms acceptance before submitting.
+    if (!validateRegStep(3)) return;
     // Translate the "— Not specified —" sentinel back to empty/null for the API.
     const programValue = program === NO_PROGRAM ? "" : program;
     register.mutate(
@@ -544,6 +539,7 @@ function AuthScreen({
         studentId: Number(studentId),
         program: programValue,
         section: section.trim(),
+        agreeToTerms: agreeTerms,
       },
       {
         onSuccess: (data) => {
@@ -854,13 +850,12 @@ function AuthScreen({
                       {/* Step indicator */}
                       <div className="flex items-center gap-2">
                         {[1, 2, 3].map((s) => (
-                          <div
-                            key={s}
-                            className="flex-1 flex items-center gap-2"
-                          >
+                          <div key={s} className="flex-1 flex items-center gap-2">
                             <div
                               className={`flex-1 h-1.5 rounded-full transition-colors duration-300 ${
-                                s <= regStep ? "bg-primary" : "bg-muted"
+                                s <= regStep
+                                  ? "bg-primary"
+                                  : "bg-muted"
                               }`}
                             />
                           </div>
@@ -950,9 +945,7 @@ function AuthScreen({
                               )}
                             </div>
                             <div className="space-y-1.5">
-                              <Label htmlFor="confirmPass">
-                                Confirm password
-                              </Label>
+                              <Label htmlFor="confirmPass">Confirm password</Label>
                               <div className="relative">
                                 <Input
                                   id="confirmPass"
@@ -963,11 +956,9 @@ function AuthScreen({
                                     setConfirmPassword(e.target.value)
                                   }
                                   className={`pr-10 ${
-                                    confirmPassword &&
-                                    confirmPassword === password
+                                    confirmPassword && confirmPassword === password
                                       ? "border-emerald-500/50 focus-visible:ring-emerald-500/50"
-                                      : confirmPassword &&
-                                          confirmPassword !== password
+                                      : confirmPassword && confirmPassword !== password
                                         ? "border-destructive/50 focus-visible:ring-destructive/50"
                                         : ""
                                   }`}
@@ -988,8 +979,7 @@ function AuthScreen({
                                 <p className="text-xs text-destructive">
                                   {errors.confirmPassword}
                                 </p>
-                              ) : confirmPassword &&
-                                confirmPassword === password ? (
+                              ) : confirmPassword && confirmPassword === password ? (
                                 <p className="text-xs text-emerald-600 dark:text-emerald-400">
                                   Passwords match
                                 </p>
@@ -1022,7 +1012,7 @@ function AuthScreen({
                                 value={fullName}
                                 onChange={(e) =>
                                   setFullName(
-                                    e.target.value.replace(/[0-9]/g, ""),
+                                    e.target.value.replace(/[0-9]/g, "")
                                   )
                                 }
                                 autoFocus
@@ -1063,15 +1053,13 @@ function AuthScreen({
                                     setStudentId(
                                       e.target.value
                                         .replace(/\D/g, "")
-                                        .slice(0, 7),
+                                        .slice(0, 7)
                                     )
                                   }
                                   className={`pl-9 pr-10 font-heading ${
                                     studentIdTaken
                                       ? "border-destructive focus-visible:ring-destructive"
-                                      : debouncedStudentId &&
-                                          !studentIdChecking &&
-                                          !studentIdTaken
+                                      : debouncedStudentId && !studentIdChecking && !studentIdTaken
                                         ? "border-emerald-500/50 focus-visible:ring-emerald-500/50"
                                         : ""
                                   }`}
@@ -1092,9 +1080,7 @@ function AuthScreen({
                                 )}
                               </div>
                               {errors.studentId ? (
-                                <p
-                                  className={`text-xs ${studentIdTaken ? "text-destructive" : "text-muted-foreground"}`}
-                                >
+                                <p className={`text-xs ${studentIdTaken ? "text-destructive" : "text-muted-foreground"}`}>
                                   {errors.studentId}
                                 </p>
                               ) : studentIdTaken ? (
@@ -1151,10 +1137,7 @@ function AuthScreen({
                                   value={program}
                                   onValueChange={setProgram}
                                 >
-                                  <SelectTrigger
-                                    id="program"
-                                    className="w-full"
-                                  >
+                                  <SelectTrigger id="program" className="w-full">
                                     <SelectValue placeholder="Select a program" />
                                   </SelectTrigger>
                                   <SelectContent className="max-w-[calc(100vw-1.5rem)]">
@@ -1180,9 +1163,46 @@ function AuthScreen({
                               </div>
                             </div>
                             <p className="text-xs text-muted-foreground">
-                              Program and section are optional — you can set
-                              them later in your profile.
+                              Program and section are optional — you can set them
+                              later in your profile.
                             </p>
+                            {/* Terms and Conditions checkbox (final step) */}
+                            <div className="rounded-lg border p-3 space-y-1.5 bg-muted/30">
+                              <div className="flex items-start gap-2">
+                                <Checkbox
+                                  id="agreeTerms"
+                                  checked={agreeTerms}
+                                  onCheckedChange={(v) => setAgreeTerms(v === true)}
+                                  className="mt-0.5"
+                                />
+                                <Label
+                                  htmlFor="agreeTerms"
+                                  className="text-xs text-muted-foreground leading-relaxed cursor-pointer"
+                                >
+                                  I agree to the{" "}
+                                  <button
+                                    type="button"
+                                    onClick={() => openInfoModal("terms")}
+                                    className="text-primary hover:underline font-medium"
+                                  >
+                                    Terms of Service
+                                  </button>{" "}
+                                  and{" "}
+                                  <button
+                                    type="button"
+                                    onClick={() => openInfoModal("privacy")}
+                                    className="text-primary hover:underline font-medium"
+                                  >
+                                    Privacy Policy
+                                  </button>
+                                </Label>
+                              </div>
+                              {errors.terms && (
+                                <p className="text-xs text-destructive pl-6">
+                                  {errors.terms}
+                                </p>
+                              )}
+                            </div>
                             <div className="flex gap-2">
                               <Button
                                 type="button"
@@ -1297,11 +1317,7 @@ function AuthScreen({
                       <motion.div
                         initial={{ scale: 0.6, opacity: 0 }}
                         animate={{ scale: 1, opacity: 1 }}
-                        transition={{
-                          type: "spring",
-                          stiffness: 200,
-                          damping: 18,
-                        }}
+                        transition={{ type: "spring", stiffness: 200, damping: 18 }}
                         className="mx-auto grid place-items-center h-16 w-16 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
                       >
                         <CheckCircle2 className="h-9 w-9" />
@@ -1483,11 +1499,9 @@ function AuthScreen({
                               setConfirmNewPassword(e.target.value)
                             }
                             className={`pr-10 ${
-                              confirmNewPassword &&
-                              confirmNewPassword === newPassword
+                              confirmNewPassword && confirmNewPassword === newPassword
                                 ? "border-emerald-500/50 focus-visible:ring-emerald-500/50"
-                                : confirmNewPassword &&
-                                    confirmNewPassword !== newPassword
+                                : confirmNewPassword && confirmNewPassword !== newPassword
                                   ? "border-destructive/50 focus-visible:ring-destructive/50"
                                   : ""
                             }`}
@@ -1506,8 +1520,7 @@ function AuthScreen({
                           <p className="text-xs text-destructive">
                             {errors.confirmNewPassword}
                           </p>
-                        ) : confirmNewPassword &&
-                          confirmNewPassword === newPassword ? (
+                        ) : confirmNewPassword && confirmNewPassword === newPassword ? (
                           <p className="text-xs text-emerald-600 dark:text-emerald-400">
                             Passwords match
                           </p>

@@ -203,6 +203,7 @@ export const useRegister = () =>
       studentId: number;
       program?: string;
       section?: string;
+      agreeToTerms: boolean;
     }) =>
       api<{
         ok: boolean;
