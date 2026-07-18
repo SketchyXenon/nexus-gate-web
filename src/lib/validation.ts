@@ -85,7 +85,7 @@ export const programSchema = z
 export const sectionSchema = z
   .string()
   .trim()
-  .max(10, "Section is too long")
+  .max(3, "Section is too long")
   .regex(
     /^\d+-[A-Za-z]+$/,
     "Section must be in the format '<year>-<letter>' (e.g. '2-A', '3-B')",
@@ -192,7 +192,7 @@ export const whitelistRowSchema = z.object({
     .string()
     .trim()
     .min(1)
-    .max(10)
+    .max(3)
     .regex(
       /^\d+-[A-Za-z]+$/,
       "Section must be in the format '<year>-<letter>' (e.g. '2-A', '3-B')",
@@ -210,7 +210,7 @@ const eventBaseSchema = z.object({
   description: z.string().trim().max(2000).optional(),
   scope: z.enum(["academic", "departmental"]).default("academic"),
   targetProgram: z.string().trim().max(50).optional().nullable(),
-  targetSection: z.string().trim().max(10).optional().nullable(),
+  targetSection: z.string().trim().max(3).optional().nullable(),
   scheduledAt: z.string().datetime(),
   endsAt: z.string().datetime().optional().nullable(),
   checkInOpensAt: z.string().datetime().optional().nullable(),
@@ -402,14 +402,14 @@ export const updateAccountSchema = z
     section: z
       .string()
       .trim()
-      .max(10)
+      .max(3)
       .regex(
         /^\d+-[A-Za-z]+$/,
         "Section must be '<year>-<letter>' (e.g. '2-A')",
       )
       .optional()
       .nullable(),
-    year: z.number().int().min(1).max(6).optional().nullable(),
+    year: z.number().int().min(1).max(4).optional().nullable(),
     organizationName: z.string().trim().max(255).optional().nullable(),
   })
   .refine(
@@ -450,7 +450,7 @@ export const adminCreateAccountSchema = z
     section: z
       .string()
       .trim()
-      .max(10)
+      .max(3)
       .regex(
         /^\d+-[A-Za-z]+$/,
         "Section must be '<year>-<letter>' (e.g. '2-A')",
