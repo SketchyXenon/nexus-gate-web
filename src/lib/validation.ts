@@ -77,15 +77,17 @@ export const programSchema = z
   .nullable()
   .transform((val) => (val === "" ? null : val));
 
-// ---- Section schema (STRICT: must be "<number>-<letter>" format) ----
-// Examples: "1-A", "2-B", "3-C" — valid
-// "2", "A", "2A", "2-A-B" — INVALID (must have exactly one number, a hyphen, and one letter)
-// The number and letter can be multi-char (e.g. "10-AB") but must follow
-// the <digits>-<letters> pattern.
+// ---- Section schema (STRICT: must be "<number>-<letter>" format, max 3 chars) ----
+// Examples: "1-A", "2-B", "3-C" — valid (3 chars)
+// "10-A" — valid (4 chars, multi-digit year)
+// "2" — INVALID (no hyphen + letter)
+// "2-AB" — INVALID (5 chars, exceeds max for student sections)
+// The number and letter can be multi-char (e.g. "10-A") but the total
+// length is capped at 3 for student sections (single-digit year + single letter).
 export const sectionSchema = z
   .string()
   .trim()
-  .max(3, "Section is too long")
+  .max(3, "Section must be at most 3 characters (e.g. '2-A')")
   .regex(
     /^\d+-[A-Za-z]+$/,
     "Section must be in the format '<year>-<letter>' (e.g. '2-A', '3-B')",
@@ -123,8 +125,8 @@ export const registerSchema = z
   )
   .refine(
     (data) => {
-      // Section's numeric prefix must be a valid year level (1-4).
-      // e.g. "2-A" -> year 2 (valid), "5-A" -> year 5 (invalid), "0-A" -> invalid.
+      // Section's numeric prefix must be a valid year level (1-6).
+      // e.g. "2-A" -> year 2 (valid), "9-A" -> year 9 (invalid), "0-A" -> invalid.
       if (!data.section) return true;
       const sectionYear = extractSectionYear(data.section);
       if (sectionYear === null) return false;
@@ -192,7 +194,7 @@ export const whitelistRowSchema = z.object({
     .string()
     .trim()
     .min(1)
-    .max(3)
+    .max(10)
     .regex(
       /^\d+-[A-Za-z]+$/,
       "Section must be in the format '<year>-<letter>' (e.g. '2-A', '3-B')",
@@ -210,7 +212,7 @@ const eventBaseSchema = z.object({
   description: z.string().trim().max(2000).optional(),
   scope: z.enum(["academic", "departmental"]).default("academic"),
   targetProgram: z.string().trim().max(50).optional().nullable(),
-  targetSection: z.string().trim().max(3).optional().nullable(),
+  targetSection: z.string().trim().max(10).optional().nullable(),
   scheduledAt: z.string().datetime(),
   endsAt: z.string().datetime().optional().nullable(),
   checkInOpensAt: z.string().datetime().optional().nullable(),
@@ -402,7 +404,7 @@ export const updateAccountSchema = z
     section: z
       .string()
       .trim()
-      .max(3)
+      .max(3, "Section must be at most 3 characters (e.g. '2-A')")
       .regex(
         /^\d+-[A-Za-z]+$/,
         "Section must be '<year>-<letter>' (e.g. '2-A')",
@@ -450,7 +452,7 @@ export const adminCreateAccountSchema = z
     section: z
       .string()
       .trim()
-      .max(3)
+      .max(3, "Section must be at most 3 characters (e.g. '2-A')")
       .regex(
         /^\d+-[A-Za-z]+$/,
         "Section must be '<year>-<letter>' (e.g. '2-A')",
@@ -491,11 +493,11 @@ export const updateProfileSchema = z
         message: "Select a valid program from the list",
       })
       .optional(),
-    year: z.number().int().min(1).max(6).optional(),
+    year: z.number().int().min(1).max(4).optional(),
     section: z
       .string()
       .trim()
-      .max(10)
+      .max(3, "Section must be at most 3 characters (e.g. '2-A')")
       .regex(
         /^\d+-[A-Za-z]+$/,
         "Section must be '<year>-<letter>' (e.g. '2-A')",

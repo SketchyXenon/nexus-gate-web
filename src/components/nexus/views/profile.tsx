@@ -489,7 +489,6 @@ export function ProfileView() {
                           <SelectItem value="2">Year 2</SelectItem>
                           <SelectItem value="3">Year 3</SelectItem>
                           <SelectItem value="4">Year 4</SelectItem>
-                          <SelectItem value="5">Year 5</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

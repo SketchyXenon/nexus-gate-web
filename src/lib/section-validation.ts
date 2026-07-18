@@ -31,13 +31,16 @@ export function extractSectionYear(section: string): string | null {
  * Validate that a section's numeric prefix matches the given year.
  * Also validates the section FORMAT (must be "<number>-<letter>").
  *
- * @param year    - The year level (1-6).
+ * @param year    - The year level (1-4).
  * @param section - The section string (e.g. "3-A", "2-B").
  * @returns `true` only if:
  *   - The section is in valid "<number>-<letter>" format, AND
  *   - The numeric prefix matches the year.
  */
-export function isYearSectionConsistent(year: number, section: string): boolean {
+export function isYearSectionConsistent(
+  year: number,
+  section: string,
+): boolean {
   // First check the format — "2" or "A" alone are NOT valid
   if (!isValidSectionFormat(section)) return false;
   const sectionYear = extractSectionYear(section);
@@ -49,6 +52,5 @@ export function isYearSectionConsistent(year: number, section: string): boolean 
  * Human-readable explanation of the year/section consistency rule.
  * Used by both the API error message and the frontend hint text.
  */
-export const YEAR_SECTION_MISMATCH_MESSAGE =
-  (year: number, section: string) =>
-    `Year ${year} and section "${section}" don't match. The section should start with your year level (e.g. "${year}-A" for Year ${year}).`;
+export const YEAR_SECTION_MISMATCH_MESSAGE = (year: number, section: string) =>
+  `Year ${year} and section "${section}" don't match. The section should start with your year level (e.g. "${year}-A" for Year ${year}).`;
