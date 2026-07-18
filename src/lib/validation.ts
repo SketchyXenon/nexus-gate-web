@@ -6,6 +6,10 @@
 import { z } from "zod";
 import { PROGRAM_CODES } from "./programs";
 import { scorePassword, MIN_PASSWORD_SCORE } from "./password-strength";
+import {
+  isYearSectionConsistent,
+  extractSectionYear,
+} from "./section-validation";
 
 // ---- Auth ----
 export const emailSchema = z
@@ -90,19 +94,48 @@ export const sectionSchema = z
   .nullable()
   .or(z.literal("").transform(() => null));
 
-export const registerSchema = z.object({
-  email: emailSchema,
-  password: strongPasswordSchema,
-  fullName: fullNameSchema,
-  studentId: studentIdSchema,
-  program: programSchema,
-  section: sectionSchema,
-  // Server-side enforcement: user must accept Terms and Privacy Policy.
-  // z.literal(true) rejects false/undefined/missing - prevents bypass.
-  agreeToTerms: z.literal(true, {
-    message: "You must accept the Terms and Privacy Policy to register",
-  }),
-});
+export const registerSchema = z
+  .object({
+    email: emailSchema,
+    password: strongPasswordSchema,
+    fullName: fullNameSchema,
+    studentId: studentIdSchema,
+    program: programSchema,
+    section: sectionSchema,
+    // Server-side enforcement: user must accept Terms and Privacy Policy.
+    // z.literal(true) rejects false/undefined/missing - prevents bypass.
+    agreeToTerms: z.literal(true, {
+      message: "You must accept the Terms and Privacy Policy to register",
+    }),
+  })
+  .refine(
+    (data) => {
+      // Program and section must be a pair: both or neither.
+      const hasProgram = !!data.program;
+      const hasSection = !!data.section;
+      return hasProgram === hasSection;
+    },
+    {
+      message:
+        "Program and section must both be filled out, or leave both blank to set them later.",
+      path: ["section"],
+    },
+  )
+  .refine(
+    (data) => {
+      // Section's numeric prefix must be a valid year level (1-4).
+      // e.g. "2-A" -> year 2 (valid), "5-A" -> year 5 (invalid), "0-A" -> invalid.
+      if (!data.section) return true;
+      const sectionYear = extractSectionYear(data.section);
+      if (sectionYear === null) return false;
+      const yearNum = Number(sectionYear);
+      return yearNum >= 1 && yearNum <= 4;
+    },
+    {
+      message: "Section year must be between 1 and 4 (e.g. '1-A' to '4-A').",
+      path: ["section"],
+    },
+  );
 
 export const loginSchema = z.object({
   email: emailSchema,
@@ -359,69 +392,141 @@ export const overrideSchema = z.object({
 // ---- Accounts ----
 // Admin can edit any field on any account. Program/section/year/organizationName
 // are optional and only persisted when provided (PATCH semantics).
-export const updateAccountSchema = z.object({
-  role: z.enum(["ADMIN", "ORGANIZER", "USER"]).optional(),
-  // Admin PATCH can only set these 3 statuses. DEACTIVATED is reserved for
-  // the self-service deactivate endpoint (sets isDeactivated=true atomically).
-  // Allowing DEACTIVATED here would create inconsistent rows (status=DEACTIVATED
-  // but isDeactivated=false), breaking the restore endpoint.
-  status: z.enum(["PENDING_VERIFICATION", "ACTIVE", "SUSPENDED"]).optional(),
-  fullName: fullNameSchema.optional(),
-  email: emailSchema.optional(),
-  program: z.string().trim().max(50).optional().nullable(),
-  section: z
-    .string()
-    .trim()
-    .max(10)
-    .regex(/^\d+-[A-Za-z]+$/, "Section must be '<year>-<letter>' (e.g. '2-A')")
-    .optional()
-    .nullable(),
-  year: z.number().int().min(1).max(6).optional().nullable(),
-  organizationName: z.string().trim().max(255).optional().nullable(),
-});
+export const updateAccountSchema = z
+  .object({
+    role: z.enum(["ADMIN", "ORGANIZER", "USER"]).optional(),
+    status: z.enum(["PENDING_VERIFICATION", "ACTIVE", "SUSPENDED"]).optional(),
+    fullName: fullNameSchema.optional(),
+    email: emailSchema.optional(),
+    program: z.string().trim().max(50).optional().nullable(),
+    section: z
+      .string()
+      .trim()
+      .max(10)
+      .regex(
+        /^\d+-[A-Za-z]+$/,
+        "Section must be '<year>-<letter>' (e.g. '2-A')",
+      )
+      .optional()
+      .nullable(),
+    year: z.number().int().min(1).max(6).optional().nullable(),
+    organizationName: z.string().trim().max(255).optional().nullable(),
+  })
+  .refine(
+    (data) => {
+      // Program and section must be a pair: both or neither.
+      const hasProgram = !!(data.program && data.program.trim());
+      const hasSection = !!(data.section && data.section.trim());
+      return hasProgram === hasSection;
+    },
+    {
+      message: "Program and section must both be filled out together.",
+      path: ["section"],
+    },
+  )
+  .refine(
+    (data) => {
+      // Year and section must be consistent when both are provided.
+      if (!data.section || !data.year) return true;
+      return isYearSectionConsistent(data.year, data.section);
+    },
+    {
+      message:
+        "Year and section don't match. The section should start with the year level (e.g. year 2 -> '2-A').",
+      path: ["section"],
+    },
+  );
 
 // Admin creates an account (for organizer/admin roles)
-export const adminCreateAccountSchema = z.object({
-  email: emailSchema,
-  password: strongPasswordSchema,
-  fullName: fullNameSchema,
-  role: z.enum(["ADMIN", "ORGANIZER"]),
-  program: z.string().trim().max(50).optional().nullable(),
-  section: z
-    .string()
-    .trim()
-    .max(10)
-    .regex(/^\d+-[A-Za-z]+$/, "Section must be '<year>-<letter>' (e.g. '2-A')")
-    .optional()
-    .nullable(),
-  organizationName: z.string().trim().max(255).optional().nullable(),
-  status: z.enum(["ACTIVE", "SUSPENDED"]).default("ACTIVE"),
-});
+// Exception: organizers/admins must have a program if section is provided,
+// but section is OPTIONAL (they don't have a year level like students).
+export const adminCreateAccountSchema = z
+  .object({
+    email: emailSchema,
+    password: strongPasswordSchema,
+    fullName: fullNameSchema,
+    role: z.enum(["ADMIN", "ORGANIZER"]),
+    program: z.string().trim().max(50).optional().nullable(),
+    section: z
+      .string()
+      .trim()
+      .max(10)
+      .regex(
+        /^\d+-[A-Za-z]+$/,
+        "Section must be '<year>-<letter>' (e.g. '2-A')",
+      )
+      .optional()
+      .nullable(),
+    organizationName: z.string().trim().max(255).optional().nullable(),
+    status: z.enum(["ACTIVE", "SUSPENDED"]).default("ACTIVE"),
+  })
+  .refine(
+    (data) => {
+      // For organizers/admins: section is optional, but if provided, program
+      // must also be provided. Program without section is OK (organizers don't
+      // have a year level).
+      if (!data.section || !data.section.trim()) return true;
+      return !!(data.program && data.program.trim());
+    },
+    {
+      message: "Program is required when a section is provided.",
+      path: ["program"],
+    },
+  );
 
 // Self-update profile (users + organizers)
 // Users can change: fullName, year, section, and course (course only once)
 // Organizers can change: fullName only
 // Program must be a valid code from the programs list (enforced server-side).
 // Full name uses the SAME strict schema as registration (no numbers, letters only).
-export const updateProfileSchema = z.object({
-  fullName: fullNameSchema,
-  // Student-only fields (ignored for organizers)
-  program: z
-    .string()
-    .trim()
-    .max(50)
-    .refine((val) => val === "" || PROGRAM_CODES.has(val), {
-      message: "Select a valid program from the list",
-    })
-    .optional(),
-  year: z.number().int().min(1).max(6).optional(),
-  section: z
-    .string()
-    .trim()
-    .max(10)
-    .regex(/^\d+-[A-Za-z]+$/, "Section must be '<year>-<letter>' (e.g. '2-A')")
-    .optional(),
-});
+export const updateProfileSchema = z
+  .object({
+    fullName: fullNameSchema,
+    // Student-only fields (ignored for organizers)
+    program: z
+      .string()
+      .trim()
+      .max(50)
+      .refine((val) => val === "" || PROGRAM_CODES.has(val), {
+        message: "Select a valid program from the list",
+      })
+      .optional(),
+    year: z.number().int().min(1).max(6).optional(),
+    section: z
+      .string()
+      .trim()
+      .max(10)
+      .regex(
+        /^\d+-[A-Za-z]+$/,
+        "Section must be '<year>-<letter>' (e.g. '2-A')",
+      )
+      .optional(),
+  })
+  .refine(
+    (data) => {
+      // If program is provided, section must also be provided (and vice versa).
+      const hasProgram = !!(data.program && data.program.trim());
+      const hasSection = !!(data.section && data.section.trim());
+      return hasProgram === hasSection;
+    },
+    {
+      message: "Program and section must both be filled out together.",
+      path: ["section"],
+    },
+  )
+  .refine(
+    (data) => {
+      // Year and section must be consistent: section's numeric prefix must
+      // match the year. e.g. year=2 + section="2-A" = OK, year=3 + section="2-B" = REJECT.
+      if (!data.section || !data.year) return true;
+      return isYearSectionConsistent(data.year, data.section);
+    },
+    {
+      message:
+        "Year and section don't match. The section should start with the year level (e.g. year 2 -> '2-A').",
+      path: ["section"],
+    },
+  );
 
 // Change password (self-service)
 // Uses the STRONG password schema so the new password must score
