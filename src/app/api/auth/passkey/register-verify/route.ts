@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyRegistrationResponse } from "@simplewebauthn/server";
 import type { RegistrationResponseJSON } from "@simplewebauthn/server";
 import { db } from "@/lib/db";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, checkRateLimitByKey } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import { getWebAuthnContext } from "@/lib/webauthn-context";
 
@@ -22,6 +22,12 @@ export async function POST(req: NextRequest) {
   const res = await requireAuth();
   if ("error" in res) return res.error;
   const { account } = res;
+
+  // Rate limit passkey registration verification (10/min). Verification
+  // does Ed25519 crypto + a DB write to store the credential. Mirrors the
+  // register-options limit. Fails CLOSED on limiter error.
+  const rl = await checkRateLimitByKey(account.id, "passkeyRegister");
+  if (rl) return rl;
 
   const challenge = req.cookies.get("ng_passkey_challenge")?.value;
   if (!challenge) {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { parseFile } from "@/lib/file-parser";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, checkRateLimitByKey } from "@/lib/api";
 import { audit } from "@/lib/audit";
 
 // Allow up to 30s for large file parsing (PDF/Excel with many rows).
@@ -24,6 +24,13 @@ export async function POST(req: NextRequest) {
   const res = await requireAuth("ORGANIZER");
   if ("error" in res) return res.error;
   const { account } = res;
+
+  // Tighter rate limit for file upload + heavy parsing (5/min).
+  // Excel/PDF/DOCX parsing is CPU-intensive; without this an admin could
+  // upload 100 10MB files/min, exhausting the serverless CPU budget.
+  // Fails CLOSED on limiter error.
+  const importRl = await checkRateLimitByKey(account.id, "whitelistImportFile");
+  if (importRl) return importRl;
 
   try {
     const formData = await req.formData();

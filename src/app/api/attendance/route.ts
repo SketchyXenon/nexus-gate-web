@@ -24,6 +24,7 @@ import {
 import { notifyAttendance } from "@/lib/realtime";
 import { audit } from "@/lib/audit";
 import { getEventTimeWindows } from "@/lib/event-time";
+import { isUniqueConstraintError } from "@/lib/prisma-errors";
 
 // Allow up to 30s for scan processing under high concurrency.
 export const maxDuration = 30;
@@ -476,9 +477,9 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    // P2002 = unique constraint violation (race condition or duplicate)
-    if (msg.includes("Unique constraint")) {
+    // P2002 = unique constraint violation (race condition or duplicate).
+    // Use the stable Prisma error code instead of a fragile string match.
+    if (isUniqueConstraintError(e)) {
       return NextResponse.json({
         ok: true,
         alreadyPresent: true,

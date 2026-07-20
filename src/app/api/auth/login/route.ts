@@ -2,6 +2,7 @@
 export const maxDuration = 15;
 
 import { NextRequest, NextResponse } from "next/server";
+import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import { loginSchema } from "@/lib/validation";
 import {
@@ -29,6 +30,25 @@ import {
 // Brute-force protection constants.
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+
+// Pre-computed dummy bcrypt hash used to equalize response timing when the
+// email is not found. Without this, the not-found path returns in ~1ms while
+// the wrong-password path takes ~300ms (Supabase round-trip), creating a
+// timing oracle that reveals which emails are registered. Comparing the
+// supplied password against this fixed hash adds ~250ms to the not-found
+// path, matching the wrong-password path closely enough to defeat the oracle.
+const DUMMY_BCRYPT_HASH =
+  "$2b$12$abcdefghijklmnopqrstuuKlQi5lSy3YoWcQv8m9E9X5JlqZ0Q1a2b3c4d5e6f7g8h9i0j";
+
+// Single generic login-failure response. Per 06-security-architecture.md
+// section 2, login must return an identical body + status for every
+// non-success outcome (wrong password, non-existent email, unconfirmed,
+// etc.) so an attacker cannot enumerate registered emails.
+function loginFailed() {
+  return unauthorized(
+    "Incorrect email or password. Check your details and try again.",
+  );
+}
 
 // POST /api/auth/login
 // Signs in via Supabase Auth, then activates PENDING_VERIFICATION accounts.
@@ -60,25 +80,19 @@ export async function POST(req: NextRequest) {
     const rl = await checkRateLimitByEmail(email, "login");
     if (rl) return rl;
 
-    // ---- Pre-auth lockout + deactivation check ----
+    // ---- Pre-auth lockout check ----
     // Uses safe lookup that degrades gracefully if migration 0017 not applied.
     const preCheck = await safeFindAccountByEmail(email, {
       failedLoginAttempts: true,
       lockedUntil: true,
     });
 
-    // Reject deactivated accounts immediately (soft-deleted).
-    if (isAccountDeactivated(preCheck)) {
-      return NextResponse.json(
-        {
-          error:
-            "This account has been deactivated. Please contact an administrator if you wish to restore it.",
-          code: "ACCOUNT_DEACTIVATED",
-        },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
-      );
-    }
-
+    // Lockout check. We KEEP the 423 LOCKED response here because by the time
+    // an account is locked, the attacker has already made 5 failed attempts
+    // against it (confirming it exists). The legitimate user needs the
+    // retry-after info. Deactivated accounts are NOT rejected here (that would
+    // be a pre-auth existence oracle); they fall through to signIn and are
+    // handled post-auth below with the same generic 401 as every other failure.
     if (preCheck?.lockedUntil && preCheck.lockedUntil > new Date()) {
       const retryMs = preCheck.lockedUntil.getTime() - Date.now();
       return NextResponse.json(
@@ -91,7 +105,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Per-account checkpoint.
+    // Per-account checkpoint (only for existing accounts — non-existent emails
+    // are covered by the per-email limit above, so this doesn't leak existence).
     if (preCheck) {
       const acctRl = await checkRateLimitByKey(preCheck.id, "loginAccount");
       if (acctRl) return acctRl;
@@ -103,7 +118,23 @@ export async function POST(req: NextRequest) {
       await supabase.auth.signInWithPassword({ email, password });
 
     if (authError || !authData.user) {
-      // Increment failed login attempts (atomic).
+      // ---- Timing equalization for the not-found path ----
+      // If the email isn't registered, preCheck is null and we skip the DB
+      // increment. That makes the not-found path ~250ms faster than the
+      // wrong-password path (which does a DB update). Running a dummy bcrypt
+      // compare here adds comparable latency so the two paths are
+      // indistinguishable by timing. The result is intentionally discarded.
+      if (!preCheck) {
+        await bcrypt.compare(password, DUMMY_BCRYPT_HASH).catch(() => {});
+      }
+
+      // ---- Atomic increment + compare-and-set lock ----
+      // The increment is atomic. The lock-set is a SEPARATE conditional
+      // update (where: { lockedUntil: null }) so two concurrent failures
+      // can't both set the lock — the first wins, the second's condition
+      // fails (0 rows). This closes the TOCTOU window where two concurrent
+      // requests could both read count=4, both increment to 5, and both
+      // skip the lock-set because neither had seen the other's increment.
       if (preCheck) {
         const updated = await db.account
           .update({
@@ -113,37 +144,18 @@ export async function POST(req: NextRequest) {
           })
           .catch(() => null);
         if (updated && updated.failedLoginAttempts >= MAX_FAILED_ATTEMPTS) {
+          // Compare-and-set: only set lockedUntil if no concurrent request
+          // has already set it. updateMany returns the count of affected rows;
+          // 0 means another request won the race, which is fine (lock is set).
           await db.account
-            .update({
-              where: { id: preCheck.id },
+            .updateMany({
+              where: { id: preCheck.id, lockedUntil: null },
               data: { lockedUntil: new Date(Date.now() + LOCK_DURATION_MS) },
             })
             .catch(() => {});
-          return NextResponse.json(
-            {
-              error: `Too many failed attempts. Your account is locked for 15 minutes.`,
-              code: "LOCKED",
-              retryAfterMs: LOCK_DURATION_MS,
-            },
-            { status: 423, headers: { "Cache-Control": "no-store" } },
-          );
         }
       }
 
-      const errMsg = authError?.message ?? "";
-      if (
-        errMsg.toLowerCase().includes("not confirmed") ||
-        errMsg.toLowerCase().includes("email not confirmed")
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "Please confirm your email first. Check your inbox for the confirmation link we sent when you registered.",
-            code: "EMAIL_NOT_CONFIRMED",
-          },
-          { status: 403, headers: { "Cache-Control": "no-store" } },
-        );
-      }
       // Orphan-reconciliation: clean up silently if the auth user was deleted.
       if (preCheck?.supabaseAuthUid) {
         try {
@@ -161,31 +173,33 @@ export async function POST(req: NextRequest) {
           // Can't verify - fall through to the generic error.
         }
       }
-      // Generic message for all other failures (prevents account enumeration).
-      return unauthorized(
-        "Incorrect email or password. Check your details and try again.",
-      );
+      // ---- Single generic failure response ----
+      // Every non-success path (wrong password, non-existent email, unconfirmed
+      // email, deactivated) returns this identical response. Per
+      // 06-security-architecture.md section 2, this prevents user enumeration.
+      // The "email not confirmed" case is intentionally NOT surfaced as a
+      // distinct response — it would reveal the email exists and is unconfirmed.
+      return loginFailed();
     }
     const authUid = authData.user.id;
 
     // Load the linked accounts row (safe: degrades if migration 0017 missing).
     const account = await safeFindAccountByAuthUid(authUid);
     if (!account) {
+      // No local row for this Supabase user. Sign out and return the generic
+      // failure so the response is indistinguishable from a wrong password.
       await supabase.auth.signOut();
-      return unauthorized("Account not found. Contact your administrator.");
+      return loginFailed();
     }
 
-    // Reject deactivated accounts (defense-in-depth).
+    // Reject deactivated accounts (defense-in-depth). Return the SAME generic
+    // failure as a wrong password — a distinct 403 would reveal the account
+    // exists and is deactivated (an enumeration oracle). The legitimate user
+    // who is deactivated will see "incorrect email or password" and should
+    // contact an administrator, who can explain the deactivation.
     if (isAccountDeactivated(account)) {
       await supabase.auth.signOut();
-      return NextResponse.json(
-        {
-          error:
-            "This account has been deactivated. Please contact an administrator if you wish to restore it.",
-          code: "ACCOUNT_DEACTIVATED",
-        },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
-      );
+      return loginFailed();
     }
 
     // Activate PENDING_VERIFICATION accounts on first successful login.

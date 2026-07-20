@@ -258,9 +258,18 @@ export async function checkRateLimitByEmail(
 // identified. This is the "user_id" checkpoint: even if an attacker rotates
 // IPs, the targeted account is throttled. Use with passkeyVerify/loginAccount
 // presets after the credential/email lookup resolves the account.
+// Also used for admin mutations and whitelist imports (keyed by admin id).
 export async function checkRateLimitByKey(
   key: string,
-  preset: "passkeyAccount" | "loginAccount" | "scanAccount" | "apiAccount",
+  preset:
+    | "passkeyAccount"
+    | "loginAccount"
+    | "scanAccount"
+    | "apiAccount"
+    | "adminMutation"
+    | "whitelistImport"
+    | "whitelistImportFile"
+    | "passkeyRegister",
 ): Promise<NextResponse | null> {
   const result = await rateLimit(`${preset}:acct:${key}`, preset);
   if (!result.allowed) return tooManyRequests(result.retryAfterMs);

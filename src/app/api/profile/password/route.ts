@@ -4,9 +4,19 @@ export const maxDuration = 15;
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { changePasswordSchema } from "@/lib/validation";
-import { badRequest, forbidden, parseBody, requireAuth, unauthorized } from "@/lib/api";
+import {
+  badRequest,
+  forbidden,
+  parseBody,
+  requireAuth,
+  unauthorized,
+} from "@/lib/api";
 import { audit } from "@/lib/audit";
-import { isCooldownExpired, daysUntilCooldownExpires } from "@/lib/cooldown";
+import {
+  isCooldownExpired,
+  daysUntilCooldownExpires,
+  cooldownCutoff,
+} from "@/lib/cooldown";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { getCurrentAccountSupabase } from "@/lib/supabase-session";
 
@@ -36,7 +46,7 @@ export async function POST(req: NextRequest) {
     const daysLeft = daysUntilCooldownExpires(fullAccount.lastPasswordChangeAt);
     return forbidden(
       `You can change your password again in ${daysLeft} day${daysLeft === 1 ? "" : "s"}.`,
-      "PASSWORD_COOLDOWN"
+      "PASSWORD_COOLDOWN",
     );
   }
 
@@ -50,26 +60,54 @@ export async function POST(req: NextRequest) {
       password: currentPassword,
     });
     if (verifyError) {
-      return badRequest("Your current password is incorrect.", "WRONG_PASSWORD");
+      return badRequest(
+        "Your current password is incorrect.",
+        "WRONG_PASSWORD",
+      );
     }
   }
 
   // Update the password via Supabase Auth.
   const supabase = await createSupabaseServerClient();
-  const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+  const { error: updateError } = await supabase.auth.updateUser({
+    password: newPassword,
+  });
   if (updateError) {
-    return badRequest("Unable to update password. Please try again.", "UPDATE_FAILED");
+    return badRequest(
+      "Unable to update password. Please try again.",
+      "UPDATE_FAILED",
+    );
   }
 
-  // Stamp lastPasswordChangeAt (drives the cooldown).
-  await db.account.update({
-    where: { id: account.id },
+  // ---- TOCTOU-safe cooldown enforcement (compare-and-set) ----
+  // Stamp lastPasswordChangeAt only if the cooldown is still expired at
+  // write time. Two concurrent password-change requests could both pass the
+  // read-only check above (line 35) and both succeed, halving the cooldown.
+  // This conditional updateMany atomically enforces the cooldown: if 0 rows
+  // are affected, a concurrent request won the race. We still treat the
+  // Supabase password update as authoritative (it succeeded); the stamp just
+  // records WHEN it happened for the next cooldown check.
+  const cutoff = cooldownCutoff();
+  await db.account.updateMany({
+    where: {
+      id: account.id,
+      OR: [
+        { lastPasswordChangeAt: null },
+        { lastPasswordChangeAt: { lt: cutoff } },
+      ],
+    },
     data: { lastPasswordChangeAt: new Date() },
   });
+  // If count === 0, a concurrent request already stamped within the cooldown
+  // window. The password WAS changed (Supabase succeeded), so we don't fail
+  // the request — but the cooldown is now active from the concurrent stamp.
 
   await audit({
-    actorId: account.id, action: "profile.password_change", targetType: "Account",
-    targetId: account.id, req,
+    actorId: account.id,
+    action: "profile.password_change",
+    targetType: "Account",
+    targetId: account.id,
+    req,
   });
 
   return NextResponse.json({

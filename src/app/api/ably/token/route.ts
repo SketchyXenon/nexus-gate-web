@@ -3,7 +3,8 @@ export const maxDuration = 10;
 
 import { NextRequest, NextResponse } from "next/server";
 import Ably from "ably";
-import { requireAuth } from "@/lib/api";
+import { db } from "@/lib/db";
+import { forbidden, requireAuth } from "@/lib/api";
 
 // GET /api/ably/token?eventId=123
 // Issues a short-lived Ably TokenRequest with SUBSCRIBE-ONLY capability,
@@ -65,6 +66,49 @@ export async function GET(req: NextRequest) {
       },
       { status: 400 },
     );
+  }
+
+  // ---- BOLA defense: verify the caller may see this event's channel ----
+  // The event:N channel broadcasts attending students' full name, student ID,
+  // program, and section in real time. Without this check, any authenticated
+  // USER could subscribe to ANY event's channel and harvest other students'
+  // PII. We apply the SAME visibility rule as GET /api/events:
+  //   - ADMIN: sees all events.
+  //   - ORGANIZER: open-to-all, OR their program (any section), OR exact match.
+  //   - USER: open-to-all, OR exact program + section match (strict).
+  // A 403 (not 404) is returned because the eventId is not a secret — it's a
+  // sequential integer the client already has from the events list. Hiding
+  // existence via 404 would be security-through-obscurity; the visibility
+  // rule is the real control.
+  const { account } = res;
+  const event = await db.event.findUnique({
+    where: { id: eventId },
+    select: {
+      status: true,
+      targetProgram: true,
+      targetSection: true,
+      ownerId: true,
+    },
+  });
+  if (!event || event.status !== "active") {
+    return forbidden("This event is not available.");
+  }
+  if (account.role !== "ADMIN") {
+    const isOpenToAll = !event.targetProgram && !event.targetSection;
+    const isExactMatch =
+      !!event.targetProgram &&
+      !!event.targetSection &&
+      event.targetProgram === account.program &&
+      event.targetSection === account.section;
+    const isOrganizerProgramMatch =
+      account.role === "ORGANIZER" &&
+      !!event.targetProgram &&
+      event.targetProgram === account.program;
+    // Organizers also own their events (can always see their own channel).
+    const isOwner = event.ownerId === account.id;
+    if (!isOpenToAll && !isExactMatch && !isOrganizerProgramMatch && !isOwner) {
+      return forbidden("You are not eligible to view this event.");
+    }
   }
 
   // Construct the Ably REST client with the server key. autoConnect:false

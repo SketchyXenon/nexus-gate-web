@@ -17,30 +17,18 @@ export async function GET(_req: NextRequest) {
   if ("error" in res) return res.error;
   const { account } = res;
 
-  // Last 6 months boundary.
-  const sixMonthsAgo = new Date();
-  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5); // include current month
-  sixMonthsAgo.setDate(1);
-  sixMonthsAgo.setHours(0, 0, 0, 0);
+  // Single query: fetch ALL-TIME attendance with scannedAt + event.scope.
+  // The previous implementation issued 3 separate findMany calls on the same
+  // accountId (6-month chart, all-time scope counts, all-time streak months).
+  // Collapsing to 1 query saves 2 DB round-trips per My-Attendance page load
+  // and avoids transferring the same rows 3x. Buckets are derived in JS.
+  const allAttendance = await db.eventAttendance.findMany({
+    where: { accountId: account.id },
+    select: { scannedAt: true, event: { select: { scope: true } } },
+    orderBy: { scannedAt: "asc" },
+  });
 
-  const [recentAttendance, scopeCounts] = await Promise.all([
-    // All attendance in the last 6 months (for the monthly chart).
-    db.eventAttendance.findMany({
-      where: {
-        accountId: account.id,
-        scannedAt: { gte: sixMonthsAgo },
-      },
-      select: { scannedAt: true, event: { select: { scope: true } } },
-      orderBy: { scannedAt: "asc" },
-    }),
-    // Scope breakdown (all time).
-    db.eventAttendance.findMany({
-      where: { accountId: account.id },
-      select: { event: { select: { scope: true } } },
-    }),
-  ]);
-
-  // Build scansByMonth: 6 buckets.
+  // Build scansByMonth: 6 buckets (last 6 months only).
   const monthMap = new Map<string, number>();
   for (let i = 0; i < 6; i++) {
     const d = new Date();
@@ -49,7 +37,7 @@ export async function GET(_req: NextRequest) {
     d.setHours(0, 0, 0, 0);
     monthMap.set(d.toISOString().slice(0, 7), 0);
   }
-  for (const a of recentAttendance) {
+  for (const a of allAttendance) {
     const key = a.scannedAt.toISOString().slice(0, 7);
     if (monthMap.has(key)) monthMap.set(key, (monthMap.get(key) ?? 0) + 1);
   }
@@ -57,21 +45,16 @@ export async function GET(_req: NextRequest) {
     .sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([month, count]) => ({ month, count }));
 
-  // Build byScope.
+  // Build byScope (all time, from the same result set).
   const byScope = { academic: 0, departmental: 0 };
-  for (const a of scopeCounts) {
+  for (const a of allAttendance) {
     if (a.event.scope === "academic") byScope.academic++;
     else if (a.event.scope === "departmental") byScope.departmental++;
   }
 
-  // Compute streak: consecutive months (going back from current) with >=1 scan.
-  const allScans = await db.eventAttendance.findMany({
-    where: { accountId: account.id },
-    select: { scannedAt: true },
-    orderBy: { scannedAt: "asc" },
-  });
+  // Compute streak (all time, from the same result set).
   const scanMonths = new Set(
-    allScans.map((s) => s.scannedAt.toISOString().slice(0, 7)),
+    allAttendance.map((s) => s.scannedAt.toISOString().slice(0, 7)),
   );
   let currentStreak = 0;
   const now = new Date();
@@ -95,7 +78,9 @@ export async function GET(_req: NextRequest) {
       const expected = new Date(py, pm - 1, 1);
       expected.setMonth(expected.getMonth() + 1);
       const actual = new Date(cy, cm - 1, 1);
-      if (expected.toISOString().slice(0, 7) === actual.toISOString().slice(0, 7)) {
+      if (
+        expected.toISOString().slice(0, 7) === actual.toISOString().slice(0, 7)
+      ) {
         running++;
       } else {
         running = 1;
@@ -112,9 +97,6 @@ export async function GET(_req: NextRequest) {
     byScope,
     streak: { current: currentStreak, longest: longestStreak },
   });
-  response.headers.set(
-    "Cache-Control",
-    "private, no-cache",
-  );
+  response.headers.set("Cache-Control", "private, no-cache");
   return response;
 }

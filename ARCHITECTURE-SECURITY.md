@@ -45,10 +45,13 @@
 │  │  - requireAuth() — session + role + status + rate     │   │
 │  │  - Account cache (30s TTL) — eliminates DB lookup     │   │
 │  │  - Brute-force lockout (5 attempts → 15 min lock)     │   │
+│  │    atomic compare-and-set on lockedUntil (TOCTOU-safe)│   │
+│  │  - Enumeration-safe login (single generic 401)        │   │
 │  │  - Zod validation on every input                      │   │
 │  │  - Timing-safe HMAC comparison                        │   │
 │  │  - Password strength scorer (server-side)             │   │
-│  │  - 30-day profile + password cooldowns                │   │
+│  │  - 30-day profile + password cooldowns (compare-and-set)│   │
+│  │  - Ably token route enforces event visibility (BOLA)  │   │
 │  └────────────────────────┬─────────────────────────────┘   │
 └───────────────────────────┼──────────────────────────────────┘
                             │
@@ -64,8 +67,9 @@
 │  EventAttendance │ │ Per-account:   │ │                  │
 │  DeviceKey       │ │ scan (30/min)  │ │                  │
 │  AuditLog        │ │ api (100/min)  │ │                  │
-│  Notification    │ │                │ │                  │
-│  ...             │ │                │ │                  │
+│  Notification    │ │ admin (20/min) │ │                  │
+│  ...             │ │ import (3/min) │ │                  │
+│                  │ │ LRU-capped Map │ │                  │
 └──────────────────┘ └────────────────┘ └──────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
@@ -110,7 +114,8 @@
 - Supabase Auth (cookie-based sessions via @supabase/ssr)
 - Email/password, magic link, and passkey (WebAuthn) support
 - PKCE flow for email redirects (server-side code exchange via /api/auth/callback)
-- Brute-force lockout: 5 failed attempts → 15-minute account lock
+- Brute-force lockout: 5 failed attempts → 15-minute account lock. The lock is set via an atomic compare-and-set update (`where: { lockedUntil: null }`) so two concurrent failures cannot both skip the lock-set.
+- **Enumeration-safe login**: wrong-password, non-existent email, unconfirmed email, and deactivated account all return an identical generic 401. A dummy `bcrypt.compare` runs on the not-found path to equalize timing so response time does not reveal which emails are registered.
 - Cookies: `httpOnly`, `sameSite: lax`, `secure: true` in production
 
 ### 2. Authorization (RBAC)
@@ -139,7 +144,12 @@
 - Per-IP for unauthenticated endpoints (login, register, forgot-password)
 - Per-account for authenticated endpoints (100/min default)
 - Scan endpoint: 30/min per account (not IP — correct for shared WiFi)
-- Fail-open on Upstash errors (avoids locking all users on serverless)
+- **Admin mutations** (account create/delete): 20/min per admin — prevents admin-driven DoS
+- **Whitelist import** (JSON, up to 5000 rows): 3/min per organizer
+- **Whitelist file upload** (Excel/PDF/DOCX, up to 10MB): 5/min per organizer
+- **Passkey registration** (options + verify): 10/min per account
+- **Sensitive presets fail closed** on Upstash error (login, register, otp, passkeyVerify, passkeyRegister, passkeyAccount, loginAccount, adminMutation, whitelistImport, whitelistImportFile) — an attacker cannot DDoS the limiter to bypass brute-force protection
+- In-memory fallback Map is **LRU-capped at 10,000 keys** to prevent memory exhaustion under IP rotation
 
 ### 6. Cryptography
 - HMAC-SHA256 for QR token signing
@@ -179,6 +189,7 @@
 ### Ably (Managed Realtime)
 - Server publishes attendance events via Ably REST API (`ABLY_SERVER_KEY`)
 - Browser subscribes via Ably SDK with token authentication (`/api/ably/token` endpoint signs TokenRequests server-side using the SDK's `createTokenRequest`)
+- **Event visibility is enforced on the token route** — the same rule as `GET /api/events` (open-to-all OR exact program+section for students; program-wide or owner for organizers; admin bypass). A student cannot subscribe to another section's realtime channel. This closes a BOLA/API#1 vector that would have exposed other students' full name, student ID, program, and section.
 - Only organizers connect (students don't need realtime)
 - Falls back to 15s polling if Ably is not configured
 - CSP allows `*.ably.io` (REST) and `*.ably.net` (WebSocket)
@@ -187,7 +198,7 @@
 
 ### Caching
 - Account cache (30s TTL) — eliminates 1 DB query per request
-- Maintenance mode cache (10s TTL)
+- Maintenance mode cache (10s TTL) with stampede guard
 - Browser caching via `Cache-Control: stale-while-revalidate` on all GET routes
 
 ### Polling
@@ -200,6 +211,9 @@
 - Parallel queries via `Promise.all` on dashboard and events routes
 - 40 indexes covering all major query patterns
 - PgBouncer connection pooling (Supabase)
+- **Profile stats collapsed from 3 queries to 1** (`/api/profile/stats`) — the My-Attendance chart, scope breakdown, and streak are derived from a single `findMany` with JS bucketing, saving 2 DB round-trips per page load
+- **TOCTOU-safe cooldown enforcement** — profile and password cooldowns use conditional `updateMany` (where `lastChangedAt` null OR lt cutoff) so concurrent requests cannot both pass the read-only check
+- **Stable P2002 detection** via `isUniqueConstraintError(e)` (Prisma error code, not string match) on scan, override, and register routes
 
 ## Testing
 
@@ -217,7 +231,7 @@ bun run test
 | `password-strength.test.ts` | 34 | Password scoring |
 | `section-validation.test.ts` | 42 | Year/section consistency |
 | `event-visibility.test.ts` | 32 | Strict event filtering |
-| `cooldown.test.ts` | 18 | 30-day cooldown logic |
+| `cooldown.test.ts` | 21 | 30-day cooldown logic + TOCTOU-safe cutoff helper |
 
 ## Database Schema
 
@@ -250,4 +264,4 @@ bun run test
 | Ably | Free | Realtime attendance | 3M messages/mo, 200 conn |
 | Cloudflare Turnstile | Free | Optional bot protection (CAPTCHA alternative) | — |
 
-**Scalability:** Handles 2000-3000 users with 150-200 concurrent/min.
+**Scalability:** ~500 sustained concurrent scanning users / ~1,300 peak burst / ~1,300 MAU on free tiers. The first hard wall is Ably's 1,000 msg/s peak (degrades gracefully — attendance recording continues). See [CAPACITY-ASSESSMENT.md](./CAPACITY-ASSESSMENT.md) for the full analysis.

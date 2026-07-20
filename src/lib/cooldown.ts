@@ -15,9 +15,36 @@ export const COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
  * @param now           - The current timestamp (injectable for testing)
  * @returns `true` if the cooldown has passed (or was never set), `false` otherwise.
  */
-export function isCooldownExpired(lastChangedAt: Date | null, now: number = Date.now()): boolean {
+export function isCooldownExpired(
+  lastChangedAt: Date | null,
+  now: number = Date.now(),
+): boolean {
   if (!lastChangedAt) return true;
   return now - lastChangedAt.getTime() >= COOLDOWN_MS;
+}
+
+/**
+ * Compute the cutoff timestamp before which a cooldown is considered expired.
+ * Used to build a Prisma conditional-update `where` clause that atomically
+ * enforces the cooldown — closing the TOCTOU window where two concurrent
+ * PATCHes could both read "expired" and both succeed.
+ *
+ * Example Prisma usage (compare-and-set):
+ *   const cutoff = cooldownCutoff();
+ *   const updated = await db.account.updateMany({
+ *     where: { id, OR: [
+ *       { lastProfileUpdateAt: null },
+ *       { lastProfileUpdateAt: { lt: cutoff } },
+ *     ]},
+ *     data: { ...fields, lastProfileUpdateAt: new Date() },
+ *   });
+ *   if (updated.count === 0) return forbidden("cooldown still active");
+ *
+ * @param now - The current timestamp (injectable for testing)
+ * @returns A Date 30 days before `now`.
+ */
+export function cooldownCutoff(now: number = Date.now()): Date {
+  return new Date(now - COOLDOWN_MS);
 }
 
 /**
@@ -27,7 +54,10 @@ export function isCooldownExpired(lastChangedAt: Date | null, now: number = Date
  * @param now           - The current timestamp (injectable for testing)
  * @returns 0 if the cooldown has expired, otherwise the ceiling of days remaining.
  */
-export function daysUntilCooldownExpires(lastChangedAt: Date | null, now: number = Date.now()): number {
+export function daysUntilCooldownExpires(
+  lastChangedAt: Date | null,
+  now: number = Date.now(),
+): number {
   if (!lastChangedAt) return 0;
   const elapsed = now - lastChangedAt.getTime();
   if (elapsed >= COOLDOWN_MS) return 0;

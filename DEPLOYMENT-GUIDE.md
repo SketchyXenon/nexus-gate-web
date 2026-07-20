@@ -43,7 +43,7 @@ The app will be available at `http://localhost:3000`.
 5. Go to **Settings → Database → Connection string**:
    - Copy the **Transaction** URL (port 6543) → this is your `DATABASE_URL`
    - Copy the **Session** URL (port 5432) → this is your `DIRECT_URL`
-6. Go to **SQL Editor** → run the migration files from `supabase/migrations/` in order (0001 through 0016)
+6. Go to **SQL Editor** → run the migration files from `supabase/migrations/` in order (0001 through 0018)
 7. Go to **Authentication → URL Configuration**:
    - Set **Site URL** to your Vercel URL (e.g., `https://nexus-gate-web.vercel.app`)
    - Add your Vercel URL to **Redirect URLs**
@@ -175,3 +175,19 @@ Set `CRON_SECRET` on Vercel. Pass it via `?secret=YOUR_SECRET` in the cron URL, 
 
 ### Scanner shows "key is not extractable"
 Clear your browser data for the site. The old non-extractable keypair is regenerated on next visit.
+
+### Deactivated user reports "Incorrect email or password"
+This is by design. Login is enumeration-safe — deactivated accounts return the
+same generic 401 as a wrong password so an attacker cannot probe which emails
+are registered. A legitimately deactivated user will see "Incorrect email or
+password" and should contact an administrator, who can confirm the deactivation
+and restore the account from the admin panel. Do NOT special-case the deactivation
+message — that would re-open the enumeration oracle.
+
+### Admin operations hit 429 Too Many Requests
+Destructive admin operations have dedicated rate limits (stricter than the default
+100/min `apiAccount`): account create/delete = 20/min, whitelist JSON import = 3/min,
+whitelist file upload = 5/min, passkey registration = 10/min. These fail closed on
+limiter error. If a legitimate admin workflow hits these, stagger the operations or
+wait 60 seconds. Do NOT raise the limits without understanding the DoS surface —
+see CAPACITY-ASSESSMENT.md section 6.

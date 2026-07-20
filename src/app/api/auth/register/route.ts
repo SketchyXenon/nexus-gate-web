@@ -23,6 +23,7 @@ import {
 } from "@/lib/safe-account";
 import { recordTermsAcceptance } from "@/lib/terms-acceptance";
 import { getAppUrl } from "@/lib/app-url";
+import { isUniqueConstraintError } from "@/lib/prisma-errors";
 
 // POST /api/auth/register
 //
@@ -230,8 +231,9 @@ export async function POST(req: NextRequest) {
       // Roll back the Supabase user if the accounts row fails.
       const adminClient = createSupabaseAdminClient();
       await adminClient.auth.admin.deleteUser(authUid).catch(() => {});
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("Unique constraint") || msg.includes("unique")) {
+      // P2002 = unique constraint (email or studentId already taken).
+      // Use the stable Prisma error code instead of a fragile string match.
+      if (isUniqueConstraintError(e)) {
         return badRequest(
           "Unable to create an account with the provided information. Please check your details or contact your administrator.",
           "REGISTRATION_FAILED",

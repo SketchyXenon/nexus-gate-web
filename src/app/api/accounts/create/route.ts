@@ -9,6 +9,7 @@ import {
   conflict,
   parseBody,
   requireAuth,
+  checkRateLimitByKey,
   dbUnavailable,
   isDbUnavailableError,
 } from "@/lib/api";
@@ -25,6 +26,13 @@ export async function POST(req: NextRequest) {
     const res = await requireAuth("ADMIN");
     if ("error" in res) return res.error;
     const { account: admin } = res;
+
+    // Tighter rate limit for admin destructive mutations (20/min vs the
+    // default 100/min apiAccount). Account creation hits Supabase Auth +
+    // the DB, so an attacker (or a runaway admin script) could otherwise
+    // create 100 accounts/min. This preset fails CLOSED on limiter error.
+    const adminRl = await checkRateLimitByKey(admin.id, "adminMutation");
+    if (adminRl) return adminRl;
 
     const body = await parseBody(req);
     const parsed = adminCreateAccountSchema.safeParse(body);
@@ -80,8 +88,15 @@ export async function POST(req: NextRequest) {
         user_metadata: { fullName: d.fullName },
       });
     if (authError || !authData.user) {
+      // Log the real Supabase error server-side for operators; return a
+      // generic message to the client. The raw error (e.g. "User already
+      // registered") is an email-enumeration oracle and leaks architecture.
+      console.error(
+        "[accounts/create] Supabase createUser failed:",
+        authError?.message ?? "no error",
+      );
       return badRequest(
-        "Unable to create auth user. " + (authError?.message ?? ""),
+        "Unable to create the account. Please try again or contact support.",
         "AUTH_FAILED",
       );
     }

@@ -7,6 +7,7 @@ import {
   forbidden,
   notFound,
   requireAuth,
+  checkRateLimitByKey,
   dbUnavailable,
   isDbUnavailableError,
 } from "@/lib/api";
@@ -28,6 +29,12 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
     if ("error" in res) return res.error;
     const { account: admin } = res;
     const { id } = await params;
+
+    // Tighter rate limit for admin destructive mutations (20/min).
+    // Account deletion hits Supabase Auth + cascades to attendance/tokens.
+    // Fails CLOSED on limiter error.
+    const adminRl = await checkRateLimitByKey(admin.id, "adminMutation");
+    if (adminRl) return adminRl;
 
     if (admin.id === id) {
       return forbidden("You cannot delete your own account.");

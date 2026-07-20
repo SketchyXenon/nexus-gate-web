@@ -63,7 +63,7 @@ Browser → Caddy Gateway → Next.js App (port 3000) → Prisma → SQLite/Post
 
 ### Session Flow
 
-1. **Login** (`POST /api/auth/login`): Email + password → bcrypt verify → JWT access (15min) + refresh token (7d) cookies
+1. **Login** (`POST /api/auth/login`): Email + password → Supabase `signInWithPassword` → app-layer brute-force lockout (5 fails → 15-min `lockedUntil`, set via atomic compare-and-set). **Enumeration-safe**: wrong-password, non-existent email, unconfirmed email, and deactivated account all return an identical generic 401. A dummy `bcrypt.compare` runs on the not-found path to equalize timing.
 2. **Refresh** (`POST /api/auth/refresh`): Refresh token → HMAC-SHA256 hash → O(1) DB lookup → rotate token (revoke old, issue new)
 3. **Logout** (`POST /api/auth/logout`): Revoke refresh token, clear cookies
 4. **Reuse Detection**: If a revoked token is presented → revoke ALL tokens for that account
@@ -87,12 +87,12 @@ Every API route uses `requireAuth(minimumRole)`:
 
 - **Hashing**: bcrypt cost 12
 - **Strength**: `strongPasswordSchema` scores passwords 0-6; minimum 4 required for password changes
-- **Cooldown**: 30 days between password changes
+- **Cooldown**: 30 days between password changes, enforced via a TOCTOU-safe conditional `updateMany` (compare-and-set on `lastPasswordChangeAt`) so concurrent requests cannot halve the cooldown
 - **Server-side enforced**: Client cannot bypass the strength check
 
 ### Profile Cooldowns
 
-- **Profile update**: 30 days between updates
+- **Profile update**: 30 days between updates, enforced via the same TOCTOU-safe compare-and-set on `lastProfileUpdateAt`
 - **Course change**: Once per account (tracked via `courseModifiedAt`)
 - **Year/Section consistency**: Section prefix must match year (e.g. Year 3 → "3-A")
 
@@ -179,14 +179,27 @@ The scan endpoint enforces the **same** rule. A student who can see the event ca
 
 ### 8 Security Layers
 
-1. **Authentication**: JWT (15min) + rotating refresh tokens (7d) with reuse detection
-2. **Authorization**: RBAC (ADMIN/ORGANIZER/USER) with server-enforced checks
-3. **Input Validation**: Zod schemas on every API input
+1. **Authentication**: Supabase Auth (cookie-based, PKCE) + app-layer brute-force lockout (5 fails → 15-min, atomic compare-and-set). **Enumeration-safe login** — single generic 401 for all failure paths + dummy bcrypt timing equalization.
+2. **Authorization**: RBAC (ADMIN/ORGANIZER/USER) with server-enforced checks on every route, including object-level (BOLA) on dynamic `[id]` routes and the Ably token route (event visibility check)
+3. **Input Validation**: Zod schemas on every API input; explicit field allowlists on all mutations (no mass assignment)
 4. **CSRF Defense**: Origin/Referer check + SameSite=Lax cookies
-5. **Rate Limiting**: Per-IP (unauth) + per-account (auth); fail-closed for sensitive presets
-6. **Cryptography**: Ed25519 (certificates), HMAC-SHA256 (QR tokens), bcrypt (passwords), timing-safe comparisons
+5. **Rate Limiting**: Per-IP (unauth) + per-account (auth) + dedicated presets for admin mutations (20/min), whitelist imports (3/min), file uploads (5/min), passkey registration (10/min). Sensitive presets fail closed on limiter error. In-memory fallback LRU-capped at 10k keys.
+6. **Cryptography**: Ed25519 (certificates), HMAC-SHA256 (QR tokens), bcrypt (passwords), timing-safe comparisons, stable P2002 detection via Prisma error code
 7. **Database Security**: RLS on all tables, guard trigger on accounts, CHECK constraints
 8. **HTTP Headers**: CSP (no unsafe-eval), X-Frame-Options, HSTS, Permissions-Policy
+
+### Error Handling (OWASP A10)
+
+- Error responses reveal only what the user needs, never stack traces or internal state
+- The `accounts/create` route returns a generic "Unable to create the account" message; the raw Supabase error is logged server-side only (closes an email-enumeration oracle)
+- DB unavailability surfaces as 503 `DB_UNAVAILABLE`, not 500
+
+### Concurrency Controls (TOCTOU-safe)
+
+- **Scan one-attempt**: atomic `create` with `@@unique([eventId, accountId])`; P2002 caught via stable code-based detection and returned as `already_scanned`
+- **Login lockout**: increment is atomic; lock-set is a compare-and-set `updateMany({ where: { lockedUntil: null } })`
+- **Profile/password cooldown**: conditional `updateMany` (where `lastChangedAt` null OR lt cutoff); if 0 rows affected, a concurrent request won the race
+- **Override idempotency**: `@@unique([eventId, studentId])` + P2002 catch inside a `$transaction`
 
 ### File Upload Security
 
@@ -234,8 +247,8 @@ The scan endpoint enforces the **same** rule. A student who can see the event ca
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/api/attendance` | USER | Submit signed scan certificate |
-| POST | `/api/attendance/override` | ORGANIZER+ | Manual check-in (no QR) |
+| POST | `/api/attendance` | USER | Submit signed scan certificate (atomic one-attempt via unique constraint + stable P2002 detection) |
+| POST | `/api/attendance/override` | ADMIN | Manual check-in (no QR). Atomic `$transaction` + P2002 catch for idempotency. |
 | GET | `/api/attendance/overrides` | ORGANIZER+ | List overrides (paginated) |
 
 ### Profile
@@ -271,6 +284,7 @@ The scan endpoint enforces the **same** rule. A student who can see the event ca
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
+| GET | `/api/ably/token` | Any | Sign Ably TokenRequest (subscribe-only, single channel). **Enforces event visibility** — students cannot subscribe to another section's channel. |
 | GET | `/api/dashboard` | Any | Role-aware dashboard data |
 | GET | `/api/settings` | None | Public settings (maintenance mode) |
 | GET | `/api/health` | None | Health check |
@@ -344,7 +358,7 @@ All filter/sort toolbars follow a consistent pattern:
 
 ## 10. Testing
 
-### Unit Tests (361 tests)
+### Unit Tests (368 tests)
 
 ```bash
 bun run test
@@ -362,13 +376,14 @@ bun run test
 | Password | 27 | `password-strength.test.ts` — scoring |
 | Certificates | 21 | `scan-certificate.test.ts` — creation, idempotency |
 | Event Time | 19 | `event-time.test.ts` — time window validation |
-| Cooldowns | 18 | `cooldown.test.ts` — 30-day logic |
+| Cooldowns | 21 | `cooldown.test.ts` — 30-day logic + TOCTOU-safe cutoff helper |
 | Pagination | 17 | `pagination.test.ts` — schema + helpers |
 | Section | 14 | `section-validation.test.ts` — year/section consistency |
 | ICS Export | 12 | `ics-export.test.ts` — calendar export |
 | Ably Token | 10 | `ably/token/route.test.ts` — signing, key parsing |
 | WebAuthn | 16 | `webauthn-context.test.ts` + `passkey-credential.test.ts` |
 | Rate Limit | 8 | `rate-limit.test.ts` — Upstash + in-memory |
+| Prisma Errors | 4 | `prisma-errors.test.ts` — stable P2002 detection |
 | Device Key | 4 | `device-key-server.test.ts` — Ed25519 verification |
 
 ### E2E Testing

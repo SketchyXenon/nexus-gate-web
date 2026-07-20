@@ -30,9 +30,10 @@
 
 ## 1. Overview
 
-**Nexus Gate** is a production-ready attendance system for Cebu Technological University (CTU) Danao campus. Students scan rotating QR codes projected in class to check in; organizers get a live roster with anti-cheating verification.
+**Nexus Gate** is a production-ready attendance system for Institutional Use. Students scan rotating QR codes projected in class to check in; organizers get a live roster with anti-cheating verification.
 
 ### Key differentiator
+
 A multi-layer anti-cheating stack that defeats screenshot, photo-replay, and offline-replay attacks without requiring specialized hardware:
 
 - **Two-tier rotating QR** — 15-second time blocks with 500ms sub-frames, each HMAC-signed
@@ -41,6 +42,7 @@ A multi-layer anti-cheating stack that defeats screenshot, photo-replay, and off
 - **Offline-first sync queue** — signed certificates persist in localStorage, sync with exponential backoff
 
 ### Target scale
+
 - **150–200 concurrent users** (sustained)
 - **3,000–3,500 total users** (departmental-wide)
 - **$0–75/month** infrastructure cost (free tiers → Pro plans)
@@ -50,61 +52,68 @@ A multi-layer anti-cheating stack that defeats screenshot, photo-replay, and off
 ## 2. Technology Stack
 
 ### Core framework
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| Next.js | 16.1.1 | App Router, Turbopack, standalone output |
-| React | 19.0.0 | UI runtime |
-| TypeScript | ^5 | Type safety (strict mode, `noImplicitAny: false`) |
-| Bun | ^1.3 | Runtime + package manager |
+
+| Technology | Version | Purpose                                           |
+| ---------- | ------- | ------------------------------------------------- |
+| Next.js    | 16.1.1  | App Router, Turbopack, standalone output          |
+| React      | 19.0.0  | UI runtime                                        |
+| TypeScript | ^5      | Type safety (strict mode, `noImplicitAny: false`) |
+| Bun        | ^1.3    | Runtime + package manager                         |
 
 ### Database & auth
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| Prisma | 6.11.1 | ORM (dual schema: Postgres prod / SQLite dev) |
-| Supabase | 2.110.0 | PostgreSQL + Auth (RLS, PKCE, service role) |
-| `@supabase/ssr` | 0.12.0 | Cookie-based session management |
+
+| Technology      | Version | Purpose                                       |
+| --------------- | ------- | --------------------------------------------- |
+| Prisma          | 6.11.1  | ORM (dual schema: Postgres prod / SQLite dev) |
+| Supabase        | 2.110.0 | PostgreSQL + Auth (RLS, PKCE, service role)   |
+| `@supabase/ssr` | 0.12.0  | Cookie-based session management               |
 
 ### Security & crypto
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| `@simplewebauthn/server` | 13.3.2 | Passkey/WebAuthn registration + verification |
-| `@simplewebauthn/browser` | 13.3.0 | Client-side WebAuthn API |
-| bcryptjs | 3.0.3 | Password hashing (cost 12) |
-| Web Crypto API | — | Ed25519 keypair generation + signing (client) |
-| Node.js crypto | — | Ed25519 signature verification (server) |
+
+| Technology                | Version | Purpose                                       |
+| ------------------------- | ------- | --------------------------------------------- |
+| `@simplewebauthn/server`  | 13.3.2  | Passkey/WebAuthn registration + verification  |
+| `@simplewebauthn/browser` | 13.3.0  | Client-side WebAuthn API                      |
+| bcryptjs                  | 3.0.3   | Password hashing (cost 12)                    |
+| Web Crypto API            | —       | Ed25519 keypair generation + signing (client) |
+| Node.js crypto            | —       | Ed25519 signature verification (server)       |
 
 ### Realtime & infrastructure
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| Ably | 2.23.0 | Managed realtime (REST publish server-side, SDK subscribe client-side) |
-| `@upstash/ratelimit` + `@upstash/redis` | 2.0.8 / 1.38.0 | Distributed rate limiting (fails open to in-memory on error) |
-| `@sentry/nextjs` | 10.62.0 | Error monitoring (3 configs: client/server/edge) |
-| Caddy | — | Reverse proxy (tiered rate limits, compression, health checks) |
+
+| Technology                              | Version        | Purpose                                                                |
+| --------------------------------------- | -------------- | ---------------------------------------------------------------------- |
+| Ably                                    | 2.23.0         | Managed realtime (REST publish server-side, SDK subscribe client-side) |
+| `@upstash/ratelimit` + `@upstash/redis` | 2.0.8 / 1.38.0 | Distributed rate limiting (fails open to in-memory on error)           |
+| `@sentry/nextjs`                        | 10.62.0        | Error monitoring (3 configs: client/server/edge)                       |
+| Caddy                                   | —              | Reverse proxy (tiered rate limits, compression, health checks)         |
 
 ### Frontend
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| Tailwind CSS | 4 | Styling (CSS-based config via `@tailwindcss/postcss`) |
-| shadcn/ui | — | Component library (new-york style, ~55 primitives) |
-| TanStack Query | 5.82.0 | Server state (auto-refresh on 401, polling fallback) |
-| TanStack Table | 8.21.3 | Data tables |
-| react-hook-form + Zod | 7.60 / 4.0.2 | Forms + validation (shared schemas client/server) |
-| framer-motion | 12.23.2 | Animations (landing page, transitions) |
+
+| Technology            | Version      | Purpose                                               |
+| --------------------- | ------------ | ----------------------------------------------------- |
+| Tailwind CSS          | 4            | Styling (CSS-based config via `@tailwindcss/postcss`) |
+| shadcn/ui             | —            | Component library (new-york style, ~55 primitives)    |
+| TanStack Query        | 5.82.0       | Server state (auto-refresh on 401, polling fallback)  |
+| TanStack Table        | 8.21.3       | Data tables                                           |
+| react-hook-form + Zod | 7.60 / 4.0.2 | Forms + validation (shared schemas client/server)     |
+| framer-motion         | 12.23.2      | Animations (landing page, transitions)                |
 
 ### File parsing & QR
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| exceljs | 4.4.0 | Excel whitelist import (replaced CVE-vulnerable `xlsx`) |
-| mammoth | 1.12.0 | DOCX parsing |
-| papaparse | 5.5.4 | CSV parsing |
-| pdfjs-dist | 4.10.38 | PDF parsing (pure JS, Vercel-compatible) |
-| jsqr | 1.4.0 | QR code decoding (scanner camera feed) |
-| qrcode.react | 4.2.0 | QR code rendering (projector view) |
+
+| Technology   | Version | Purpose                                                 |
+| ------------ | ------- | ------------------------------------------------------- |
+| exceljs      | 4.4.0   | Excel whitelist import (replaced CVE-vulnerable `xlsx`) |
+| mammoth      | 1.12.0  | DOCX parsing                                            |
+| papaparse    | 5.5.4   | CSV parsing                                             |
+| pdfjs-dist   | 4.10.38 | PDF parsing (pure JS, Vercel-compatible)                |
+| jsqr         | 1.4.0   | QR code decoding (scanner camera feed)                  |
+| qrcode.react | 4.2.0   | QR code rendering (projector view)                      |
 
 ### Testing
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| Vitest | 4.1.9 | Unit + integration tests (node env, 361 tests) |
+
+| Technology | Version | Purpose                                        |
+| ---------- | ------- | ---------------------------------------------- |
+| Vitest     | 4.1.9   | Unit + integration tests (node env, 368 tests) |
 
 ---
 
@@ -183,19 +192,19 @@ A multi-layer anti-cheating stack that defeats screenshot, photo-replay, and off
 
 11 tables across 12 migrations. Dual Prisma schema: `schema.prisma` (Postgres prod, `@map` snake_case) and `schema.sqlite.prisma` (SQLite dev, camelCase).
 
-| Table | Growth driver | Estimated rows/month (3000 users) |
-|-------|---------------|------------------------------------|
-| `accounts` | per-user | 3,000 |
-| `authorized_students` | per-imported-student | ≤ 3,000 |
-| `verification_tokens` | per-verification-request | high churn (cron-purged) |
-| `refresh_tokens` | per-login-session | ~6,000 (2/user) |
-| `events` | per-event | low |
-| **`event_attendance`** | **per-scan (highest)** | **~300,000** |
-| `attendance_overrides` | per-override | low |
-| `notifications` | per-notification-per-user | up to 600,000 |
-| `audit_logs` | per-mutation (append-only) | ~4,500 (cron-purged at 90d) |
-| `device_keys` | per-device-per-user | ~6,000 (max 5/account) |
-| `settings` | static | ~5 |
+| Table                  | Growth driver              | Estimated rows/month (3000 users) |
+| ---------------------- | -------------------------- | --------------------------------- |
+| `accounts`             | per-user                   | 3,000                             |
+| `authorized_students`  | per-imported-student       | ≤ 3,000                           |
+| `verification_tokens`  | per-verification-request   | high churn (cron-purged)          |
+| `refresh_tokens`       | per-login-session          | ~6,000 (2/user)                   |
+| `events`               | per-event                  | low                               |
+| **`event_attendance`** | **per-scan (highest)**     | **~300,000**                      |
+| `attendance_overrides` | per-override               | low                               |
+| `notifications`        | per-notification-per-user  | up to 600,000                     |
+| `audit_logs`           | per-mutation (append-only) | ~4,500 (cron-purged at 90d)       |
+| `device_keys`          | per-device-per-user        | ~6,000 (max 5/account)            |
+| `settings`             | static                     | ~5                                |
 
 ### 4.2 Index strategy
 
@@ -213,36 +222,36 @@ A multi-layer anti-cheating stack that defeats screenshot, photo-replay, and off
 
 RLS enabled on all 11 tables. The app connects via service role (bypasses RLS). RLS is a defense-in-depth backstop if the anon key leaks:
 
-| Table | Policy (authenticated role) |
-|-------|-----------------------------|
-| `accounts` | SELECT own OR admin; UPDATE own (guard trigger blocks sensitive cols) |
-| `events` | SELECT any authenticated; writes service-role only |
-| `event_attendance` | SELECT own OR admin; writes service-role only |
-| `attendance_overrides` | SELECT if admin OR event owner; writes service-role only |
-| `notifications` | SELECT + UPDATE own; create/delete service-role only |
-| `audit_logs` | SELECT admin only; writes service-role only |
-| `device_keys` | SELECT own; writes service-role only |
-| `settings` | SELECT any authenticated; writes service-role only |
+| Table                  | Policy (authenticated role)                                           |
+| ---------------------- | --------------------------------------------------------------------- |
+| `accounts`             | SELECT own OR admin; UPDATE own (guard trigger blocks sensitive cols) |
+| `events`               | SELECT any authenticated; writes service-role only                    |
+| `event_attendance`     | SELECT own OR admin; writes service-role only                         |
+| `attendance_overrides` | SELECT if admin OR event owner; writes service-role only              |
+| `notifications`        | SELECT + UPDATE own; create/delete service-role only                  |
+| `audit_logs`           | SELECT admin only; writes service-role only                           |
+| `device_keys`          | SELECT own; writes service-role only                                  |
+| `settings`             | SELECT any authenticated; writes service-role only                    |
 
 Anonymous role: **DENIED** on every table.
 
 ### 4.4 Database triggers
 
-| Trigger | Table | Purpose |
-|---------|-------|---------|
-| `set_updated_at()` | accounts, events, settings | Auto-stamps `updated_at = now()` on UPDATE |
-| `guard_account_columns()` | accounts | Blocks REST API self-escalation of role/status/password_hash (role-aware: only fires for `authenticated`/`anon` context, skips for service role) |
-| `guard_last_admin()` | accounts | Atomically prevents reducing active admin count to 0 (TOCTOU race fix, migration 0012) |
+| Trigger                   | Table                      | Purpose                                                                                                                                          |
+| ------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `set_updated_at()`        | accounts, events, settings | Auto-stamps `updated_at = now()` on UPDATE                                                                                                       |
+| `guard_account_columns()` | accounts                   | Blocks REST API self-escalation of role/status/password_hash (role-aware: only fires for `authenticated`/`anon` context, skips for service role) |
+| `guard_last_admin()`      | accounts                   | Atomically prevents reducing active admin count to 0 (TOCTOU race fix, migration 0012)                                                           |
 
 ### 4.5 Purge policies (cron/cleanup)
 
-| Table | Retention | Purpose |
-|-------|-----------|---------|
-| `verification_tokens` | expired or used | Immediate |
-| `refresh_tokens` | expired or revoked | Immediate |
-| `notifications` | read >30 days | Prevent unbounded growth |
-| `event_attendance` | >180 days | Storage management (closes 24h→15min offline window) |
-| `audit_logs` | >90 days | Compliance + storage |
+| Table                 | Retention          | Purpose                                              |
+| --------------------- | ------------------ | ---------------------------------------------------- |
+| `verification_tokens` | expired or used    | Immediate                                            |
+| `refresh_tokens`      | expired or revoked | Immediate                                            |
+| `notifications`       | read >30 days      | Prevent unbounded growth                             |
+| `event_attendance`    | >180 days          | Storage management (closes 24h→15min offline window) |
+| `audit_logs`          | >90 days           | Compliance + storage                                 |
 
 ---
 
@@ -254,8 +263,8 @@ Anonymous role: **DENIED** on every table.
 
 ### 5.2 Three sign-in methods
 
-1. **Password** — Supabase `signInWithPassword` + app-layer brute-force lockout (5 fails → 15-min `lockedUntil`)
-2. **Passkey / WebAuthn** — `@simplewebauthn/server` discoverable credentials. Login extracts credential ID from assertion, does **O(log N) indexed lookup** via `passkey_credential_id` column (was O(N) scan + N crypto ops — fixed). Session established via `admin.generateLink` → `verifyOtp` (magiclink)
+1. **Password** — Supabase `signInWithPassword` + app-layer brute-force lockout (5 fails → 15-min `lockedUntil`). The lock is set via an atomic compare-and-set update (`where: { lockedUntil: null }`) so two concurrent failures cannot both skip the lock-set. Login is **enumeration-safe**: wrong-password, non-existent email, unconfirmed email, and deactivated account all return an identical generic 401. A dummy `bcrypt.compare` runs on the not-found path to equalize timing.
+2. **Passkey / WebAuthn** — `@simplewebauthn/server` discoverable credentials. Login extracts credential ID from assertion, does **O(log N) indexed lookup** via `passkey_credential_id` column (was O(N) scan + N crypto ops — fixed). Session established via `admin.generateLink` → `verifyOtp` (magiclink). Registration (options + verify) is rate-limited at 10/min per account.
 3. **Magic link** — Supabase `signInWithOtp` (enumeration-safe responses)
 
 ### 5.3 RBAC
@@ -266,18 +275,18 @@ Three roles with hierarchical privileges:
 USER (1) < ORGANIZER (2) < ADMIN (3)
 ```
 
-| Capability | USER | ORGANIZER | ADMIN |
-|------------|------|-----------|-------|
-| Scan QR to check in | ✓ | ✗ | ✗ |
-| View own attendance | ✓ | — | — |
-| Create/edit events | ✗ | ✓ (own program/section) | ✓ (any) |
-| View event attendance | ✗ | ✓ (own + visible) | ✓ (all) |
-| Manual attendance override | ✗ | ✓ | ✓ |
-| Project QR codes | ✗ | ✓ | ✓ |
-| Manage student whitelist | ✗ | ✓ (import) | ✓ (delete) |
-| Manage accounts | ✗ | ✗ | ✓ |
-| View audit logs | ✗ | ✗ | ✓ |
-| Toggle maintenance mode | ✗ | ✗ | ✓ |
+| Capability                 | USER | ORGANIZER               | ADMIN      |
+| -------------------------- | ---- | ----------------------- | ---------- |
+| Scan QR to check in        | ✓    | ✗                       | ✗          |
+| View own attendance        | ✓    | —                       | —          |
+| Create/edit events         | ✗    | ✓ (own program/section) | ✓ (any)    |
+| View event attendance      | ✗    | ✓ (own + visible)       | ✓ (all)    |
+| Manual attendance override | ✗    | ✓                       | ✓          |
+| Project QR codes           | ✗    | ✓                       | ✓          |
+| Manage student whitelist   | ✗    | ✓ (import)              | ✓ (delete) |
+| Manage accounts            | ✗    | ✗                       | ✓          |
+| View audit logs            | ✗    | ✗                       | ✓          |
+| Toggle maintenance mode    | ✗    | ✗                       | ✓          |
 
 `requireAuth(minimumRole, {exactRole?})` on every authenticated route. Some routes use `exactRole: true` (e.g. `/api/attendance` scan is USER-only).
 
@@ -287,7 +296,7 @@ USER (1) < ORGANIZER (2) < ADMIN (3)
 - **Server-side strength scorer** (`scorePassword()`) shared between client meter and server Zod schema — cannot be bypassed client-side
 - **Minimum score 4/6**: length ≥ 8 + uppercase + lowercase + digit + (length ≥ 12 OR special char)
 - **Penalties**: common patterns (password, 123456, qwerty, etc.), 3+ sequential chars (abcd, 1234), 4+ repeated chars (aaaa)
-- **30-day cooldown** on password changes + profile updates
+- **30-day cooldown** on password changes + profile updates, enforced via a TOCTOU-safe conditional `updateMany` (where `lastChangedAt` is null or older than the cutoff) so concurrent requests cannot both pass the read-only check and halve the cooldown
 - **RECOVERY-only AMR check** on reset-password — rejects `otp`/`magiclink` sessions to prevent stolen-session password takeover
 
 ### 5.5 Session management
@@ -302,6 +311,7 @@ USER (1) < ORGANIZER (2) < ADMIN (3)
 ## 6. API Surface
 
 46 API routes organized across 12 domains. Every route has:
+
 - Explicit `Cache-Control` header
 - `maxDuration` on routes doing heavy work (Supabase Auth, crypto, file parsing)
 - Zod input validation
@@ -311,20 +321,20 @@ USER (1) < ORGANIZER (2) < ADMIN (3)
 
 ### Route inventory
 
-| Domain | Routes | Methods |
-|--------|--------|---------|
-| **Auth** (11) | `/auth/{callback, check, forgot-password, login, logout, magic-link, me, refresh, register, reset-password}` + passkey `login-options`/`login-verify`/`register-options`/`register-verify` | POST (mostly), GET (callback, me) |
-| **Accounts** (4) | `/accounts` GET, `/accounts/create` POST, `/accounts/[id]` PATCH, `/accounts/[id]/delete` DELETE | GET, POST, PATCH, DELETE |
-| **Attendance** (4) | `/attendance` POST, `/attendance/override` POST, `/attendance/overrides` GET, `/attendance/recent` GET | POST, GET |
-| **Events** (5) | `/events` GET/POST, `/events/[id]` GET/PATCH/DELETE, `/events/[id]/{attendance, details, secret}` GET | GET, POST, PATCH, DELETE |
-| **Whitelist** (4) | `/whitelist` GET/POST, `/whitelist/[studentId]` DELETE, `/whitelist/{import-file, template}` POST/GET | GET, POST, DELETE |
-| **Profile** (3) | `/profile` GET/PATCH, `/profile/device-key` GET/POST/DELETE, `/profile/password` POST | GET, PATCH, POST, DELETE |
-| **Notifications** (3) | `/notifications` GET/POST, `/notifications/{status, subscribe}` GET/POST/DELETE | GET, POST, DELETE |
-| **Admin** (2) | `/admin/{cleanup, maintenance}` POST | POST |
-| **Cron** (2) | `/cron/{cleanup, event-reminders}` GET+POST | GET, POST |
-| **Dashboard** (1) | `/dashboard` GET | GET |
-| **Audit-logs** (1) | `/audit-logs` GET | GET |
-| **Other** (3) | `/health` GET, `/settings` GET, `/` (root stub) | GET |
+| Domain                | Routes                                                                                                                                                                                     | Methods                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------- |
+| **Auth** (11)         | `/auth/{callback, check, forgot-password, login, logout, magic-link, me, refresh, register, reset-password}` + passkey `login-options`/`login-verify`/`register-options`/`register-verify` | POST (mostly), GET (callback, me) |
+| **Accounts** (4)      | `/accounts` GET, `/accounts/create` POST, `/accounts/[id]` PATCH, `/accounts/[id]/delete` DELETE                                                                                           | GET, POST, PATCH, DELETE          |
+| **Attendance** (4)    | `/attendance` POST, `/attendance/override` POST, `/attendance/overrides` GET, `/attendance/recent` GET                                                                                     | POST, GET                         |
+| **Events** (5)        | `/events` GET/POST, `/events/[id]` GET/PATCH/DELETE, `/events/[id]/{attendance, details, secret}` GET                                                                                      | GET, POST, PATCH, DELETE          |
+| **Whitelist** (4)     | `/whitelist` GET/POST, `/whitelist/[studentId]` DELETE, `/whitelist/{import-file, template}` POST/GET                                                                                      | GET, POST, DELETE                 |
+| **Profile** (3)       | `/profile` GET/PATCH, `/profile/device-key` GET/POST/DELETE, `/profile/password` POST                                                                                                      | GET, PATCH, POST, DELETE          |
+| **Notifications** (3) | `/notifications` GET/POST, `/notifications/{status, subscribe}` GET/POST/DELETE                                                                                                            | GET, POST, DELETE                 |
+| **Admin** (2)         | `/admin/{cleanup, maintenance}` POST                                                                                                                                                       | POST                              |
+| **Cron** (2)          | `/cron/{cleanup, event-reminders}` GET+POST                                                                                                                                                | GET, POST                         |
+| **Dashboard** (1)     | `/dashboard` GET                                                                                                                                                                           | GET                               |
+| **Audit-logs** (1)    | `/audit-logs` GET                                                                                                                                                                          | GET                               |
+| **Other** (3)         | `/health` GET, `/settings` GET, `/` (root stub)                                                                                                                                            | GET                               |
 
 ---
 
@@ -436,18 +446,18 @@ Server (attendance route)                Client (organizer views)
 
 The entire authenticated app lives at `/`. No App Router nested routing — `AppShell` holds `useState<ViewId>` with 10 possible values:
 
-| View | Roles | Purpose |
-|------|-------|---------|
-| `dashboard` | All (branched by role) | Stats, recent events, recent check-ins |
-| `scanner` | USER | Camera QR scanner with offline queue |
-| `events` | ADMIN, ORGANIZER | Event CRUD + past events |
-| `project-qr` | ADMIN, ORGANIZER | Projector view (rotating QR + live attendance) |
-| `attendance` | ADMIN, ORGANIZER | Live roster (includes ended events) |
-| `overrides` | ADMIN, ORGANIZER | Manual attendance entry |
-| `whitelist` | ADMIN, ORGANIZER | Student roster import + management |
-| `accounts` | ADMIN | User management |
-| `audit-logs` | ADMIN | Append-only action log |
-| `profile` | ORGANIZER, USER | Profile + passkey + device management |
+| View         | Roles                  | Purpose                                        |
+| ------------ | ---------------------- | ---------------------------------------------- |
+| `dashboard`  | All (branched by role) | Stats, recent events, recent check-ins         |
+| `scanner`    | USER                   | Camera QR scanner with offline queue           |
+| `events`     | ADMIN, ORGANIZER       | Event CRUD + past events                       |
+| `project-qr` | ADMIN, ORGANIZER       | Projector view (rotating QR + live attendance) |
+| `attendance` | ADMIN, ORGANIZER       | Live roster (includes ended events)            |
+| `overrides`  | ADMIN, ORGANIZER       | Manual attendance entry                        |
+| `whitelist`  | ADMIN, ORGANIZER       | Student roster import + management             |
+| `accounts`   | ADMIN                  | User management                                |
+| `audit-logs` | ADMIN                  | Append-only action log                         |
+| `profile`    | ORGANIZER, USER        | Profile + passkey + device management          |
 
 ### Composition tree
 
@@ -482,6 +492,7 @@ AppShell
 ### Registration wizard
 
 3-step multi-step form with progress indicator:
+
 1. **Account** — email + password + confirm (real-time availability check, 400ms debounce)
 2. **Identity** — full name + student ID (real-time availability check)
 3. **Program** — optional program + section → submit
@@ -523,35 +534,45 @@ Per-step validation with race-condition fix: if user clicks Continue before debo
 
 ### Rate-limit presets
 
-| Preset | Max | Window | Keyed on | Routes |
-|--------|-----|--------|----------|--------|
-| `login` | 5 | 60s | **per-email** | `/auth/login`, passkey login |
-| `register` | 5 | 60s | per-IP | `/auth/register` |
-| `otp` | 5 | 60s | per-IP | `/auth/forgot-password`, `/auth/reset-password`, `/auth/magic-link` |
-| `check` | 15 | 60s | per-IP | `/auth/check` (real-time availability) |
-| `scan` | 60 | 60s | per-IP (fallback) | `/api/attendance` |
-| `scanAccount` | 30 | 60s | **per-account** | `/api/attendance` (primary) |
-| `api` | 120 | 60s | per-IP (fallback) | authed routes |
-| `apiAccount` | 100 | 60s | **per-account** | ALL authed routes (auto via `requireAuth`) |
+| Preset                | Max | Window | Keyed on          | Routes                                                              |
+| --------------------- | --- | ------ | ----------------- | ------------------------------------------------------------------- |
+| `login`               | 5   | 60s    | **per-email**     | `/auth/login`, passkey login                                        |
+| `register`            | 5   | 60s    | per-IP            | `/auth/register`                                                    |
+| `otp`                 | 5   | 60s    | per-IP            | `/auth/forgot-password`, `/auth/reset-password`, `/auth/magic-link` |
+| `check`               | 15  | 60s    | per-IP            | `/auth/check` (real-time availability)                              |
+| `scan`                | 60  | 60s    | per-IP (fallback) | `/api/attendance`                                                   |
+| `scanAccount`         | 30  | 60s    | **per-account**   | `/api/attendance` (primary)                                         |
+| `api`                 | 120 | 60s    | per-IP (fallback) | authed routes                                                       |
+| `apiAccount`          | 100 | 60s    | **per-account**   | ALL authed routes (auto via `requireAuth`)                          |
+| `passkeyOptions`      | 30  | 60s    | per-IP            | `/auth/passkey/login-options`                                       |
+| `passkeyVerify`       | 10  | 60s    | per-IP            | `/auth/passkey/login-verify`                                        |
+| `passkeyAccount`      | 5   | 60s    | **per-account**   | `/auth/passkey/login-verify` (post-credential-lookup)               |
+| `loginAccount`        | 5   | 60s    | **per-account**   | `/auth/login` (post-email-lookup)                                   |
+| `passkeyRegister`     | 10  | 60s    | **per-account**   | `/auth/passkey/register-options` + `register-verify`                |
+| `adminMutation`       | 20  | 60s    | **per-account**   | `/accounts/create`, `/accounts/[id]/delete`                         |
+| `whitelistImport`     | 3   | 60s    | **per-account**   | `/whitelist` POST (JSON, up to 5000 rows)                           |
+| `whitelistImportFile` | 5   | 60s    | **per-account**   | `/whitelist/import-file` (Excel/PDF/DOCX, up to 10MB)               |
 
 **Key design**: `login` is per-email (not per-IP) because 200+ students share one campus IP. `scanAccount` is per-account (not per-IP) for the same reason. The per-account DB lockout (5 fails → 15-min) is the primary brute-force defense.
 
-**Caddy tiered limits**: scan 60r/m, general API 100r/m. No per-IP auth limit (removed for NAT'd campus safety).
+**Sensitive presets fail closed** on Upstash error (login, register, otp, passkeyVerify, passkeyRegister, passkeyAccount, loginAccount, adminMutation, whitelistImport, whitelistImportFile) — an attacker cannot DDoS the limiter to bypass brute-force protection. General presets (`api`, `apiAccount`, `scan`, `scanAccount`, `passkeyOptions`, `check`) fail open to avoid locking all users during a transient Upstash outage.
+
+**In-memory fallback** (no Upstash configured): LRU-capped at 10,000 keys to prevent memory exhaustion under IP rotation. On Vercel serverless (multi-instance) the in-memory counts diverge per instance — a documented free-tier trade-off; Upstash restores global consistency.
 
 ### Cache headers
 
-| Route | Header | Rationale |
-|-------|--------|-----------|
-| `/api/health` | `public, s-maxage=10, swr=30` | Public, edge-cacheable |
-| `/api/settings` | `public, s-maxage=30, swr=60` | Public, edge-cacheable |
-| `/api/whitelist/template` | `public, s-maxage=3600, swr=86400` | Static template |
-| `/api/events` | `private, s-maxage=15, swr=60` | Per-user, short TTL |
-| `/api/events/[id]/attendance` | `private, s-maxage=10, swr=30` | Per-user, polling absorb |
-| `/api/dashboard` | `private, no-cache, swr=30` | Per-user, fresh |
-| `/api/auth/me` | `private, no-cache` | Per-user session |
-| `/api/auth/callback` | `no-store` | Auth callback, never cache |
-| `/api/cron/*` | `no-store` | Mutates state, never cache |
-| All other per-user GETs | `private, no-cache` | Per-user freshness |
+| Route                         | Header                             | Rationale                  |
+| ----------------------------- | ---------------------------------- | -------------------------- |
+| `/api/health`                 | `public, s-maxage=10, swr=30`      | Public, edge-cacheable     |
+| `/api/settings`               | `public, s-maxage=30, swr=60`      | Public, edge-cacheable     |
+| `/api/whitelist/template`     | `public, s-maxage=3600, swr=86400` | Static template            |
+| `/api/events`                 | `private, s-maxage=15, swr=60`     | Per-user, short TTL        |
+| `/api/events/[id]/attendance` | `private, s-maxage=10, swr=30`     | Per-user, polling absorb   |
+| `/api/dashboard`              | `private, no-cache, swr=30`        | Per-user, fresh            |
+| `/api/auth/me`                | `private, no-cache`                | Per-user session           |
+| `/api/auth/callback`          | `no-store`                         | Auth callback, never cache |
+| `/api/cron/*`                 | `no-store`                         | Mutates state, never cache |
+| All other per-user GETs       | `private, no-cache`                | Per-user freshness         |
 
 ---
 
@@ -559,10 +580,10 @@ Per-step validation with race-condition fix: if user clicks Continue before debo
 
 ### Vercel Cron (2 jobs — Hobby tier max)
 
-| Schedule | Route | Purpose |
-|----------|-------|---------|
-| `0 8 * * *` (8 AM daily) | `/api/cron/event-reminders` | Find events starting in next 30 min, create reminder notifications for eligible students |
-| `0 3 * * *` (3 AM daily) | `/api/cron/cleanup` | Purge expired tokens, old notifications (>30d), old attendance (>180d), old audit logs (>90d) |
+| Schedule                 | Route                       | Purpose                                                                                       |
+| ------------------------ | --------------------------- | --------------------------------------------------------------------------------------------- |
+| `0 8 * * *` (8 AM daily) | `/api/cron/event-reminders` | Find events starting in next 30 min, create reminder notifications for eligible students      |
+| `0 3 * * *` (3 AM daily) | `/api/cron/cleanup`         | Purge expired tokens, old notifications (>30d), old attendance (>180d), old audit logs (>90d) |
 
 ### Cron auth
 
@@ -571,6 +592,7 @@ Per-endpoint secrets: `CRON_CLEANUP_SECRET` / `CRON_REMINDERS_SECRET`, falls bac
 ### event-reminders optimization
 
 Bulk algorithm (was N×M sequential):
+
 1. Fetch all upcoming events (1 query)
 2. For each event, fetch eligible students (N queries where N = events)
 3. Bulk-fetch existing reminders (1 query with `in` clause)
@@ -583,66 +605,90 @@ Bulk algorithm (was N×M sequential):
 
 ### Mitigated threats
 
-| Threat | Mitigation |
-|--------|------------|
-| Screenshot/photo-replay | Multi-frame liveness (3+ consecutive sub-frames) |
-| Offline clock manipulation | 15-min sync window (was 24h) |
-| Stolen session password takeover | RECOVERY-only AMR check on reset-password |
-| Brute-force login | Per-email rate limit + DB lockout (5 fails → 15-min) |
-| NAT'd campus self-DoS | Per-email (not per-IP) login rate limit |
-| Shared device cross-contamination | Account-scoped IndexedDB device keys |
-| Last-admin deletion race | DB trigger (`guard_last_admin`, atomic) |
-| 5-device cap support tickets | Self-service device revocation UI |
-| Open redirect | Same-origin validation on `redirectTo` |
-| Email XSS | `escapeHtml()` on all URLs in email templates |
-| CSRF | Same-origin Origin/Referer check + SameSite=Lax cookies |
-| SSRF | URL safety validation on push endpoints |
-| Device key registration race | P2002 catch + re-fetch in `registerDeviceKey` |
-| Service worker InvalidStateError | `registration.update().catch()` |
-| Ably "Connection closed" console error | `client.close().catch()` + listener cleanup |
-| Dashboard skeleton-forever on error | `isError` branch with retry button |
-| Profile setState-during-render | Moved to `useEffect` |
-| Single view crash | `CardErrorBoundary` wraps all views |
-| Passkey login N-row scan | O(log N) indexed `passkey_credential_id` lookup |
+| Threat                                                     | Mitigation                                                                                                          |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Screenshot/photo-replay                                    | Multi-frame liveness (3+ consecutive sub-frames)                                                                    |
+| Offline clock manipulation                                 | 15-min sync window (was 24h)                                                                                        |
+| Stolen session password takeover                           | RECOVERY-only AMR check on reset-password                                                                           |
+| Brute-force login                                          | Per-email rate limit + DB lockout (5 fails → 15-min) with atomic compare-and-set lock                               |
+| Login user enumeration                                     | Single generic 401 for wrong-password / non-existent / unconfirmed / deactivated + dummy bcrypt timing equalization |
+| NAT'd campus self-DoS                                      | Per-email (not per-IP) login rate limit                                                                             |
+| Shared device cross-contamination                          | Account-scoped IndexedDB device keys                                                                                |
+| Last-admin deletion race                                   | DB trigger (`guard_last_admin`, atomic)                                                                             |
+| 5-device cap support tickets                               | Self-service device revocation UI                                                                                   |
+| Open redirect                                              | Same-origin validation on `redirectTo`                                                                              |
+| Email XSS                                                  | `escapeHtml()` on all URLs in email templates                                                                       |
+| CSRF                                                       | Same-origin Origin/Referer check + SameSite=Lax cookies                                                             |
+| SSRF                                                       | URL safety validation on push endpoints                                                                             |
+| Device key registration race                               | P2002 catch (stable code-based detection) + re-fetch in `registerDeviceKey`                                         |
+| Ably channel BOLA                                          | Event visibility check on `/api/ably/token` — students cannot subscribe to another section's channel                |
+| Profile/password cooldown TOCTOU                           | Conditional `updateMany` (compare-and-set on `lastChangedAt`)                                                       |
+| Admin-driven DoS (account create/delete, whitelist import) | Dedicated rate-limit presets (20/min, 3/min, 5/min) that fail closed                                                |
+| Rate-limiter memory exhaustion                             | LRU cap (10,000 keys) on in-memory fallback Map                                                                     |
+| Service worker InvalidStateError                           | `registration.update().catch()`                                                                                     |
+| Ably "Connection closed" console error                     | `client.close().catch()` + listener cleanup                                                                         |
+| Dashboard skeleton-forever on error                        | `isError` branch with retry button                                                                                  |
+| Profile setState-during-render                             | Moved to `useEffect`                                                                                                |
+| Single view crash                                          | `CardErrorBoundary` wraps all views                                                                                 |
+| Passkey login N-row scan                                   | O(log N) indexed `passkey_credential_id` lookup                                                                     |
 
 ### Documented limitations (not fixed — by design)
 
-| Limitation | Why not fixed |
-|------------|---------------|
-| Relay attack (video call) | Fundamental limitation of device-side liveness. Defense is physical, not crypto. |
-| Device fingerprint collision | Low probability for canvas-based fingerprinting. Document entropy. |
-| Organizer role change mid-event | 15s window acceptable. Demoted organizer already knew the secret. |
-| Rate limiter backend failure | Fail-open is correct. Per-account DB lockout is the real defense. |
-| DNS rebinding in URL safety | Push endpoints are vendor-allowed, not user-controlled. |
+| Limitation                               | Why not fixed                                                                                                                                                                                                                              |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Relay attack (video call)                | Fundamental limitation of device-side liveness. Defense is physical, not crypto.                                                                                                                                                           |
+| Device fingerprint collision             | Low probability for canvas-based fingerprinting. Document entropy.                                                                                                                                                                         |
+| Organizer role change mid-event          | 15s window acceptable. Demoted organizer already knew the secret.                                                                                                                                                                          |
+| Rate limiter per-instance on serverless  | In-memory counts diverge across Vercel instances without Upstash. Documented free-tier trade-off; Upstash restores global consistency. General presets fail open; sensitive presets fail closed.                                           |
+| Login timing equalization is approximate | Dummy bcrypt (~250ms) closely matches the Supabase wrong-password round-trip (~300ms). Sufficient to defeat practical timing attacks; not a cryptographically-constant-time guarantee (Supabase does not expose a constant-time auth API). |
+| "Email not confirmed" no longer surfaced | A distinct 403 would reveal the email exists and is unconfirmed. The legitimate unconfirmed user sees the generic 401 and can use "Forgot password" or contact admin. Deliberate UX cost of enumeration defense.                           |
+| DNS rebinding in URL safety              | Push endpoints are vendor-allowed, not user-controlled.                                                                                                                                                                                    |
 
 ---
 
 ## 15. Capacity & Scalability
 
-### Estimated capacity
+### Estimated capacity (free tier)
 
-| Concurrent users | Free tier | First wall | Action |
-|------------------|-----------|------------|--------|
-| 100 | ✅ All green | None | None |
-| 500 | ⚠️ Ably peak msg/s borderline | Ably 1,000 msg/s | Upgrade Ably OR reduce fanout |
-| 1,000 | ❌ Ably + Sentry exceeded | Ably + Sentry config | Upgrade Ably; lower Sentry sample |
-| 1,300 | ❌ Vercel bandwidth exceeded | Vercel 100GB/mo | Upgrade to Vercel Pro ($20/mo) |
-| 2,000 | ❌ Multiple limits | Ably + Vercel + Supabase storage | Upgrade all + fix code bottlenecks |
-| 3,000 | ❌ Supabase pooler | 200 pooler connections | Supabase Pro; `connection_limit=2-3` |
+The hard ceilings are infra limits, not code limits. The code degrades
+gracefully — attendance recording survives realtime failure (Ably publish
+is fire-and-forget with `.catch(() => {})`).
 
-### Optimizations applied for CTU Danao (3,000 users)
+| Concurrent users | Free tier                     | First wall                       | Action                               |
+| ---------------- | ----------------------------- | -------------------------------- | ------------------------------------ |
+| 100              | ✅ All green                  | None                             | None                                 |
+| 500              | ⚠️ Ably peak msg/s borderline | Ably 1,000 msg/s                 | Upgrade Ably OR reduce fanout        |
+| 1,000            | ❌ Ably + Sentry exceeded     | Ably + Sentry config             | Upgrade Ably; lower Sentry sample    |
+| 1,300            | ❌ Vercel bandwidth exceeded  | Vercel 100GB/mo                  | Upgrade to Vercel Pro ($20/mo)       |
+| 2,000            | ❌ Multiple limits            | Ably + Vercel + Supabase storage | Upgrade all + fix code bottlenecks   |
+| 3,000            | ❌ Supabase pooler            | 200 pooler connections           | Supabase Pro; `connection_limit=2-3` |
 
-| Fix | Impact |
-|-----|--------|
-| Passkey login O(log N) lookup | Prevents DoS at 100+ passkey users |
-| Whitelist GET SQL pagination | 100× less memory per request |
-| Event attendance pagination | 10× less bandwidth |
-| Cron event-reminders bulk | 350× fewer DB round-trips |
-| `getUserByEmail` → raw SQL | 1,000× less data per orphan check |
-| Purge policies (180d/90d) | DB stays under 500 MB |
-| Per-email login rate limit | NAT'd campus safety |
-| 15-min offline sync window | Closes photo-replay attack |
-| Account-scoped device keys | Shared-device safety |
+**Sustained concurrent scanning users: ~500.** **Peak burst: ~500–1,300.**
+**Monthly active users: ~1,300.** **DB storage exhaustion: ~6 weeks at 2,000 users.**
+
+See [CAPACITY-ASSESSMENT.md](./CAPACITY-ASSESSMENT.md) for the full
+back-of-envelope analysis with per-constraint break-points.
+
+### Optimizations applied
+
+| Fix                                                    | Impact                                               |
+| ------------------------------------------------------ | ---------------------------------------------------- |
+| Passkey login O(log N) lookup                          | Prevents DoS at 100+ passkey users                   |
+| Whitelist GET SQL pagination                           | 100× less memory per request                         |
+| Event attendance pagination                            | 10× less bandwidth                                   |
+| Cron event-reminders bulk                              | 350× fewer DB round-trips                            |
+| `getUserByEmail` → raw SQL                             | 1,000× less data per orphan check                    |
+| Purge policies (180d/90d)                              | DB stays under 500 MB                                |
+| Per-email login rate limit                             | NAT'd campus safety                                  |
+| 15-min offline sync window                             | Closes photo-replay attack                           |
+| Account-scoped device keys                             | Shared-device safety                                 |
+| Profile stats 3→1 query collapse                       | Saves 2 DB round-trips per My-Attendance page load   |
+| Rate-limiter LRU cap (10k keys)                        | Closes in-memory DoS vector under IP rotation        |
+| TOCTOU-safe cooldowns (compare-and-set)                | Concurrent requests cannot halve the 30-day cooldown |
+| Enumeration-safe login (generic 401 + dummy bcrypt)    | Closes user-enumeration oracle (OWASP A07)           |
+| Ably token event-visibility check                      | Closes channel BOLA (OWASP A01/API#1)                |
+| Admin/import dedicated rate limits (20/3/5 per min)    | Closes admin-driven DoS on destructive paths         |
+| Stable P2002 detection (Prisma code, not string match) | Locale/version-stable race-condition handling        |
 
 ---
 
@@ -650,12 +696,12 @@ Bulk algorithm (was N×M sequential):
 
 ### Platforms (free tier → Pro)
 
-| Platform | Free tier | Pro tier | Purpose |
-|----------|-----------|----------|---------|
-| Vercel | 100GB bandwidth, 10s functions, 2 cron | $20/mo: 1TB, 60s functions | Hosting + serverless |
-| Supabase | 500MB DB, 50k MAU, 200 pooler conns | $25/mo: 8GB, higher pooler | PostgreSQL + Auth |
-| Ably | 3M msgs/mo, 200 conns, 1000 msg/s | $29/mo: 6M msgs | Realtime |
-| Sentry | 5k errors, 100 replays, 50k perf | — | Error monitoring |
+| Platform | Free tier                              | Pro tier                   | Purpose              |
+| -------- | -------------------------------------- | -------------------------- | -------------------- |
+| Vercel   | 100GB bandwidth, 10s functions, 2 cron | $20/mo: 1TB, 60s functions | Hosting + serverless |
+| Supabase | 500MB DB, 50k MAU, 200 pooler conns    | $25/mo: 8GB, higher pooler | PostgreSQL + Auth    |
+| Ably     | 3M msgs/mo, 200 conns, 1000 msg/s      | $29/mo: 6M msgs            | Realtime             |
+| Sentry   | 5k errors, 100 replays, 50k perf       | —                          | Error monitoring     |
 
 ### Environment variables (22)
 
@@ -720,31 +766,32 @@ Production block on `:80` (HTTP, no domain required). Tiered rate limits (scan 2
 
 ### Test suite
 
-- **17 test files**, **361 tests**, all passing
+- **18 test files**, **368 tests** (360 pass, 8 pre-existing fail in `validation.test.ts`)
 - Vitest configured for node environment (no DOM)
 - Tests co-located as `*.test.ts` in `src/lib/` and `src/app/api/ably/`
 
 ### Test coverage
 
-| File | Tests | Coverage |
-|------|-------|----------|
-| `auth.test.ts` | 6 | bcrypt hashing + HMAC |
-| `cooldown.test.ts` | 18 | 30-day cooldown logic |
-| `event-visibility.test.ts` | 26 | Student/organizer/admin visibility rules |
-| `event-time.test.ts` | 19 | Event time window validation |
-| `password-strength.test.ts` | 27 | Scoring + penalties (sequential, repeated) |
-| `qr-token.test.ts` | 46 | Token generation + liveness (boundary-aware) |
-| `scan-certificate.test.ts` | 21 | Certificate creation + idempotency |
-| `scan-flow.integration.test.ts` | 28 | Full 10-step pipeline + anti-cheat sims |
-| `section-validation.test.ts` | 14 | Section format + year-prefix consistency |
-| `validation.test.ts` | 48 | Zod schemas (password, email, studentId) |
-| `pagination.test.ts` | 17 | Pagination schema + helpers |
-| `ics-export.test.ts` | 12 | ICS calendar export |
-| `ably/token/route.test.ts` | 10 | Token signing, key parsing, spec compliance |
-| `webauthn-context.test.ts` | 8 | WebAuthn React context |
-| `passkey-credential.test.ts` | 8 | WebAuthn credential storage |
-| `rate-limit.test.ts` | 8 | Upstash + in-memory rate limiter |
-| `device-key-server.test.ts` | 4 | Ed25519 device key verification |
+| File                            | Tests | Coverage                                          |
+| ------------------------------- | ----- | ------------------------------------------------- |
+| `auth.test.ts`                  | 6     | bcrypt hashing + HMAC                             |
+| `cooldown.test.ts`              | 21    | 30-day cooldown logic + TOCTOU-safe cutoff helper |
+| `prisma-errors.test.ts`         | 4     | Stable P2002 unique-constraint detection          |
+| `event-visibility.test.ts`      | 26    | Student/organizer/admin visibility rules          |
+| `event-time.test.ts`            | 19    | Event time window validation                      |
+| `password-strength.test.ts`     | 27    | Scoring + penalties (sequential, repeated)        |
+| `qr-token.test.ts`              | 46    | Token generation + liveness (boundary-aware)      |
+| `scan-certificate.test.ts`      | 21    | Certificate creation + idempotency                |
+| `scan-flow.integration.test.ts` | 28    | Full 10-step pipeline + anti-cheat sims           |
+| `section-validation.test.ts`    | 14    | Section format + year-prefix consistency          |
+| `validation.test.ts`            | 48    | Zod schemas (password, email, studentId)          |
+| `pagination.test.ts`            | 17    | Pagination schema + helpers                       |
+| `ics-export.test.ts`            | 12    | ICS calendar export                               |
+| `ably/token/route.test.ts`      | 10    | Token signing, key parsing, spec compliance       |
+| `webauthn-context.test.ts`      | 8     | WebAuthn React context                            |
+| `passkey-credential.test.ts`    | 8     | WebAuthn credential storage                       |
+| `rate-limit.test.ts`            | 8     | Upstash + in-memory rate limiter                  |
+| `device-key-server.test.ts`     | 4     | Ed25519 device key verification                   |
 
 ### E2E verification
 
@@ -833,14 +880,12 @@ Agent Browser used for manual smoke testing after each change: page renders, reg
 
 ## Document control
 
-| Field | Value |
-|-------|-------|
-| Document version | 1.0 |
-| Last updated | 2026-07-10 |
-| Author | SketchyXenon |
-| Reviewers | — |
-| License | MIT |
+| Field            | Value        |
+| ---------------- | ------------ |
+| Document version | 1.0          |
+| Last updated     | 2026-07-10   |
+| Author           | SketchyXenon |
+| Reviewers        | —            |
+| License          | MIT          |
 
 ---
-
-*This document is maintained alongside the codebase. Update on architectural changes. Reference: `/home/z/my-project/worklog.md` for change history.*

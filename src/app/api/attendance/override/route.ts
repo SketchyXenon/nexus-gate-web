@@ -12,6 +12,7 @@ import { overrideSchema } from "@/lib/validation";
 import { audit } from "@/lib/audit";
 import { notifyAttendance } from "@/lib/realtime";
 import { getEventTimeWindows } from "@/lib/event-time";
+import { isUniqueConstraintError } from "@/lib/prisma-errors";
 
 // POST /api/attendance/override
 // ADMIN-ONLY: manual attendance overrides are restricted to administrators
@@ -35,6 +36,8 @@ export async function POST(req: NextRequest) {
   // Check if the student is on the whitelist OR has an account.
   // The whitelist is the primary source, but students who registered
   // directly (without being whitelisted) should also be eligible.
+  // We look up the account ONCE here and reuse it below for the
+  // attendance upsert — avoids a redundant second findUnique.
   const student = await db.authorizedStudent.findUnique({
     where: { studentId },
   });
@@ -42,15 +45,16 @@ export async function POST(req: NextRequest) {
   let studentProgram: string | null;
   let studentSection: string | null;
 
+  const studentAccount = await db.account.findUnique({
+    where: { studentId },
+  });
+
   if (student) {
     studentName = student.fullName;
     studentProgram = student.program;
     studentSection = student.section;
   } else {
-    // Not on whitelist — check if they have an account.
-    const studentAccount = await db.account.findUnique({
-      where: { studentId },
-    });
+    // Not on whitelist — must have an account to be eligible.
     if (!studentAccount) {
       return badRequest(
         "This student is not on the approved list and has no account.",
@@ -86,7 +90,7 @@ export async function POST(req: NextRequest) {
     return forbidden("This event's check-in window has closed.");
   }
 
-  let studentAccount = await db.account.findUnique({ where: { studentId } });
+  // Reuse the account looked up above (no second query needed).
   if (!studentAccount) {
     return badRequest(
       "This student has not created an account yet.",
@@ -102,17 +106,17 @@ export async function POST(req: NextRequest) {
       });
       const attendance = await tx.eventAttendance.upsert({
         where: {
-          eventId_accountId: { eventId, accountId: studentAccount!.id },
+          eventId_accountId: { eventId, accountId: studentAccount.id },
         },
         update: {},
-        create: { eventId, accountId: studentAccount!.id, source: "override" },
+        create: { eventId, accountId: studentAccount.id, source: "override" },
       });
       return { override, attendance };
     });
   } catch (e) {
     // P2002 = unique constraint violation (duplicate override).
-    const msg = e instanceof Error ? e.message : String(e);
-    if (msg.includes("Unique constraint")) {
+    // Use the stable Prisma error code instead of a fragile string match.
+    if (isUniqueConstraintError(e)) {
       return conflict(
         "This student already has an override for this event.",
         "ALREADY_OVERRIDDEN",
