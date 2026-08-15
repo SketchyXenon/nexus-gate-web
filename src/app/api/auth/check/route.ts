@@ -9,20 +9,20 @@ import {
 } from "@/lib/api";
 
 // POST /api/auth/check
-// Pre-registration availability check for email AND student ID.
+// Pre-registration availability check for student ID only.
 //
-// Reports whether an email or student ID is already registered so the
-// frontend can warn the user BEFORE submit. The register route also
-// enforces this server-side (defense-in-depth) and returns a 409 for
-// duplicates, so a client-side bypass cannot create a duplicate account.
+// SECURITY: email availability is intentionally NOT exposed on this
+// anonymous endpoint. Reporting whether an arbitrary email is registered
+// is an enumeration oracle (an attacker rotating IPs could probe the entire
+// student body's email list), which defeats the enumeration-safe design of
+// /api/auth/login, /register, /forgot-password, and /magic-link. Email
+// uniqueness is enforced server-side by the register route (returns 409 on
+// duplicate), so users still get clear feedback on submit.
 //
 // Student IDs are institutional identifiers the student already knows, so
-// reporting taken/not-taken carries no enumeration risk. Emails are checked
-// against NON-deactivated accounts only — a deactivated email is eligible
-// for re-registration, so it must report as available.
+// reporting taken/not-taken carries no enumeration risk.
 
 const checkSchema = z.object({
-  email: z.string().trim().toLowerCase().email().max(255).optional(),
   studentId: z
     .union([
       z.number().int().min(1000000).max(9999999),
@@ -41,35 +41,22 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) {
       return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
     }
-    const { email, studentId } = parsed.data;
+    const { studentId } = parsed.data;
     const studentIdNum =
       typeof studentId === "string" ? Number(studentId) : studentId;
 
-    if (!email && !studentIdNum) {
-      return badRequest("Provide an email or studentId to check");
+    if (!studentIdNum) {
+      return badRequest("Provide a studentId to check");
     }
 
-    const result: { emailTaken?: boolean; studentIdTaken?: boolean } = {};
-
-    // Email check: report taken only for NON-deactivated accounts.
-    // Deactivated accounts are eligible for re-registration, so they report
-    // as available. This matches the register route's re-registration path.
-    if (email) {
-      const existing = await db.account.findUnique({
-        where: { email },
-        select: { id: true, isDeactivated: true },
-      });
-      result.emailTaken = !!existing && !existing.isDeactivated;
-    }
+    const result: { studentIdTaken?: boolean } = {};
 
     // Student ID check: reveals taken/not-taken (no enumeration risk).
-    if (studentIdNum) {
-      const existing = await db.account.findUnique({
-        where: { studentId: studentIdNum },
-        select: { id: true },
-      });
-      result.studentIdTaken = !!existing;
-    }
+    const existing = await db.account.findUnique({
+      where: { studentId: studentIdNum },
+      select: { id: true },
+    });
+    result.studentIdTaken = !!existing;
 
     return NextResponse.json(result, {
       headers: { "Cache-Control": "no-store" },

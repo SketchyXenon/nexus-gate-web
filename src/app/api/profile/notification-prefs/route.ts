@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth, badRequest } from "@/lib/api";
 import { audit } from "@/lib/audit";
+import { storesJsonAsString } from "@/lib/db-provider";
 import { z } from "zod";
 
 // GET /api/profile/notification-prefs
@@ -74,16 +75,14 @@ export async function PATCH(req: NextRequest) {
     return badRequest(parsed.error.issues[0]?.message ?? "Invalid preferences");
   }
 
-  // Store the preferences. The Postgres schema declares notificationPrefs
-  // as Json? (accepts an object); SQLite declares it as String? (accepts
-  // a string). We store the object for Postgres and a JSON string for
-  // SQLite. The `as never` cast bridges the type gap between the two
-  // generated Prisma clients (the dev client is generated from the SQLite
-  // schema, the prod client from the Postgres schema).
-  const isPostgres = process.env.DATABASE_URL?.startsWith("postgresql");
-  const stored = isPostgres
-    ? (parsed.data as never)
-    : (JSON.stringify(parsed.data) as never);
+  // Store the preferences. The Postgres and TiDB/MySQL schemas declare
+  // notificationPrefs as Json? (accepts an object); SQLite declares it as
+  // String? (accepts a JSON string). Branch on the actual provider rather
+  // than the URL scheme so TiDB (mysql://) correctly receives an object.
+  // The `as never` cast bridges the type gap between the generated clients.
+  const stored = storesJsonAsString()
+    ? (JSON.stringify(parsed.data) as never)
+    : (parsed.data as never);
 
   await db.account.update({
     where: { id: account.id },

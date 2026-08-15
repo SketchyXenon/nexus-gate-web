@@ -28,6 +28,7 @@ generator client {
 datasource db {
   provider = "sqlite"
   url      = env("DATABASE_URL")
+  "mysql://2fag8b38gZhp6Hy.root:0JQkeFbzHtJO92bl@gateway01.ap-southeast-1.prod.aws.tidbcloud.com:4000/sys?ssl_accept=strict"
 }
 
 // ====================================================================

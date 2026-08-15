@@ -15,6 +15,10 @@ import {
 } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import {
+  DEFAULT_NOTIFICATION_PREFS,
+  serializeNotificationPrefs,
+} from "@/lib/notification-prefs";
+import {
   createSupabaseAdminClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
@@ -41,36 +45,19 @@ export async function POST(req: NextRequest) {
     }
     const d = parsed.data;
 
-    // Reconciliation: if the accounts row exists but has no supabaseAuthUid
-    // (orphaned from a Supabase Dashboard deletion), clean it up first.
+    // Reconciliation: if an accounts row exists but has no supabaseAuthUid
+    // (orphaned from a Supabase Dashboard deletion), delete the orphan so
+    // the create flow can proceed cleanly. The createUser call below is the
+    // authoritative check for whether a Supabase auth user exists - if one
+    // does, it returns "already registered" and we block. This removes the
+    // old raw-SQL join against auth.users (which is Supabase-internal and
+    // unreachable when the app tables move to TiDB).
     const existing = await db.account.findUnique({
       where: { email: d.email },
       select: { id: true, supabaseAuthUid: true },
     });
-    if (existing && !existing.supabaseAuthUid && isSupabaseConfigured()) {
-      try {
-        // Query auth.users directly via raw SQL (single-row lookup).
-        const rows = await db.$queryRaw<Array<{ id: string }>>`
-          SELECT id FROM auth.users WHERE email = ${d.email} LIMIT 1
-        `;
-        if (rows.length === 0) {
-          console.log(
-            `[accounts/create] cleaning orphaned accounts row for ${d.email}`,
-          );
-          await db.account.delete({ where: { id: existing.id } });
-        } else {
-          return conflict(
-            "An account with this email already exists.",
-            "EMAIL_TAKEN",
-          );
-        }
-      } catch {
-        // Can't verify - block the creation to be safe.
-        return conflict(
-          "An account with this email already exists.",
-          "EMAIL_TAKEN",
-        );
-      }
+    if (existing && !existing.supabaseAuthUid) {
+      await db.account.delete({ where: { id: existing.id } }).catch(() => {});
     } else if (existing) {
       return conflict(
         "An account with this email already exists.",
@@ -88,13 +75,25 @@ export async function POST(req: NextRequest) {
         user_metadata: { fullName: d.fullName },
       });
     if (authError || !authData.user) {
-      // Log the real Supabase error server-side for operators; return a
-      // generic message to the client. The raw error (e.g. "User already
-      // registered") is an email-enumeration oracle and leaks architecture.
       console.error(
         "[accounts/create] Supabase createUser failed:",
         authError?.message ?? "no error",
       );
+      // This is an admin-only route, so a clear "already exists" message is
+      // safe (no enumeration risk - the admin already knows the email).
+      // This is also the authoritative existence check now that the raw
+      // auth.users query is gone (TiDB-compatible).
+      const msg = (authError?.message ?? "").toLowerCase();
+      if (
+        msg.includes("already registered") ||
+        msg.includes("user already") ||
+        msg.includes("already been registered")
+      ) {
+        return conflict(
+          "An account with this email already exists.",
+          "EMAIL_TAKEN",
+        );
+      }
       return badRequest(
         "Unable to create the account. Please try again or contact support.",
         "AUTH_FAILED",
@@ -115,6 +114,10 @@ export async function POST(req: NextRequest) {
           organizationName: d.organizationName ?? null,
           supabaseAuthUid: authData.user.id,
           lastLoginAt: new Date(),
+          // Seed default notification prefs (TiDB has no column-level default).
+          notificationPrefs: serializeNotificationPrefs(
+            DEFAULT_NOTIFICATION_PREFS,
+          ) as never,
         },
         select: {
           id: true,

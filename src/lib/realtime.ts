@@ -1,12 +1,14 @@
+import "server-only";
+
 // ====================================================================
-// Realtime bridge — publishes attendance events via Ably.
+// Realtime bridge - publishes attendance events via Ably.
 // --------------------------------------------------------------------
 // Replaces the Render socket.io mini-service. Ably is a managed
 // realtime platform (free tier: 3M messages/month, 200 concurrent
 // connections). No server to maintain, no spin-down, no cold starts.
 //
 // ENV: ABLY_SERVER_KEY must be set (Ably server API key, NOT the
-// browser key — the server key can publish, the browser key can only
+// browser key - the server key can publish, the browser key can only
 // subscribe). Get both from the Ably dashboard.
 // ====================================================================
 
@@ -22,9 +24,9 @@ export interface AttendanceEvent {
 }
 
 // Publish an attendance event to the event's Ably channel.
-// Fire-and-forget — fails silently if Ably is not configured.
+// Fire-and-forget - fails silently if Ably is not configured.
 // One retry (after 2s) for transient failures (network errors, 5xx).
-// 4xx errors are not retried (they are permanent — bad key, bad channel).
+// 4xx errors are not retried (they are permanent - bad key, bad channel).
 export async function notifyAttendance(
   eventId: number,
   payload: AttendanceEvent,
@@ -47,7 +49,7 @@ export async function notifyAttendance(
         method: "POST",
         headers,
         body,
-        // 5s timeout — prevents Ably from hanging the serverless function.
+        // 5s timeout - prevents Ably from hanging the serverless function.
         signal: AbortSignal.timeout(5000),
       });
       if (res.ok) return true;
@@ -68,7 +70,7 @@ export async function notifyAttendance(
       );
       return false;
     } catch (e) {
-      // Network error / timeout — transient. Retry once.
+      // Network error / timeout - transient. Retry once.
       console.warn(
         "[realtime] Ably publish error (transient):",
         e instanceof Error ? e.message : e,

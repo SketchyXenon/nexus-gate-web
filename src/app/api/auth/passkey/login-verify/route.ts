@@ -126,6 +126,9 @@ export async function POST(req: NextRequest) {
   // O(log N) lookup: find the account by credential ID via the indexed
   // passkey_credential_id column. Uses raw SQL to avoid Prisma client
   // type issues on Vercel's cached builds.
+  // Note: is_deactivated is BOOLEAN. Postgres pg driver returns true/false;
+  // MySQL/TiDB mysql2 driver returns 0/1 (number). We normalize to boolean
+  // below so the downstream truthiness check is unambiguous on both.
   const rows = await db.$queryRaw<
     Array<{
       id: string;
@@ -138,18 +141,23 @@ export async function POST(req: NextRequest) {
       section: string | null;
       supabaseAuthUid: string | null;
       passkeyCredential: string | null;
-      isDeactivated: boolean | null;
+      isDeactivated: number | boolean | null;
     }>
   >`
-    SELECT id, email, full_name as "fullName", role, status,
-           student_id as "studentId", program, section,
-           supabase_auth_uid as "supabaseAuthUid",
-           passkey_credential as "passkeyCredential",
-           is_deactivated as "isDeactivated"
+    SELECT id, email, full_name AS fullName, role, status,
+           student_id AS studentId, program, section,
+           supabase_auth_uid AS supabaseAuthUid,
+           passkey_credential AS passkeyCredential,
+           is_deactivated AS isDeactivated
     FROM accounts
     WHERE passkey_credential_id = ${credentialId}
     LIMIT 1
   `;
+  // Normalize isDeactivated to a real boolean (Postgres returns boolean,
+  // MySQL/TiDB returns 0/1). Map undefined/null to false for type safety.
+  for (const r of rows) {
+    r.isDeactivated = Boolean(r.isDeactivated);
+  }
   const account = rows[0] ?? null;
 
   // Per-account checkpoint (user_id rate limit): now that we know which
@@ -327,7 +335,10 @@ export async function POST(req: NextRequest) {
 
   let session = sessionData?.session;
   if (sessionError || !session) {
-    // Anon client may fail (PKCE state mismatch). Fall back to admin client.
+    // Anon client may fail (PKCE state mismatch). Fall back to the admin
+    // client to obtain a session, then persist it through the SSR anon
+    // client via setSession so the session cookie is written by @supabase/ssr
+    // (setAll) - never via custom-named cookies.
     console.warn(
       "[passkey] anon verifyOtp failed, trying admin:",
       sessionError?.message,
@@ -351,6 +362,13 @@ export async function POST(req: NextRequest) {
       );
     }
     session = adminSession.session;
+    const { error: persistError } = await anonClient.auth.setSession({
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+    });
+    if (persistError) {
+      console.error("[passkey] setSession failed:", persistError.message);
+    }
   }
 
   await audit({
@@ -362,6 +380,13 @@ export async function POST(req: NextRequest) {
   }).catch(() => {});
 
   // Single cookie-set path (was previously duplicated across two branches).
+  // Session cookies are set by @supabase/ssr via the anon client's verifyOtp
+  // (createSupabaseServerClient setAll callback) - the SAME mechanism the
+  // login route relies on. Do NOT set custom sb-access-token/sb-refresh-token
+  // cookies here: those names are not read by @supabase/ssr (which uses the
+  // sb-<project-ref>-auth-token chunked cookie), so they would orphan past
+  // logout (signOut only clears the SSR-managed cookie) and linger up to 7
+  // days - a real session-fixation/credential-lifecycle risk.
   const response = NextResponse.json({
     ok: true,
     account: {
@@ -375,28 +400,6 @@ export async function POST(req: NextRequest) {
       section: verifiedAccount.section,
     },
   });
-  const isProduction = process.env.NODE_ENV === "production";
-  const cookieOpts = {
-    httpOnly: true,
-    sameSite: "lax" as const,
-    secure: isProduction,
-    path: "/",
-    maxAge: 60 * 60 * 24 * 7,
-  };
-  response.cookies.set("sb-access-token", session.access_token, cookieOpts);
-  response.cookies.set("sb-refresh-token", session.refresh_token, cookieOpts);
-  if (isProduction) {
-    response.cookies.set(
-      "__Secure-sb-access-token",
-      session.access_token,
-      cookieOpts,
-    );
-    response.cookies.set(
-      "__Secure-sb-refresh-token",
-      session.refresh_token,
-      cookieOpts,
-    );
-  }
   response.cookies.delete("ng_passkey_challenge");
   return response;
 }

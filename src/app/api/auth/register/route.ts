@@ -14,6 +14,10 @@ import {
 } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import {
+  DEFAULT_NOTIFICATION_PREFS,
+  serializeNotificationPrefs,
+} from "@/lib/notification-prefs";
+import {
   createSupabaseServerClient,
   createSupabaseAdminClient,
   isSupabaseConfigured,
@@ -178,6 +182,12 @@ export async function POST(req: NextRequest) {
           program: program || (whitelisted?.program ?? null),
           section: section || (whitelisted?.section ?? null),
           supabaseAuthUid: authUid,
+          // Seed default notification prefs explicitly. Postgres had a
+          // column-level default (migration 0015); TiDB/MySQL does not, so
+          // the app must set it. Shared helper keeps the default in one place.
+          notificationPrefs: serializeNotificationPrefs(
+            DEFAULT_NOTIFICATION_PREFS,
+          ) as never,
         },
       });
     } catch (e) {

@@ -1,0 +1,367 @@
+// ====================================================================
+// Nexus Gate - TiDB (MySQL-compatible) schema
+// --------------------------------------------------------------------
+// Same models as schema.prisma (Postgres prod) but with provider = "mysql".
+// TiDB Serverless exposes a MySQL-protocol endpoint; Prisma connects via
+// the mysql provider. The @map annotations stay (they map to snake_case
+// physical column names matching the migrated data from Postgres).
+//
+// IMPORTANT: bare `String` on MySQL defaults to VARCHAR(191). Production
+// Postgres uses TEXT (unlimited) for all string columns. Without explicit
+// @db.* annotations, MySQL would SILENTLY TRUNCATE passkey credentials,
+// notification keys, JWK public keys, and emails > 191 chars. The @db.Text
+// and @db.VarChar(N) annotations below mirror the Postgres TEXT columns
+// while respecting MySQL's index length limits (utf8mb4: 3072 bytes =
+// max 768 chars per indexed column).
+//
+// This schema reads TIDB_DATABASE_URL (NOT DATABASE_URL) so you can keep
+// your local dev DATABASE_URL pointing at SQLite while pushing the TiDB
+// schema to your TiDB cluster. In production on Vercel, set DATABASE_URL
+// to the TiDB URL - scripts/postinstall.mjs auto-maps it to
+// TIDB_DATABASE_URL before running prisma generate against this schema.
+//
+// Usage (local dev - push schema to TiDB):
+//   # Set TIDB_DATABASE_URL in .env to your TiDB connection string
+//   bun run db:push:tidb
+//   bun run db:generate:tidb
+// ====================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("TIDB_DATABASE_URL")
+}
+
+// ====================================================================
+// 1. ACCOUNTS
+// ====================================================================
+
+model Account {
+  id                   String    @id @default(cuid()) @db.VarChar(128)
+  email                String    @unique @db.VarChar(255)
+  passwordHash         String    @default("") @map("password_hash") @db.VarChar(255)
+  fullName             String    @map("full_name") @db.VarChar(255)
+  role                 String    @default("USER") @db.VarChar(32)
+  status               String    @default("PENDING_VERIFICATION") @db.VarChar(48)
+  studentId            Int?      @unique @map("student_id")
+  program              String?   @db.VarChar(64)
+  section              String?   @db.VarChar(32)
+  authProvider         String?   @map("auth_provider") @db.VarChar(64)
+  providerAccountId    String?   @map("provider_account_id") @db.VarChar(128)
+  year                 Int?
+  organizationName     String?   @map("organization_name") @db.VarChar(255)
+  courseModifiedAt     DateTime? @map("course_modified_at")
+  lastProfileUpdateAt  DateTime? @map("last_profile_update_at")
+  lastPasswordChangeAt DateTime? @map("last_password_change_at")
+  notificationEndpoint String?   @map("notification_endpoint") @db.VarChar(500)
+  notificationKeys     String?   @map("notification_keys") @db.Text
+  passkeyCredential    String?   @map("passkey_credential") @db.LongText
+  passkeyCredentialId  String?   @map("passkey_credential_id") @db.VarChar(255)
+  supabaseAuthUid      String?   @unique @map("supabase_auth_uid") @db.VarChar(128)
+  notificationEnabled  Boolean   @default(false) @map("notification_enabled")
+  notificationPrefs    Json?     @map("notification_prefs")
+  lastLoginAt          DateTime? @map("last_login_at")
+  failedLoginAttempts  Int       @default(0) @map("failed_login_attempts")
+  lockedUntil          DateTime? @map("locked_until")
+  // Email verification timestamp (set when user clicks the verification link).
+  emailVerifiedAt      DateTime? @map("email_verified_at")
+  // Soft-delete / deactivation fields (never hard-delete user data).
+  isDeactivated        Boolean   @default(false) @map("is_deactivated")
+  deactivatedAt        DateTime? @map("deactivated_at")
+  deactivatedReason    String?   @map("deactivated_reason") @db.Text
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  eventsOwned        Event[]
+  attendances        EventAttendance[]
+  overridesMade      AttendanceOverride[]
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+  verificationTokens VerificationToken[]
+  refreshTokens      RefreshToken[]
+  deviceKeys         DeviceKey[]
+  termsAcceptances   TermsAcceptance[]
+
+  @@index([role, status])
+  @@index([program, section])
+  @@index([notificationEnabled])
+  @@index([lockedUntil])
+  @@index([lastLoginAt])
+  @@index([passkeyCredentialId])
+  @@index([createdAt])
+  @@index([isDeactivated])
+  @@map("accounts")
+}
+
+// ====================================================================
+// 2. AUTHORIZED STUDENTS - optional admin whitelist (not a gate)
+// ====================================================================
+
+model AuthorizedStudent {
+  studentId Int                  @id @map("student_id")
+  email     String               @unique @db.VarChar(255)
+  fullName  String               @map("full_name") @db.VarChar(255)
+  program   String               @db.VarChar(64)
+  section   String               @db.VarChar(32)
+  activated Boolean              @default(false)
+  overrides AttendanceOverride[]
+
+  @@index([program, section, activated])
+  @@index([activated])
+  @@map("authorized_students")
+}
+
+// ====================================================================
+// 3. VERIFICATION TOKENS
+// ====================================================================
+
+model VerificationToken {
+  id        String    @id @default(cuid()) @db.VarChar(128)
+  accountId String    @map("account_id") @db.VarChar(128)
+  account   Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  codeHash  String    @map("code_hash") @db.VarChar(255)
+  purpose   String    @db.VarChar(64)
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  attempts  Int       @default(0)
+
+  @@index([accountId, purpose, usedAt])
+  @@index([expiresAt])
+  @@map("verification_tokens")
+}
+
+// ====================================================================
+// 4. REFRESH TOKENS
+// ====================================================================
+
+model RefreshToken {
+  id        String    @id @default(cuid()) @db.VarChar(128)
+  accountId String    @map("account_id") @db.VarChar(128)
+  account   Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique @map("token_hash") @db.VarChar(255)
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([accountId, revokedAt])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+// ====================================================================
+// 5. EVENTS
+// ====================================================================
+
+model Event {
+  id                Int       @id @default(autoincrement())
+  title             String    @db.VarChar(255)
+  description       String?   @db.Text
+  eventSecret       String    @default(cuid()) @map("event_secret") @db.VarChar(128)
+  ownerId           String    @map("owner_id") @db.VarChar(128)
+  owner             Account   @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  scope             String    @default("academic") @db.VarChar(32)
+  targetProgram     String?   @map("target_program") @db.VarChar(64)
+  targetSection     String?   @map("target_section") @db.VarChar(32)
+  scheduledAt       DateTime  @map("scheduled_at")
+  endsAt            DateTime? @map("ends_at")
+  checkInOpensAt    DateTime? @map("check_in_opens_at")
+  checkInClosesAt   DateTime? @map("check_in_closes_at")
+  timeOutOpensAt    DateTime? @map("time_out_opens_at")
+  timeOutClosesAt   DateTime? @map("time_out_closes_at")
+  enableTimeOut     Boolean   @default(false) @map("enable_time_out")
+  delegatable       Boolean   @default(true)
+  delegationEnabled Boolean   @default(false) @map("delegation_enabled")
+  status            String    @default("active") @db.VarChar(32)
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  attendances EventAttendance[]
+  overrides   AttendanceOverride[]
+
+  @@index([status, scheduledAt])
+  @@index([ownerId, status])
+  @@index([ownerId, status, scheduledAt])
+  @@index([targetProgram, targetSection, status])
+  @@index([scheduledAt, status])
+  @@map("events")
+}
+
+// ====================================================================
+// 6. EVENT ATTENDANCE
+// --------------------------------------------------------------------
+// Certificate fields (v8 - Tier 1 + Tier 2 anti-cheating):
+//   certificateNonce    - one-time-use nonce from the scan certificate
+//                          (unique constraint = atomic duplicate rejection)
+//   certificateSubFrames - JSON array of captured sub-frame indices
+//                          (proves multi-frame liveness, anti-screenshot)
+//   deviceFingerprint   - SHA-256 hash of the device's public key
+//                          (identifies which device made the scan)
+//   scannedAtClient     - client-reported scan timestamp (ms precision)
+//                          (decouples token validity from sync time)
+// ====================================================================
+
+model EventAttendance {
+  id             Int       @id @default(autoincrement())
+  eventId        Int       @map("event_id")
+  event          Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  accountId      String    @map("account_id") @db.VarChar(128)
+  account        Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  scannedAt      DateTime  @default(now()) @map("scanned_at")
+  timeOutAt      DateTime? @map("time_out_at")
+  source         String    @default("qr") @db.VarChar(32)
+  idempotencyKey String?   @unique @map("idempotency_key") @db.VarChar(128)
+  tokenBlock     Int?      @map("token_block")
+
+  // ---- Certificate fields (v8 anti-cheating) ----
+  certificateNonce     String?   @unique @map("certificate_nonce") @db.VarChar(128)
+  certificateSubFrames String?   @map("certificate_sub_frames") @db.Text
+  deviceFingerprint    String?   @map("device_fingerprint") @db.VarChar(128)
+  scannedAtClient      DateTime? @map("scanned_at_client")
+
+  @@unique([eventId, accountId])
+  @@index([accountId, scannedAt])
+  @@index([eventId, scannedAt])
+  @@index([scannedAt])
+  @@index([deviceFingerprint])
+  @@map("event_attendance")
+}
+
+// ====================================================================
+// 7. ATTENDANCE OVERRIDES
+// ====================================================================
+
+model AttendanceOverride {
+  id        Int               @id @default(autoincrement())
+  eventId   Int               @map("event_id")
+  event     Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  adminId   String            @map("admin_id") @db.VarChar(128)
+  admin     Account           @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  studentId Int               @map("student_id")
+  student   AuthorizedStudent @relation(fields: [studentId], references: [studentId], onDelete: Cascade)
+  reason    String            @db.Text
+  createdAt DateTime          @default(now()) @map("created_at")
+
+  @@unique([eventId, studentId])
+  @@index([eventId, createdAt])
+  @@index([adminId, createdAt])
+  @@map("attendance_overrides")
+}
+
+// ====================================================================
+// 8. NOTIFICATIONS
+// ====================================================================
+
+model Notification {
+  id        Int       @id @default(autoincrement())
+  accountId String    @map("account_id") @db.VarChar(128)
+  account   Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  title     String    @db.VarChar(255)
+  body      String    @db.Text
+  type      String    @default("info") @db.VarChar(64)
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([accountId, createdAt])
+  @@index([accountId, readAt])
+  @@index([readAt, createdAt])
+  @@index([type, createdAt])
+  @@map("notifications")
+}
+
+// ====================================================================
+// 9. AUDIT LOG
+// ====================================================================
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  actorId    String?  @map("actor_id") @db.VarChar(128)
+  actor      Account? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String   @db.VarChar(128)
+  targetType String?  @map("target_type") @db.VarChar(64)
+  targetId   String?  @map("target_id") @db.VarChar(128)
+  metadata   String?  @db.Text
+  ipAddress  String?  @map("ip_address") @db.VarChar(45)
+  userAgent  String?  @map("user_agent") @db.VarChar(512)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@index([targetType, targetId, createdAt])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ====================================================================
+// 10. DEVICE KEYS (v8 - Tier 1 anti-cheating)
+// ====================================================================
+
+model DeviceKey {
+  id           String    @id @default(cuid()) @db.VarChar(128)
+  accountId    String    @map("account_id") @db.VarChar(128)
+  account      Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  publicKeyJwk String    @map("public_key_jwk") @db.Text
+  fingerprint  String    @unique @db.VarChar(128)
+  label        String?   @db.VarChar(255)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  lastUsedAt   DateTime? @map("last_used_at")
+  revokedAt    DateTime? @map("revoked_at")
+
+  @@index([accountId, revokedAt])
+  @@map("device_keys")
+}
+
+// ====================================================================
+// 11. SETTINGS
+// ====================================================================
+
+model Setting {
+  key       String   @id @db.VarChar(128)
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
+// ====================================================================
+// 12. TERMS ACCEPTANCES (immutable compliance record)
+// ====================================================================
+
+model TermsAcceptance {
+  id            String   @id @default(cuid()) @db.VarChar(128)
+  accountId     String   @map("account_id") @db.VarChar(128)
+  account       Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  termsVersion  String   @map("terms_version") @db.VarChar(32)
+  termsHash     String   @map("terms_hash") @db.VarChar(255)
+  policyVersion String   @map("policy_version") @db.VarChar(32)
+  policyHash    String   @map("policy_hash") @db.VarChar(255)
+  ipAddress     String?  @map("ip_address") @db.VarChar(45)
+  userAgent     String?  @map("user_agent") @db.VarChar(512)
+  acceptedAt    DateTime @default(now()) @map("accepted_at")
+
+  @@index([accountId, acceptedAt])
+  @@map("terms_acceptances")
+}
+
+// ====================================================================
+// 13. VISIT ANALYTICS (privacy-preserving)
+// ====================================================================
+
+model Visit {
+  id          String   @id @default(cuid()) @db.VarChar(128)
+  dayBucket   String   @map("day_bucket") @db.VarChar(10)
+  visitorHash String   @map("visitor_hash") @db.VarChar(128)
+  route       String   @db.VarChar(255)
+  country     String?  @db.VarChar(8)
+  visits      Int      @default(1)
+  firstSeenAt DateTime @default(now()) @map("first_seen_at")
+  lastSeenAt  DateTime @updatedAt @map("last_seen_at")
+
+  @@unique([dayBucket, visitorHash, route], map: "visits_day_visitor_route_key")
+  @@index([dayBucket])
+  @@index([route])
+  @@map("visits")
+}

@@ -2,9 +2,19 @@
 export const maxDuration = 10;
 
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { dbRead } from "@/lib/db";
 import { requireAuth } from "@/lib/api";
 import { hasMinimumRole } from "@/lib/rbac";
+import { getDatabaseProvider } from "@/lib/db-provider";
+
+// Portable hour-of-day expression. SQLite lacks EXTRACT(); Postgres and
+// MySQL/TiDB both support it. Branching here keeps the route working across
+// all three backends (Supabase Postgres, TiDB/MySQL, local SQLite dev).
+const HOUR_EXPR =
+  getDatabaseProvider() === "sqlite"
+    ? Prisma.raw(`strftime('%H', scanned_at)`)
+    : Prisma.raw(`EXTRACT(HOUR FROM scanned_at)`);
 
 // GET /api/dashboard/stats
 // Returns time-series + breakdown data for dashboard charts.
@@ -15,10 +25,10 @@ import { hasMinimumRole } from "@/lib/rbac";
 // (previously fetched up to 50,000 rows and bucketed in JS).
 //
 // Response:
-//   scansByDay: [{ date: "YYYY-MM-DD", count: number }] — last 30 days
-//   topEvents:  [{ id, title, scheduledAt, presentCount }] — top 10 by attendance
+//   scansByDay: [{ date: "YYYY-MM-DD", count: number }] - last 30 days
+//   topEvents:  [{ id, title, scheduledAt, presentCount }] - top 10 by attendance
 //   scansBySource: { qr: number, override: number }
-//   scansByHour: [{ hour: 0-23, count: number }] — peak-hour distribution
+//   scansByHour: [{ hour: 0-23, count: number }] - peak-hour distribution
 export async function GET(_req: NextRequest) {
   const res = await requireAuth("ORGANIZER");
   if ("error" in res) return res.error;
@@ -60,10 +70,10 @@ async function buildAdminStats(thirtyDaysAgo: Date) {
     `,
     // Scans per hour-of-day (last 30 days) via SQL EXTRACT.
     dbRead.$queryRaw<Array<{ hour: number; count: bigint }>>`
-      SELECT EXTRACT(HOUR FROM scanned_at)::int AS hour, COUNT(*) AS count
+      SELECT ${HOUR_EXPR} AS hour, COUNT(*) AS count
       FROM event_attendance
       WHERE scanned_at >= ${thirtyDaysAgo}
-      GROUP BY EXTRACT(HOUR FROM scanned_at)
+      GROUP BY ${HOUR_EXPR}
     `,
     // Source breakdown.
     dbRead.eventAttendance.groupBy({
@@ -99,11 +109,11 @@ async function buildOrganizerStats(ownerId: string, thirtyDaysAgo: Date) {
       GROUP BY DATE(ea.scanned_at)
     `,
     dbRead.$queryRaw<Array<{ hour: number; count: bigint }>>`
-      SELECT EXTRACT(HOUR FROM ea.scanned_at)::int AS hour, COUNT(*) AS count
+      SELECT ${HOUR_EXPR} AS hour, COUNT(*) AS count
       FROM event_attendance ea
       JOIN events e ON e.id = ea.event_id
       WHERE ea.scanned_at >= ${thirtyDaysAgo} AND e.owner_id = ${ownerId}
-      GROUP BY EXTRACT(HOUR FROM ea.scanned_at)
+      GROUP BY ${HOUR_EXPR}
     `,
     dbRead.eventAttendance.groupBy({
       by: ["source"],
@@ -157,7 +167,10 @@ function formatStats(
   // Build scansByHour: 24 buckets.
   const hourBuckets = new Array(24).fill(0);
   for (const row of hourRows) {
-    hourBuckets[row.hour] = Number(row.count);
+    // Number() normalizes across backends: Postgres EXTRACT returns numeric
+    // (string via the pg driver), MySQL/TiDB returns a number, SQLite
+    // strftime returns a text hour like "13".
+    hourBuckets[Number(row.hour)] = Number(row.count);
   }
   const scansByHour = hourBuckets.map((count, hour) => ({ hour, count }));
 

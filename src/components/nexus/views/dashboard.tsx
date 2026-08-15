@@ -48,6 +48,7 @@ import { getProgramLabel } from "@/lib/programs";
 import { MaintenancePanel } from "@/components/nexus/maintenance";
 import { AnalyticsCharts } from "@/components/nexus/analytics-charts";
 import { VisitAnalyticsCard } from "@/components/nexus/visit-analytics-card";
+import { useOfflineDashboard } from "@/hooks/use-offline-dashboard";
 import { format } from "date-fns";
 
 type ViewId =
@@ -83,8 +84,17 @@ const safeMax = (arr: number[], fallback = 1): number =>
 
 export function DashboardView({ user, onNavigate }: Props) {
   const { data, isLoading, isError, refetch } = useDashboard();
+  // RxDB offline snapshot: serves the last-known dashboard payload when
+  // the query is loading + the browser is offline. Per the offline-first
+  // identity, the user sees cached data, not an empty skeleton.
+  const { snapshot } = useOfflineDashboard(user.id, data, isLoading, isError);
 
-  if (isLoading) {
+  // If loading/error but we have an RxDB snapshot, render it with a stale
+  // banner instead of the empty loading/error state.
+  const effectiveData = data ?? snapshot?.data;
+  const showingStale = !data && !!snapshot;
+
+  if (isLoading && !effectiveData) {
     return (
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
@@ -94,7 +104,7 @@ export function DashboardView({ user, onNavigate }: Props) {
     );
   }
 
-  if (isError || !data) {
+  if ((isError || !data) && !effectiveData) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
         <AlertCircle className="h-8 w-8 text-muted-foreground" />
@@ -108,6 +118,8 @@ export function DashboardView({ user, onNavigate }: Props) {
     );
   }
 
+  // Type narrowing: effectiveData is defined past this point.
+  const d = effectiveData as NonNullable<typeof data>;
   const {
     stats,
     recentEvents,
@@ -115,12 +127,25 @@ export function DashboardView({ user, onNavigate }: Props) {
     programCounts,
     sectionCounts,
     needsProfile,
-  } = data;
+  } = d;
+
+  // ---------- Stale-data banner (offline snapshot from RxDB) ----------
+  // Shows when the live data failed to load and we're rendering the cached
+  // snapshot. Per 05-ui-ux-design.md §6: persistent system-level state uses
+  // an inline banner that stays visible until the condition resolves.
+  const staleBanner = showingStale ? (
+    <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+      You&apos;re offline. Showing your last saved dashboard - some details may
+      be out of date.
+    </div>
+  ) : null;
 
   // ---------- Student (USER) dashboard ----------
   if (user.role === "USER") {
     return (
       <div className="space-y-6">
+        {staleBanner}
         {/* Profile completion prompt */}
         {needsProfile && (
           <motion.div
@@ -343,6 +368,7 @@ export function DashboardView({ user, onNavigate }: Props) {
 
   return (
     <div className="space-y-6">
+      {staleBanner}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
@@ -647,7 +673,7 @@ function StatCard({
 }
 
 // ====================================================================
-// AnalyticsPanel — admin-only snapshot of the whole system.
+// AnalyticsPanel - admin-only snapshot of the whole system.
 //
 // Shows three headline metrics (Students / Events / Attendance rate %),
 // a top-6 program distribution bar chart, and a top-5 events list
@@ -1015,7 +1041,7 @@ function QuickActions({
       description: "View events by month",
       icon: CalendarRange,
       view: "calendar",
-      accent: "bg-blue-500/10 text-blue-600",
+      accent: "bg-primary/10 text-primary",
     },
     {
       label: "Take attendance",
@@ -1033,7 +1059,7 @@ function QuickActions({
       description: "Import the approved list",
       icon: Users,
       view: "whitelist",
-      accent: "bg-purple-500/10 text-purple-600",
+      accent: "bg-primary/10 text-primary",
     });
   }
 
