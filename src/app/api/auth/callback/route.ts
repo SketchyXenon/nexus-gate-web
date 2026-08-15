@@ -130,14 +130,18 @@ export async function GET(req: NextRequest) {
       // Safe lookup: degrades if migration 0017 not applied.
       const account = await safeFindAccountByAuthUid(authUid);
 
-      if (account && !isAccountDeactivated(account)) {
-        // Only activate PENDING_VERIFICATION accounts. This prevents a
-        // suspended user from un-suspending themselves by requesting a
-        // magic link and clicking it (the callback would otherwise flip
-        // any non-deactivated account to ACTIVE).
-        if (account.status === "PENDING_VERIFICATION") {
+      if (account) {
+        if (isAccountDeactivated(account)) {
+          // Deactivated accounts must NOT hold a session. Deactivation does
+          // not delete the Supabase Auth user, so a magic link can still be
+          // delivered and exchanged — revoke the session here so a
+          // deactivated user cannot authenticate via magic link.
+          await supabase.auth.signOut().catch(() => {});
+        } else if (account.status === "PENDING_VERIFICATION") {
+          // Signup confirmation: flip to ACTIVE, then sign out so the user
+          // authenticates explicitly with a password (they only proved email
+          // control so far).
           wasSignupConfirmation = true;
-          // Safe update: sets emailVerifiedAt only if the column exists.
           try {
             await db.account.update({
               where: { id: account.id },
@@ -162,12 +166,14 @@ export async function GET(req: NextRequest) {
             metadata: { email: account.email, method: "supabase_callback" },
             req,
           }).catch(() => {});
-
-          // SECURITY: Sign out the session established by exchangeCodeForSession.
-          // For signup confirmation, the user verified their email but hasn't
-          // authenticated with a password. We want them to explicitly sign in.
-          // For magic-link sign-in (account was already ACTIVE), the session IS
-          // the authentication, so we keep it.
+          await supabase.auth.signOut().catch(() => {});
+        } else if (account.status === "ACTIVE") {
+          // Magic-link sign-in to an already-ACTIVE account: the session IS
+          // the authentication. Keep it.
+        } else {
+          // Any other status (e.g. SUSPENDED): the account is not in good
+          // standing. Sign out so the user cannot use a magic link to
+          // bypass a suspension.
           await supabase.auth.signOut().catch(() => {});
         }
       }

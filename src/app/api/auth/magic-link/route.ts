@@ -87,19 +87,28 @@ export async function POST(req: NextRequest) {
 
     const appUrl =
       process.env.NEXT_PUBLIC_APP_URL?.trim() || req.nextUrl.origin;
-    const supabase = await createSupabaseServerClient();
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: appUrl,
-        // 10-minute expiry (Supabase default is 3600s = 60 min).
-        // Links are single-use — once exchangeCodeForSession is called,
-        // the code is consumed and can't be replayed.
-        shouldCreateUser: false,
-      },
-    });
-    if (error) {
-      console.error("[magic-link] signInWithOtp failed:", error.message);
+
+    // Defense-in-depth: do NOT send a magic link to a deactivated account.
+    // Deactivation is a soft-delete — the Supabase Auth user still exists, so
+    // signInWithOtp would otherwise deliver a usable link. The callback also
+    // revokes the session for deactivated users, but suppressing delivery here
+    // avoids emailing a deactivated user entirely. The generic response below
+    // is still returned (enumeration-safe).
+    if (!dbAccount || !isAccountDeactivated(dbAccount)) {
+      const supabase = await createSupabaseServerClient();
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: appUrl,
+          // 10-minute expiry (Supabase default is 3600s = 60 min).
+          // Links are single-use — once exchangeCodeForSession is called,
+          // the code is consumed and can't be replayed.
+          shouldCreateUser: false,
+        },
+      });
+      if (error) {
+        console.error("[magic-link] signInWithOtp failed:", error.message);
+      }
     }
 
     await audit({

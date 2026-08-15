@@ -7,23 +7,19 @@ import {
   dbUnavailable,
   isDbUnavailableError,
 } from "@/lib/api";
-import { isSupabaseConfigured } from "@/lib/supabase-server";
 
 // POST /api/auth/check
-// Pre-registration availability check for student ID only.
+// Pre-registration availability check for email AND student ID.
 //
-// ENUMERATION-SAFE DESIGN:
-//   This endpoint NO LONGER checks email availability. Email enumeration
-//   is now handled by the register route (returns the same success message
-//   for new and existing emails, sending a sign-in link to existing users).
+// Reports whether an email or student ID is already registered so the
+// frontend can warn the user BEFORE submit. The register route also
+// enforces this server-side (defense-in-depth) and returns a 409 for
+// duplicates, so a client-side bypass cannot create a duplicate account.
 //
-//   Student ID is still checked because:
-//   1. Student IDs are not personal data (they're institutional identifiers)
-//   2. The student already knows their own ID - no enumeration value
-//   3. The UX benefit of catching a duplicate student ID early is significant
-//
-// Body: { studentId?: string }
-// Response: { studentIdTaken?: boolean }
+// Student IDs are institutional identifiers the student already knows, so
+// reporting taken/not-taken carries no enumeration risk. Emails are checked
+// against NON-deactivated accounts only — a deactivated email is eligible
+// for re-registration, so it must report as available.
 
 const checkSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(255).optional(),
@@ -50,19 +46,23 @@ export async function POST(req: NextRequest) {
       typeof studentId === "string" ? Number(studentId) : studentId;
 
     if (!email && !studentIdNum) {
-      return badRequest("Provide a studentId to check");
+      return badRequest("Provide an email or studentId to check");
     }
 
     const result: { emailTaken?: boolean; studentIdTaken?: boolean } = {};
 
-    // Email check: always return false. The register route handles existing
-    // emails with an enumeration-safe "check your email" response. Returning
-    // false here prevents the frontend from showing "email already in use".
+    // Email check: report taken only for NON-deactivated accounts.
+    // Deactivated accounts are eligible for re-registration, so they report
+    // as available. This matches the register route's re-registration path.
     if (email) {
-      result.emailTaken = false;
+      const existing = await db.account.findUnique({
+        where: { email },
+        select: { id: true, isDeactivated: true },
+      });
+      result.emailTaken = !!existing && !existing.isDeactivated;
     }
 
-    // Student ID check: still reveals taken/not-taken (no enumeration risk).
+    // Student ID check: reveals taken/not-taken (no enumeration risk).
     if (studentIdNum) {
       const existing = await db.account.findUnique({
         where: { studentId: studentIdNum },

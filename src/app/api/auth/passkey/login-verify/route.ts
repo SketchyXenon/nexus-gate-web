@@ -14,7 +14,9 @@ import {
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
 
-function toFixedArrayBuffer(bytes: Uint8Array<ArrayBufferLike>): Uint8Array<ArrayBuffer> {
+function toFixedArrayBuffer(
+  bytes: Uint8Array<ArrayBufferLike>,
+): Uint8Array<ArrayBuffer> {
   const fixed = new Uint8Array(bytes.byteLength);
   fixed.set(bytes);
   return fixed;
@@ -26,18 +28,27 @@ function decodeStoredPublicKey(
   if (publicKey instanceof Uint8Array) return toFixedArrayBuffer(publicKey);
   if (typeof publicKey === "string" && publicKey.trim()) {
     try {
-      return toFixedArrayBuffer(Uint8Array.from(Buffer.from(publicKey.trim(), "base64")));
+      return toFixedArrayBuffer(
+        Uint8Array.from(Buffer.from(publicKey.trim(), "base64")),
+      );
     } catch {
       try {
-        const normalized = publicKey.trim().replace(/-/g, "+").replace(/_/g, "/");
-        return toFixedArrayBuffer(Uint8Array.from(Buffer.from(normalized, "base64")));
+        const normalized = publicKey
+          .trim()
+          .replace(/-/g, "+")
+          .replace(/_/g, "/");
+        return toFixedArrayBuffer(
+          Uint8Array.from(Buffer.from(normalized, "base64")),
+        );
       } catch {
         return null;
       }
     }
   }
   if (Array.isArray(publicKey)) {
-    return toFixedArrayBuffer(Uint8Array.from(publicKey.map((n) => Number(n) || 0)));
+    return toFixedArrayBuffer(
+      Uint8Array.from(publicKey.map((n) => Number(n) || 0)),
+    );
   }
   if (publicKey && typeof publicKey === "object") {
     const entries = Object.entries(publicKey)
@@ -115,22 +126,26 @@ export async function POST(req: NextRequest) {
   // O(log N) lookup: find the account by credential ID via the indexed
   // passkey_credential_id column. Uses raw SQL to avoid Prisma client
   // type issues on Vercel's cached builds.
-  const rows = await db.$queryRaw<Array<{
-    id: string;
-    email: string;
-    fullName: string;
-    role: string;
-    status: string;
-    studentId: number | null;
-    program: string | null;
-    section: string | null;
-    supabaseAuthUid: string | null;
-    passkeyCredential: string | null;
-  }>>`
+  const rows = await db.$queryRaw<
+    Array<{
+      id: string;
+      email: string;
+      fullName: string;
+      role: string;
+      status: string;
+      studentId: number | null;
+      program: string | null;
+      section: string | null;
+      supabaseAuthUid: string | null;
+      passkeyCredential: string | null;
+      isDeactivated: boolean | null;
+    }>
+  >`
     SELECT id, email, full_name as "fullName", role, status,
            student_id as "studentId", program, section,
            supabase_auth_uid as "supabaseAuthUid",
-           passkey_credential as "passkeyCredential"
+           passkey_credential as "passkeyCredential",
+           is_deactivated as "isDeactivated"
     FROM accounts
     WHERE passkey_credential_id = ${credentialId}
     LIMIT 1
@@ -142,10 +157,14 @@ export async function POST(req: NextRequest) {
   // an attacker with many IPs from hammering one credential.
   if (account) {
     const acctRl = await checkRateLimitByKey(account.id, "passkeyAccount");
-    if (acctRl) return failWithCookieDelete(
-      { error: "Too many passkey attempts. Please slow down.", code: "RATE_LIMITED" },
-      429,
-    );
+    if (acctRl)
+      return failWithCookieDelete(
+        {
+          error: "Too many passkey attempts. Please slow down.",
+          code: "RATE_LIMITED",
+        },
+        429,
+      );
   }
 
   let verifiedAccount: typeof account | null = null;
@@ -193,7 +212,9 @@ export async function POST(req: NextRequest) {
   }
 
   if (!verifiedAccount) {
-    console.warn("[passkey/login-verify] no matching passkey credential verified");
+    console.warn(
+      "[passkey/login-verify] no matching passkey credential verified",
+    );
     return failWithCookieDelete(
       { error: "Passkey verification failed.", code: "VERIFICATION_FAILED" },
       400,
@@ -203,6 +224,19 @@ export async function POST(req: NextRequest) {
     return failWithCookieDelete(
       { error: "Your account has been suspended.", code: "SUSPENDED" },
       403,
+    );
+  }
+  // Deactivated (soft-deleted) accounts must not authenticate via passkey.
+  // Deactivation keeps the passkey credential row, so without this check a
+  // deactivated user could bypass deactivation by signing in with a passkey.
+  // Same bug class as the magic-link/callback deactivation bypass.
+  if (
+    verifiedAccount.isDeactivated ||
+    verifiedAccount.status === "DEACTIVATED"
+  ) {
+    return failWithCookieDelete(
+      { error: "Passkey verification failed.", code: "VERIFICATION_FAILED" },
+      400,
     );
   }
   if (!verifiedAccount.supabaseAuthUid) {

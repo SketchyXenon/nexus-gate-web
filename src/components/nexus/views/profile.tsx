@@ -196,8 +196,21 @@ export function ProfileView() {
     };
 
     if (profile.role === "USER") {
-      if (year) vars.year = Number(year);
-      if (section.trim()) vars.section = section.trim();
+      // Only send fields that ACTUALLY changed vs. the loaded profile.
+      // Sending unchanged values (especially year, which defaults to "1"
+      // when profile.year is null) caused spurious updates that consumed
+      // the 30-day cooldown without the user touching the field.
+      const currentYear = profile.year ?? null;
+      const candidateYear = year ? Number(year) : null;
+      if (candidateYear !== null && candidateYear !== currentYear) {
+        vars.year = candidateYear;
+      }
+
+      const currentSection = profile.section ?? "";
+      if (section.trim() && section.trim() !== currentSection) {
+        vars.section = section.trim();
+      }
+
       // Only send program if it changed and the user can still change it
       // (course can only be changed once).
       if (programValue !== (profile.program ?? "") && profile.canChangeCourse) {

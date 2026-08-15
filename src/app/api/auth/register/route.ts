@@ -7,6 +7,7 @@ import { registerSchema } from "@/lib/validation";
 import {
   badRequest,
   checkRateLimit,
+  conflict,
   parseBody,
   dbUnavailable,
   isDbUnavailableError,
@@ -69,45 +70,23 @@ export async function POST(req: NextRequest) {
     // Check for existing email (safe lookup).
     const existingEmail = await safeFindAccountByEmail(email);
 
-    // ---- ENUMERATION-SAFE PATH: existing email ----
-    // If the email exists and is NOT deactivated, send a sign-in link to
-    // the existing user and return the same success response as a new
-    // registration. The attacker can't tell if the account exists.
+    // ---- EXISTING EMAIL: reject duplicate registration ----
+    // If the email is already registered to an active account, refuse the
+    // registration with a clear error so the user is not silently "accepted".
+    // This also fixes the E2E flow where registered emails returned a fake
+    // 201 success (the prior enumeration-safe design masked real duplicates).
     if (existingEmail && !isAccountDeactivated(existingEmail)) {
-      // Send a magic-link sign-in email so the legitimate owner can log in.
-      try {
-        const supabase = await createSupabaseServerClient();
-        const appUrl = getAppUrl() || req.nextUrl.origin;
-        await supabase.auth.signInWithOtp({
-          email,
-          options: {
-            emailRedirectTo: appUrl,
-            shouldCreateUser: false,
-          },
-        });
-      } catch (e) {
-        console.error("[register] sign-in link for existing email failed:", e);
-      }
-
       await audit({
         actorId: existingEmail.id,
         action: "auth.register_duplicate_attempt",
         targetType: "Account",
-        metadata: { email, studentId, reason: "email_exists_enu_safe" },
+        metadata: { email, studentId, reason: "email_exists" },
         req,
       }).catch(() => {});
 
-      // Return the SAME success response as a new registration.
-      return NextResponse.json(
-        {
-          ok: true,
-          message:
-            "Account created! Check your email to confirm your account, then sign in.",
-          email,
-          whitelisted: false,
-          needsEmailConfirmation: true,
-        },
-        { status: 201, headers: { "Cache-Control": "no-store" } },
+      return conflict(
+        "An account with this email already exists. Please sign in, or use the forgot-password option if you need to reset your password.",
+        "EMAIL_EXISTS",
       );
     }
 
@@ -127,24 +106,6 @@ export async function POST(req: NextRequest) {
       await db.account
         .delete({ where: { id: existingEmail.id } })
         .catch(() => {});
-    }
-
-    // RECONCILIATION: orphaned accounts row (no supabaseAuthUid).
-    if (
-      existingEmail &&
-      !existingEmail.supabaseAuthUid &&
-      !isAccountDeactivated(existingEmail)
-    ) {
-      try {
-        const rows = await db.$queryRaw<Array<{ id: string }>>`
-          SELECT id FROM auth.users WHERE email = ${email} LIMIT 1
-        `;
-        if (rows.length === 0) {
-          await db.account.delete({ where: { id: existingEmail.id } });
-        }
-      } catch (e) {
-        console.error("[register] reconciliation check failed:", e);
-      }
     }
 
     // Check student ID (still returns generic error - student IDs are not
@@ -183,24 +144,16 @@ export async function POST(req: NextRequest) {
     });
     if (authError || !authData.user) {
       // If Supabase says "already registered", the email exists in Supabase
-      // but not in our accounts table. Return the same success response to
-      // avoid enumeration (the user gets a sign-in link via the OTP path
-      // above on their next attempt, or they can use forgot-password).
+      // Auth (but not in our accounts table, or it was deactivated and deleted
+      // above). Reject with a clear 409 so the user is not silently accepted.
       const msg = authError?.message ?? "";
       if (
         msg.toLowerCase().includes("already registered") ||
         msg.toLowerCase().includes("user already")
       ) {
-        return NextResponse.json(
-          {
-            ok: true,
-            message:
-              "Account created! Check your email to confirm your account, then sign in.",
-            email,
-            whitelisted: isWhitelisted,
-            needsEmailConfirmation: true,
-          },
-          { status: 201, headers: { "Cache-Control": "no-store" } },
+        return conflict(
+          "An account with this email already exists. Please sign in, or use the forgot-password option if you need to reset your password.",
+          "EMAIL_EXISTS",
         );
       }
       return badRequest(
