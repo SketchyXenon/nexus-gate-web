@@ -1,9 +1,21 @@
 import type { NextConfig } from "next";
 
+// Vercel sets this at build time. When on Vercel, we use the default build
+// output (Vercel optimizes it automatically). When self-hosting (Docker/VPS),
+// output: "standalone" produces a self-contained server bundle at
+// .next/standalone/server.js that can be run with `node .next/standalone/server.js`.
+// Enabling standalone on Vercel causes ENOENT errors on .next/next-server.js.nft.json
+// because Vercel's build pipeline relocates tracing artifacts.
+const isVercel = !!process.env.VERCEL;
+
 const nextConfig: NextConfig = {
-  output: "standalone",
+  // Only enable standalone output for self-hosted deployments (not Vercel).
+  ...(!isVercel && { output: "standalone" as const }),
   reactStrictMode: true,
   poweredByHeader: false,
+  // Allow the sandbox preview host to access Next.js dev-only resources
+  // (HMR, stack frames) so the preview panel works in development.
+  allowedDevOrigins: ["*.space-z.ai"],
   compiler: {
     removeConsole:
       process.env.NODE_ENV === "production"
@@ -43,7 +55,7 @@ const nextConfig: NextConfig = {
 
 // Only wrap with Sentry config if Sentry is configured AND the package is
 // importable. The import is deferred (dynamic require) so a missing
-// @sentry/nextjs package degrades gracefully — the app runs without Sentry
+// @sentry/nextjs package degrades gracefully - the app runs without Sentry
 // instead of failing to load next.config.ts (which caused the 404-on-every-
 // route cascade in a previous incident).
 const hasSentry = process.env.NEXT_PUBLIC_SENTRY_DSN || process.env.SENTRY_DSN;
@@ -61,9 +73,9 @@ if (hasSentry) {
       sourcemaps: { deleteSourcemapsAfterUpload: true },
     });
   } catch {
-    // Package not installed — fall back to plain config. Sentry is optional.
+    // Package not installed - fall back to plain config. Sentry is optional.
     console.warn(
-      "[next.config] SENTRY_DSN set but @sentry/nextjs not installed — running without Sentry.",
+      "[next.config] SENTRY_DSN set but @sentry/nextjs not installed - running without Sentry.",
     );
   }
 }
