@@ -806,6 +806,35 @@ export const useDashboard = () =>
     staleTime: 30_000,
   });
 
+// ---------------- Visit analytics ----------------
+// Privacy-preserving: the server hashes the public IP (daily-rotating)
+// and never stores it raw. trackVisit is fire-and-forget (non-blocking).
+export interface AnalyticsSummary {
+  days: Array<{ day: string; uniqueVisitors: number; totalVisits: number }>;
+  topRoutes: Array<{ route: string; visits: number }>;
+  totals: { uniqueVisitors: number; totalVisits: number };
+}
+
+export const useAnalytics = () =>
+  useQuery({
+    queryKey: ["analytics"],
+    queryFn: () => api<AnalyticsSummary>("/api/analytics"),
+    staleTime: 60_000,
+  });
+
+/** Fire-and-forget page-view ping. Never throws (analytics is best-effort). */
+export function trackVisit(route: string): void {
+  if (typeof window === "undefined") return;
+  fetch("/api/analytics", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ route }),
+    credentials: "same-origin",
+  }).catch(() => {
+    // Silent: analytics must not break the page.
+  });
+}
+
 // ---------------- Student attendance history ----------------
 export interface MyAttendanceRecord {
   id: number;

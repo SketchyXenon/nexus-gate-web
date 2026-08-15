@@ -322,3 +322,29 @@ model TermsAcceptance {
 
   @@index([accountId, acceptedAt])
 }
+
+// ====================================================================
+// 13. VISIT ANALYTICS (privacy-preserving)
+// --------------------------------------------------------------------
+// No raw IP address is ever stored. The public IP is HMAC-hashed with a
+// daily-rotating server secret, producing a non-reversible token that
+// only identifies "same visitor on the same day" — nothing more. Per
+// 06-security-architecture.md §8 (data minimization) and §11 (never log
+// full PII). Aggregated upserts deduplicate on (dayBucket, visitorHash,
+// route), so the row count stays bounded.
+// ====================================================================
+
+model Visit {
+  id           String   @id @default(cuid())
+  dayBucket    String   // YYYY-MM-DD (UTC)
+  visitorHash  String   // HMAC(secret, ip) — non-reversible, daily-rotating
+  route        String   // path visited (e.g. "/" or "/api/events")
+  country      String?  // optional, from CF-IPCountry header (country-level only)
+  visits       Int      @default(1) // upserted counter
+  firstSeenAt  DateTime @default(now())
+  lastSeenAt   DateTime @updatedAt
+
+  @@unique([dayBucket, visitorHash, route])
+  @@index([dayBucket])
+  @@index([route])
+}

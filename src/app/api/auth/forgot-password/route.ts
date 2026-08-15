@@ -116,7 +116,12 @@ export async function POST(req: NextRequest) {
       process.env.NEXT_PUBLIC_APP_URL?.trim() || req.nextUrl.origin;
     let finalRedirectTo = appUrl;
     if (redirectTo) {
-      if (redirectTo.startsWith("/")) {
+      // Defense-in-depth: the Zod schema already rejected protocol-relative
+      // URLs ("//evil.com"), but this route re-checks to avoid ever passing a
+      // cross-origin URL to Supabase even if the schema is bypassed. Only a
+      // single-slash relative path is resolved against the app URL; absolute
+      // URLs are passed through verbatim (they already passed same-origin).
+      if (redirectTo.startsWith("/") && !redirectTo.startsWith("//")) {
         finalRedirectTo = new URL(redirectTo, appUrl).toString();
       } else {
         finalRedirectTo = redirectTo;

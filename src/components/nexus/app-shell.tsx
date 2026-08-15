@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   LayoutDashboard,
   Users,
@@ -34,7 +34,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useLogout, type Account } from "@/lib/api-client";
+import { useLogout, trackVisit, type Account } from "@/lib/api-client";
 import { ROLE_LABELS } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
 import { ThemeToggle } from "./theme-toggle";
@@ -181,6 +181,13 @@ export function AppShell({
   const online = useOnlineStatus();
   // Auto-logout after 30 min of inactivity (warning at 25 min).
   useSessionTimeout(true);
+
+  // Offline-first identity + analytics: record each view change as a
+  // privacy-preserving page-view ping (server hashes the public IP daily,
+  // never stores it raw). Fire-and-forget — never blocks the UI.
+  useEffect(() => {
+    trackVisit(`/app/${view}`);
+  }, [view]);
 
   const allowedNav = useMemo(
     () => NAV.filter((n) => n.roles.includes(user.role)),

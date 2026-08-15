@@ -186,12 +186,24 @@ export async function POST(req: NextRequest) {
           },
         });
         if (verification.verified) {
-          verifiedAccount = account;
-          stored.counter = verification.authenticationInfo.newCounter;
-          await db.account.update({
-            where: { id: account.id },
-            data: { passkeyCredential: JSON.stringify(stored) },
-          });
+          // SECURITY: require user verification at login too (matches
+          // registration). login-options sets userVerification: "required",
+          // and we double-check the authenticator actually performed UV. A
+          // "preferred" downgrade or a tampered authenticator that reports
+          // verified=true without UV must not produce a session.
+          if (!verification.authenticationInfo?.userVerified) {
+            console.warn(
+              "[passkey/login-verify] rejecting assertion without user verification for account",
+              account.id,
+            );
+          } else {
+            verifiedAccount = account;
+            stored.counter = verification.authenticationInfo.newCounter;
+            await db.account.update({
+              where: { id: account.id },
+              data: { passkeyCredential: JSON.stringify(stored) },
+            });
+          }
         }
       } else {
         console.warn(

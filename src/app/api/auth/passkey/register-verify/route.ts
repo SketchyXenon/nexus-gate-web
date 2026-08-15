@@ -76,11 +76,59 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // SECURITY: require user verification. A passkey without UV is just a
+  // "something you have" factor — anyone with physical access to the device
+  // could sign in. UV (biometric/PIN) makes it "something you have + are".
+  // Reject if the authenticator did not verify the user during attestation.
+  if (!verification.registrationInfo.userVerified) {
+    return failWithCookieDelete(
+      {
+        error:
+          "User verification is required. Enable biometric or PIN unlock on your device and try again.",
+        code: "USER_VERIFICATION_REQUIRED",
+      },
+      400,
+    );
+  }
+
   const { credential } = verification.registrationInfo;
+
+  // SECURITY: reject credential reuse across accounts. WebAuthn credential
+  // IDs are globally unique (random bytes from the authenticator), so the
+  // same credential ID registered to a DIFFERENT account means one physical
+  // authenticator is being bound to two accounts (device-reuse attack).
+  // Without this check, the UPDATE below would silently overwrite account A's
+  // passkey row, letting account B reuse account A's authenticator.
+  const reuseRows = await db.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM accounts
+    WHERE passkey_credential_id = ${credential.id}
+      AND id <> ${account.id}
+    LIMIT 1
+  `;
+  if (reuseRows.length > 0) {
+    await audit({
+      actorId: account.id,
+      action: "auth.passkey_register_reuse_blocked",
+      targetType: "Account",
+      metadata: { credentialId: credential.id },
+      req,
+    }).catch(() => {});
+    return failWithCookieDelete(
+      {
+        error:
+          "This passkey is already registered to another account. Use a different passkey.",
+        code: "CREDENTIAL_REUSE",
+      },
+      409,
+    );
+  }
+
   const stored = JSON.stringify({
     id: credential.id,
     publicKey: Buffer.from(credential.publicKey).toString("base64"),
     counter: credential.counter,
+    // Transports are a browser hint for future login prompts (not
+    // cryptographically verified) — taken from the attestation response.
     transports: body.response.response?.transports || [],
   });
 

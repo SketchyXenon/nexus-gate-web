@@ -72,6 +72,11 @@ import { format } from "date-fns";
 import { PROGRAMS } from "@/lib/programs";
 import { scorePassword } from "@/lib/password-strength";
 import {
+  detectPasskeySupport,
+  passkeyUnavailableMessage,
+  type PasskeySupport,
+} from "@/lib/passkey-availability";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -115,6 +120,21 @@ export function ProfileView() {
 
   // Passkey registration
   const [passkeyLoading, setPasskeyLoading] = useState(false);
+  // Hybrid UX: detect passkey support so the register button only shows when
+  // the browser can actually create a credential.
+  const [passkeySupport, setPasskeySupport] = useState<PasskeySupport | null>(
+    null,
+  );
+  useEffect(() => {
+    let mounted = true;
+    detectPasskeySupport().then((result) => {
+      if (mounted) setPasskeySupport(result);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+  const passkeySupported = passkeySupport?.supported === true;
 
   async function handleRegisterPasskey() {
     setPasskeyLoading(true);
@@ -614,19 +634,28 @@ export function ProfileView() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Button
-            variant="outline"
-            className="w-full"
-            disabled={passkeyLoading}
-            onClick={handleRegisterPasskey}
-          >
-            {passkeyLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Fingerprint className="h-4 w-4" />
-            )}
-            Register passkey
-          </Button>
+          {/* Hybrid UX: only show the register button when WebAuthn is
+              supported. Unsupported browsers get a note explaining why and
+              that password sign-in remains available. */}
+          {passkeySupported ? (
+            <Button
+              variant="outline"
+              className="w-full"
+              disabled={passkeyLoading}
+              onClick={handleRegisterPasskey}
+            >
+              {passkeyLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Fingerprint className="h-4 w-4" />
+              )}
+              Register passkey
+            </Button>
+          ) : passkeySupport && !passkeySupport.supported ? (
+            <p className="text-xs text-muted-foreground text-center">
+              {passkeyUnavailableMessage(passkeySupport.reason)}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 

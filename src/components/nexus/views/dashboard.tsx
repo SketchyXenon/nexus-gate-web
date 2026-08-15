@@ -47,6 +47,7 @@ import { ROLE_LABELS } from "@/lib/rbac";
 import { getProgramLabel } from "@/lib/programs";
 import { MaintenancePanel } from "@/components/nexus/maintenance";
 import { AnalyticsCharts } from "@/components/nexus/analytics-charts";
+import { VisitAnalyticsCard } from "@/components/nexus/visit-analytics-card";
 import { format } from "date-fns";
 
 type ViewId =
@@ -598,13 +599,14 @@ export function DashboardView({ user, onNavigate }: Props) {
       </div>
 
       {user.role === "ADMIN" && (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 lg:grid-cols-3">
           <MaintenancePanel />
           <AnalyticsPanel
             stats={stats}
             recentEvents={recentEvents}
             programCounts={programCounts}
           />
+          <VisitAnalyticsCard />
         </div>
       )}
     </div>

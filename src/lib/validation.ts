@@ -162,8 +162,13 @@ export const forgotPasswordSchema = z.object({
     .trim()
     .refine(
       (url) => {
-        // Relative paths (starting with /) are inherently same-origin.
-        if (url.startsWith("/")) return true;
+        // Relative paths (single leading "/") are inherently same-origin.
+        // CRITICAL: protocol-relative URLs ("//evil.com/path") also start
+        // with "/" but resolve to a cross-origin host in the browser — they
+        // are an open-redirect vector and MUST be rejected. A safe relative
+        // path is "/" followed by a non-slash character (or just "/").
+        if (url === "/") return true;
+        if (url.startsWith("/") && !url.startsWith("//")) return true;
         try {
           const parsed = new URL(url);
           const appUrl = process.env.NEXT_PUBLIC_APP_URL;

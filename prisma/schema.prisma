@@ -30,50 +30,50 @@ datasource db {
 // ====================================================================
 
 model Account {
-  id              String        @id @default(cuid())
-  email           String        @unique
-  passwordHash    String        @default("") @map("password_hash")
-  fullName        String        @map("full_name")
-  role            String        @default("USER")
-  status          String        @default("PENDING_VERIFICATION")
-  studentId       Int?          @unique @map("student_id")
-  program         String?
-  section         String?
-  authProvider    String?       @map("auth_provider")
-  providerAccountId String?     @map("provider_account_id")
-  year            Int?
-  organizationName String?      @map("organization_name")
-  courseModifiedAt DateTime?    @map("course_modified_at")
-  lastProfileUpdateAt DateTime? @map("last_profile_update_at")
+  id                   String    @id @default(cuid())
+  email                String    @unique
+  passwordHash         String    @default("") @map("password_hash")
+  fullName             String    @map("full_name")
+  role                 String    @default("USER")
+  status               String    @default("PENDING_VERIFICATION")
+  studentId            Int?      @unique @map("student_id")
+  program              String?
+  section              String?
+  authProvider         String?   @map("auth_provider")
+  providerAccountId    String?   @map("provider_account_id")
+  year                 Int?
+  organizationName     String?   @map("organization_name")
+  courseModifiedAt     DateTime? @map("course_modified_at")
+  lastProfileUpdateAt  DateTime? @map("last_profile_update_at")
   lastPasswordChangeAt DateTime? @map("last_password_change_at")
-  notificationEndpoint String?  @map("notification_endpoint")
-  notificationKeys     String?  @map("notification_keys")
-  passkeyCredential    String?  @map("passkey_credential")
-  passkeyCredentialId  String?  @map("passkey_credential_id")
-  supabaseAuthUid      String?  @unique @map("supabase_auth_uid")
-  notificationEnabled  Boolean  @default(false) @map("notification_enabled")
-  notificationPrefs    Json?    @map("notification_prefs")
-  lastLoginAt     DateTime?     @map("last_login_at")
-  failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
-  lockedUntil     DateTime?     @map("locked_until")
+  notificationEndpoint String?   @map("notification_endpoint")
+  notificationKeys     String?   @map("notification_keys")
+  passkeyCredential    String?   @map("passkey_credential")
+  passkeyCredentialId  String?   @map("passkey_credential_id")
+  supabaseAuthUid      String?   @unique @map("supabase_auth_uid")
+  notificationEnabled  Boolean   @default(false) @map("notification_enabled")
+  notificationPrefs    Json?     @map("notification_prefs")
+  lastLoginAt          DateTime? @map("last_login_at")
+  failedLoginAttempts  Int       @default(0) @map("failed_login_attempts")
+  lockedUntil          DateTime? @map("locked_until")
   // Email verification timestamp (set when user clicks the verification link).
-  emailVerifiedAt DateTime?     @map("email_verified_at")
+  emailVerifiedAt      DateTime? @map("email_verified_at")
   // Soft-delete / deactivation fields (never hard-delete user data).
-  isDeactivated   Boolean       @default(false) @map("is_deactivated")
-  deactivatedAt   DateTime?     @map("deactivated_at")
-  deactivatedReason String?     @map("deactivated_reason")
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
+  isDeactivated        Boolean   @default(false) @map("is_deactivated")
+  deactivatedAt        DateTime? @map("deactivated_at")
+  deactivatedReason    String?   @map("deactivated_reason")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
 
-  eventsOwned       Event[]
-  attendances       EventAttendance[]
-  overridesMade     AttendanceOverride[]
-  notifications     Notification[]
-  auditLogs         AuditLog[]
+  eventsOwned        Event[]
+  attendances        EventAttendance[]
+  overridesMade      AttendanceOverride[]
+  notifications      Notification[]
+  auditLogs          AuditLog[]
   verificationTokens VerificationToken[]
-  refreshTokens     RefreshToken[]
-  deviceKeys        DeviceKey[]
-  termsAcceptances  TermsAcceptance[]
+  refreshTokens      RefreshToken[]
+  deviceKeys         DeviceKey[]
+  termsAcceptances   TermsAcceptance[]
 
   // ---- High-quality indexes ----
   // Role + status: admin dashboard lists accounts by role/status frequently
@@ -92,7 +92,6 @@ model Account {
   @@index([createdAt])
   // Deactivation filter: list active accounts excluding soft-deleted
   @@index([isDeactivated])
-
   @@map("accounts")
 }
 
@@ -101,19 +100,18 @@ model Account {
 // ====================================================================
 
 model AuthorizedStudent {
-  studentId   Int      @id @map("student_id")
-  email       String   @unique
-  fullName    String   @map("full_name")
-  program     String
-  section     String
-  activated   Boolean  @default(false)
-  overrides   AttendanceOverride[]
+  studentId Int                  @id @map("student_id")
+  email     String               @unique
+  fullName  String               @map("full_name")
+  program   String
+  section   String
+  activated Boolean              @default(false)
+  overrides AttendanceOverride[]
 
   // Composite: whitelist listing filtered by program+section, then activation
   @@index([program, section, activated])
   // Activation sweep (admin dashboard "pending activation" view)
   @@index([activated])
-
   @@map("authorized_students")
 }
 
@@ -122,21 +120,20 @@ model AuthorizedStudent {
 // ====================================================================
 
 model VerificationToken {
-  id        String   @id @default(cuid())
-  accountId String   @map("account_id")
-  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  codeHash  String   @map("code_hash")
+  id        String    @id @default(cuid())
+  accountId String    @map("account_id")
+  account   Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  codeHash  String    @map("code_hash")
   purpose   String
-  expiresAt DateTime @map("expires_at")
+  expiresAt DateTime  @map("expires_at")
   usedAt    DateTime? @map("used_at")
-  createdAt DateTime @default(now()) @map("created_at")
-  attempts  Int      @default(0)
+  createdAt DateTime  @default(now()) @map("created_at")
+  attempts  Int       @default(0)
 
   // Composite: "find an unused, non-expired token for this account+purpose"
   @@index([accountId, purpose, usedAt])
   // Cron sweep: delete expired tokens
   @@index([expiresAt])
-
   @@map("verification_tokens")
 }
 
@@ -157,7 +154,6 @@ model RefreshToken {
   @@index([accountId, revokedAt])
   // Cron sweep: delete expired tokens
   @@index([expiresAt])
-
   @@map("refresh_tokens")
 }
 
@@ -166,30 +162,30 @@ model RefreshToken {
 // ====================================================================
 
 model Event {
-  id            Int       @id @default(autoincrement())
-  title         String
-  description   String?
-  eventSecret   String    @default(cuid()) @map("event_secret")
-  ownerId       String    @map("owner_id")
-  owner         Account   @relation(fields: [ownerId], references: [id], onDelete: Restrict)
-  scope         String    @default("academic")
-  targetProgram String?   @map("target_program")
-  targetSection String?   @map("target_section")
-  scheduledAt   DateTime  @map("scheduled_at")
-  endsAt        DateTime? @map("ends_at")
-  checkInOpensAt   DateTime? @map("check_in_opens_at")
-  checkInClosesAt  DateTime? @map("check_in_closes_at")
-  timeOutOpensAt   DateTime? @map("time_out_opens_at")
-  timeOutClosesAt  DateTime? @map("time_out_closes_at")
-  enableTimeOut    Boolean   @default(false) @map("enable_time_out")
-  delegatable      Boolean   @default(true)
+  id                Int       @id @default(autoincrement())
+  title             String
+  description       String?
+  eventSecret       String    @default(cuid()) @map("event_secret")
+  ownerId           String    @map("owner_id")
+  owner             Account   @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  scope             String    @default("academic")
+  targetProgram     String?   @map("target_program")
+  targetSection     String?   @map("target_section")
+  scheduledAt       DateTime  @map("scheduled_at")
+  endsAt            DateTime? @map("ends_at")
+  checkInOpensAt    DateTime? @map("check_in_opens_at")
+  checkInClosesAt   DateTime? @map("check_in_closes_at")
+  timeOutOpensAt    DateTime? @map("time_out_opens_at")
+  timeOutClosesAt   DateTime? @map("time_out_closes_at")
+  enableTimeOut     Boolean   @default(false) @map("enable_time_out")
+  delegatable       Boolean   @default(true)
   // Admin-controlled flag: when true, allows OTHER organizers to project
   // this event's QR code IF they share the same organizationName tag as
   // the event owner, OR if the event is open-to-all.
-  delegationEnabled Boolean  @default(false) @map("delegation_enabled")
-  status        String    @default("active")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  delegationEnabled Boolean   @default(false) @map("delegation_enabled")
+  status            String    @default("active")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
   attendances EventAttendance[]
   overrides   AttendanceOverride[]
@@ -209,7 +205,6 @@ model Event {
   @@index([targetProgram, targetSection, status])
   // Cron reminders: upcoming events by scheduled time
   @@index([scheduledAt, status])
-
   @@map("events")
 }
 
@@ -228,21 +223,21 @@ model Event {
 // ====================================================================
 
 model EventAttendance {
-  id             Int      @id @default(autoincrement())
-  eventId        Int      @map("event_id")
-  event          Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  accountId      String   @map("account_id")
-  account        Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  scannedAt      DateTime @default(now()) @map("scanned_at")
+  id             Int       @id @default(autoincrement())
+  eventId        Int       @map("event_id")
+  event          Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  accountId      String    @map("account_id")
+  account        Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  scannedAt      DateTime  @default(now()) @map("scanned_at")
   timeOutAt      DateTime? @map("time_out_at")
-  source         String   @default("qr")
-  idempotencyKey String?  @unique @map("idempotency_key")
-  tokenBlock     Int?     @map("token_block")
+  source         String    @default("qr")
+  idempotencyKey String?   @unique @map("idempotency_key")
+  tokenBlock     Int?      @map("token_block")
 
   // ---- Certificate fields (v8 anti-cheating) ----
-  certificateNonce     String?  @unique @map("certificate_nonce")
-  certificateSubFrames String?  @map("certificate_sub_frames") // JSON array, e.g. "[0,1,2]"
-  deviceFingerprint    String?  @map("device_fingerprint")
+  certificateNonce     String?   @unique @map("certificate_nonce")
+  certificateSubFrames String?   @map("certificate_sub_frames") // JSON array, e.g. "[0,1,2]"
+  deviceFingerprint    String?   @map("device_fingerprint")
   scannedAtClient      DateTime? @map("scanned_at_client") // client-reported scan time (for offline sync)
 
   // Unique constraint: one check-in per (event, account) pair — atomic.
@@ -257,7 +252,6 @@ model EventAttendance {
   @@index([scannedAt])
   // Device audit: "list all scans from this device"
   @@index([deviceFingerprint])
-
   @@map("event_attendance")
 }
 
@@ -266,23 +260,22 @@ model EventAttendance {
 // ====================================================================
 
 model AttendanceOverride {
-  id          Int      @id @default(autoincrement())
-  eventId     Int      @map("event_id")
-  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  adminId     String   @map("admin_id")
-  admin       Account  @relation(fields: [adminId], references: [id], onDelete: Cascade)
-  studentId   Int      @map("student_id")
-  student     AuthorizedStudent @relation(fields: [studentId], references: [studentId], onDelete: Cascade)
-  reason      String
-  createdAt   DateTime @default(now()) @map("created_at")
+  id        Int               @id @default(autoincrement())
+  eventId   Int               @map("event_id")
+  event     Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  adminId   String            @map("admin_id")
+  admin     Account           @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  studentId Int               @map("student_id")
+  student   AuthorizedStudent @relation(fields: [studentId], references: [studentId], onDelete: Cascade)
+  reason    String
+  createdAt DateTime          @default(now()) @map("created_at")
 
+  // IDEMPOTENCY: prevents duplicate override records on retry
+  @@unique([eventId, studentId])
   // Composite: list overrides for an event (newest first)
   @@index([eventId, createdAt])
   // Admin audit: list overrides made by an admin
   @@index([adminId, createdAt])
-  // IDEMPOTENCY: prevents duplicate override records on retry
-  @@unique([eventId, studentId])
-
   @@map("attendance_overrides")
 }
 
@@ -291,14 +284,14 @@ model AttendanceOverride {
 // ====================================================================
 
 model Notification {
-  id          Int      @id @default(autoincrement())
-  accountId   String   @map("account_id")
-  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  title       String
-  body        String
-  type        String   @default("info")
-  readAt      DateTime? @map("read_at")
-  createdAt   DateTime @default(now()) @map("created_at")
+  id        Int       @id @default(autoincrement())
+  accountId String    @map("account_id")
+  account   Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  type      String    @default("info")
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
 
   // Composite: "list this account's notifications, newest first" — the
   // single most common notification query
@@ -310,7 +303,6 @@ model Notification {
   @@index([readAt, createdAt])
   // Cron event-reminders dedup: WHERE type LIKE 'reminder:event:%' AND created_at > X
   @@index([type, createdAt])
-
   @@map("notifications")
 }
 
@@ -338,7 +330,6 @@ model AuditLog {
   @@index([targetType, targetId, createdAt])
   // Cron sweep: delete old audit logs
   @@index([createdAt])
-
   @@map("audit_logs")
 }
 
@@ -360,16 +351,15 @@ model DeviceKey {
   account      Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
   publicKeyJwk String    @map("public_key_jwk") // Ed25519 public key as JSON Web Key (JSON string)
   fingerprint  String    @unique // SHA-256 hash of the public key (hex)
-  label        String?   // optional device name (e.g. "iPhone 14")
+  label        String? // optional device name (e.g. "iPhone 14")
   createdAt    DateTime  @default(now()) @map("created_at")
   lastUsedAt   DateTime? @map("last_used_at")
   revokedAt    DateTime? @map("revoked_at")
-
-  // Composite: "list this account's registered devices"
-  @@index([accountId, revokedAt])
   // Lookup by fingerprint (used during certificate verification)
   // fingerprint is already @unique so no separate index needed
 
+  // Composite: "list this account's registered devices"
+  @@index([accountId, revokedAt])
   @@map("device_keys")
 }
 
@@ -395,23 +385,49 @@ model Setting {
 // ====================================================================
 
 model TermsAcceptance {
-  id          String   @id @default(cuid())
-  accountId   String   @map("account_id")
-  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  id            String   @id @default(cuid())
+  accountId     String   @map("account_id")
+  account       Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
   // Semantic version of the Terms document the user agreed to.
-  termsVersion String  @map("terms_version")
+  termsVersion  String   @map("terms_version")
   // SHA-256 hash of the Terms document content at acceptance time.
-  termsHash   String   @map("terms_hash")
+  termsHash     String   @map("terms_hash")
   // Semantic version of the Privacy Policy document.
-  policyVersion String @map("policy_version")
-  policyHash  String   @map("policy_hash")
+  policyVersion String   @map("policy_version")
+  policyHash    String   @map("policy_hash")
   // IP address and user agent for legal evidence.
-  ipAddress   String?  @map("ip_address")
-  userAgent   String?  @map("user_agent")
-  acceptedAt  DateTime @default(now()) @map("accepted_at")
+  ipAddress     String?  @map("ip_address")
+  userAgent     String?  @map("user_agent")
+  acceptedAt    DateTime @default(now()) @map("accepted_at")
 
   // Lookup: "get all acceptances for this account" (compliance audit)
   @@index([accountId, acceptedAt])
-
   @@map("terms_acceptances")
+}
+
+// ====================================================================
+// 13. VISIT ANALYTICS (privacy-preserving)
+// --------------------------------------------------------------------
+// No raw IP address is ever stored. The public IP is HMAC-hashed with a
+// daily-rotating server secret, producing a non-reversible token that
+// only identifies "same visitor on the same day" — nothing more. Per
+// 06-security-architecture.md §8 (data minimization) and §11 (never log
+// full PII). Aggregated upserts deduplicate on (day_bucket, visitor_hash,
+// route), so the row count stays bounded.
+// ====================================================================
+
+model Visit {
+  id          String   @id @default(cuid())
+  dayBucket   String   @map("day_bucket")
+  visitorHash String   @map("visitor_hash")
+  route       String
+  country     String?
+  visits      Int      @default(1)
+  firstSeenAt DateTime @default(now()) @map("first_seen_at")
+  lastSeenAt  DateTime @updatedAt @map("last_seen_at")
+
+  @@unique([dayBucket, visitorHash, route], map: "visits_day_visitor_route_key")
+  @@index([dayBucket])
+  @@index([route])
+  @@map("visits")
 }
