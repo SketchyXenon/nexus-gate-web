@@ -64,8 +64,15 @@ function decodeStoredPublicKey(
 
 // POST /api/auth/passkey/login-verify
 // Verifies the WebAuthn assertion and signs the user in via Supabase.
-// Uses admin.generateLink to get a magic link, extracts the hashed_token,
-// and consumes it via verifyOtp to establish a session.
+// Uses the Prisma client API (db.account.findUnique) for the lookup — the
+// SAME pattern used by every other route that reads accounts. Raw SQL was
+// previously used but the mysql2/TiDB driver returned VARCHAR columns with
+// inconsistent types (Buffer vs string) and the paired register-verify raw
+// UPDATE failed to persist passkey_credential_id. The Prisma client handles
+// type normalization and parameter binding correctly across all providers
+// (SQLite dev, Postgres, TiDB/MySQL) via the @map annotations. Per
+// 03-engineering §7 (don't add complexity without cause) and Z.md (review
+// existing files before change — db.account.* is the established pattern).
 export async function POST(req: NextRequest) {
   const failWithCookieDelete = (body: object, status: number) => {
     const resp = NextResponse.json(body, { status });
@@ -112,8 +119,11 @@ export async function POST(req: NextRequest) {
 
   const { rpID, expectedOrigin } = getWebAuthnContext(req);
 
-  // O(log N) lookup: extract the credential ID from the assertion and find
-  // the owning account via the indexed passkeyCredentialId column.
+  // O(log N) lookup: find the account by credential ID via the indexed
+  // passkeyCredentialId column. The Prisma client translates to the correct
+  // physical column name per provider (camelCase on SQLite, snake_case via
+  // @map on Postgres/TiDB) and normalizes the return type (string for
+  // VARCHAR, boolean for BOOLEAN) so no Buffer/type coercion is needed.
   const assertion = body.assertion as AuthenticationResponseJSON;
   const credentialId = assertion?.id;
   if (!credentialId) {
@@ -123,91 +133,22 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // O(log N) lookup: find the account by credential ID via the indexed
-  // passkey_credential_id column. Uses raw SQL to avoid Prisma client
-  // type issues on Vercel's cached builds. Physical column names are
-  // snake_case (TiDB/Postgres via @map) — the production source of truth.
-  // Note: is_deactivated is BOOLEAN. Postgres pg driver returns true/false;
-  // MySQL/TiDB mysql2 driver returns 0/1 (number). We normalize to boolean
-  // below so the downstream truthiness check is unambiguous on both.
-  // We also SELECT passkey_credential_id itself so login-verify can recover
-  // the credential `id` from it if the JSON blob is missing that field.
-  //
-  // TYPE NOTE: the mysql2/TiDB driver can return VARCHAR/TEXT columns as a
-  // Buffer (not a string) depending on charset/binary flags. This broke the
-  // prior `written.credId === credential.id` comparison and would break
-  // JSON.parse(account.passkeyCredential). We normalize every string column
-  // to a real string below (Buffer -> utf8, else String()) so downstream
-  // parsing/comparison is type-safe across both Postgres (string) and
-  // TiDB/MySQL (string-or-Buffer).
-  const rows = await db.$queryRaw<
-    Array<{
-      id: string;
-      email: string | Buffer;
-      fullName: string | Buffer;
-      role: string | Buffer;
-      status: string | Buffer;
-      studentId: number | null;
-      program: string | Buffer | null;
-      section: string | Buffer | null;
-      supabaseAuthUid: string | Buffer | null;
-      passkeyCredential: string | Buffer | null;
-      passkeyCredentialId: string | Buffer | null;
-      isDeactivated: number | boolean | null;
-    }>
-  >`
-    SELECT id, email, full_name AS fullName, role, status,
-           student_id AS studentId, program, section,
-           supabase_auth_uid AS supabaseAuthUid,
-           passkey_credential AS passkeyCredential,
-           passkey_credential_id AS passkeyCredentialId,
-           is_deactivated AS isDeactivated
-    FROM accounts
-    WHERE passkey_credential_id = ${credentialId}
-    LIMIT 1
-  `;
-  // Normalize driver-dependent types: the mysql2/TiDB driver can return
-  // VARCHAR/TEXT columns as a Buffer (not a string) depending on charset/
-  // binary flags. A Buffer is never === to a string even with identical
-  // content — this broke the prior write-verification comparison and would
-  // break JSON.parse(account.passkeyCredential). We coerce every string
-  // column to a real string (Buffer -> utf8, else String()) and
-  // is_deactivated to boolean (pg returns boolean, mysql2 returns 0/1) so
-  // downstream parsing/comparison is type-safe across both providers.
-  const asString = (v: string | Buffer | null | undefined): string | null => {
-    if (v == null) return null;
-    return Buffer.isBuffer(v) ? v.toString("utf8") : String(v);
-  };
-  type NormalizedAccount = {
-    id: string;
-    email: string;
-    fullName: string;
-    role: string;
-    status: string;
-    studentId: number | null;
-    program: string | null;
-    section: string | null;
-    supabaseAuthUid: string | null;
-    passkeyCredential: string | null;
-    passkeyCredentialId: string | null;
-    isDeactivated: boolean;
-  };
-  const account: NormalizedAccount | null = rows[0]
-    ? {
-        id: rows[0].id,
-        email: asString(rows[0].email) ?? "",
-        fullName: asString(rows[0].fullName) ?? "",
-        role: asString(rows[0].role) ?? "",
-        status: asString(rows[0].status) ?? "",
-        studentId: rows[0].studentId,
-        program: asString(rows[0].program),
-        section: asString(rows[0].section),
-        supabaseAuthUid: asString(rows[0].supabaseAuthUid),
-        passkeyCredential: asString(rows[0].passkeyCredential),
-        passkeyCredentialId: asString(rows[0].passkeyCredentialId),
-        isDeactivated: Boolean(rows[0].isDeactivated),
-      }
-    : null;
+  const account = await db.account.findUnique({
+    where: { passkeyCredentialId: credentialId },
+    select: {
+      id: true,
+      email: true,
+      fullName: true,
+      role: true,
+      status: true,
+      studentId: true,
+      program: true,
+      section: true,
+      supabaseAuthUid: true,
+      passkeyCredential: true,
+      isDeactivated: true,
+    },
+  });
 
   // Per-account checkpoint (user_id rate limit): now that we know which
   // account this credential belongs to, throttle by account ID. This stops
@@ -228,20 +169,6 @@ export async function POST(req: NextRequest) {
   if (account) {
     try {
       const stored = JSON.parse(account.passkeyCredential || "{}");
-      // RECOVERY: register-verify sets passkey_credential_id and the JSON
-      // blob's `id` field to the SAME value (credential.id) in one UPDATE.
-      // So when the blob is missing/stale but the credential_id column has
-      // the value, we can safely recover `stored.id` from it — the column is
-      // the authoritative source (not a guess). This is not a security
-      // bypass: the credential ID is public, and the assertion still has to
-      // cryptographically verify against the stored public key.
-      if (!stored.id && account.passkeyCredentialId) {
-        console.warn(
-          "[passkey/login-verify] blob missing id — recovering from passkey_credential_id column for account",
-          account.id,
-        );
-        stored.id = account.passkeyCredentialId;
-      }
       const publicKey = decodeStoredPublicKey(stored.publicKey);
       if (!publicKey && account.passkeyCredential) {
         // Diagnostic: the blob has data but publicKey won't decode. Log the
@@ -287,19 +214,19 @@ export async function POST(req: NextRequest) {
             // Atomic compare-and-set on the stored credential: only write
             // the new counter if the stored row hasn't changed since we read
             // it. Closes the TOCTOU window where two concurrent logins both
-            // read counter=N and both write counter=N+1 (one would clobber the
-            // other's clone-detection advance). 0 rows affected is harmless:
-            // the other request already advanced the counter; this login's
-            // session is still valid because the assertion itself verified.
+            // read counter=N and both write counter=N+1 (one would clobber
+            // the other's clone-detection advance). 0 rows affected is
+            // harmless: the other request already advanced the counter; this
+            // login's session is still valid because the assertion itself
+            // verified. Uses db.account.updateMany (Prisma client) — same
+            // pattern as the rest of the codebase.
             const oldStored = account.passkeyCredential ?? "{}";
             stored.counter = verification.authenticationInfo.newCounter;
             const newStored = JSON.stringify(stored);
-            await db.$executeRaw`
-              UPDATE accounts
-              SET passkey_credential = ${newStored}
-              WHERE id = ${account.id}
-                AND passkey_credential = ${oldStored}
-            `;
+            await db.account.updateMany({
+              where: { id: account.id, passkeyCredential: oldStored },
+              data: { passkeyCredential: newStored },
+            });
           }
         }
       } else {

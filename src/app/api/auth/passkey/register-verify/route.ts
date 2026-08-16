@@ -8,9 +8,21 @@ import { db } from "@/lib/db";
 import { requireAuth, checkRateLimitByKey } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import { getWebAuthnContext } from "@/lib/webauthn-context";
+import { isUniqueConstraintError } from "@/lib/prisma-errors";
 
 // POST /api/auth/passkey/register-verify
 // Verifies the WebAuthn registration response and stores the credential.
+//
+// Uses the Prisma client API (db.account.update) for the write — the SAME
+// pattern used by every other route that writes to accounts (login, password
+// change, profile, admin accounts). Raw SQL was previously used here but
+// failed to persist passkey_credential_id on TiDB (the column read back
+// empty while the blob persisted), causing "passkey registered but not
+// recognized at login." The Prisma client handles driver parameter binding
+// and type normalization correctly across all providers (SQLite dev,
+// Postgres, TiDB/MySQL) via the @map annotations. Per 03-engineering §7
+// (don't add complexity without cause) and Z.md (review existing files
+// before change — the established pattern is db.account.update).
 export async function POST(req: NextRequest) {
   // Helper: delete the challenge cookie on any failure path (single-use).
   const failWithCookieDelete = (body: object, status: number) => {
@@ -102,94 +114,40 @@ export async function POST(req: NextRequest) {
     transports: body.response.response?.transports || [],
   });
 
-  // SECURITY: atomic credential-reuse rejection + store in a SINGLE
-  // conditional UPDATE. The WHERE clause guards against TOCTOU races where
-  // two concurrent registrations both pass a separate reuse SELECT and both
-  // write the same credential_id. The `NOT EXISTS` subquery makes the DB
-  // the single source of truth: if another account already holds this
-  // credential_id, the UPDATE affects 0 rows. The @unique constraint on
-  // passkey_credential_id (schema) is the final backstop. rowcount==0 here
-  // means either reuse (credential belongs to another account) or the
-  // account row vanished (concurrent delete) - both are safe rejects.
-  // Physical column names are snake_case (TiDB/Postgres via @map) — the
-  // production source of truth. Parameterized via Prisma tagged-template
-  // literals (06-security-architecture.md §5).
-  const result = await db.$executeRaw`
-    UPDATE accounts
-    SET passkey_credential = ${stored},
-        passkey_credential_id = ${credential.id}
-    WHERE id = ${account.id}
-      AND NOT EXISTS (
-        SELECT 1 FROM accounts
-        WHERE passkey_credential_id = ${credential.id}
-          AND id <> ${account.id}
-      )
-  `;
-  if (result === 0) {
-    await audit({
-      actorId: account.id,
-      action: "auth.passkey_register_reuse_blocked",
-      targetType: "Account",
-      metadata: { credentialId: credential.id },
-      req,
-    }).catch(() => {});
-    return failWithCookieDelete(
-      {
-        error:
-          "This passkey is already registered to another account. Use a different passkey.",
-        code: "CREDENTIAL_REUSE",
+  // SECURITY: atomic credential-reuse rejection. The @unique constraint on
+  // passkeyCredentialId (schema) is the single source of truth: if another
+  // account already holds this credential_id, the update throws P2002, which
+  // we convert to a clear CREDENTIAL_REUSE response. Re-registering the same
+  // passkey on the same account is idempotent (no constraint violation).
+  // This closes the TOCTOU race where two concurrent registrations both pass
+  // a separate reuse SELECT and both write the same credential_id.
+  try {
+    await db.account.update({
+      where: { id: account.id },
+      data: {
+        passkeyCredential: stored,
+        passkeyCredentialId: credential.id,
       },
-      409,
-    );
-  }
-
-  // VERIFY THE WRITE: read back the row to confirm the credential blob
-  // actually persisted. This catches storage-level issues (driver binding,
-  // charset, column truncation on TiDB) at registration time so the user is
-  // not silently left with a credential_id but an empty/missing blob —
-  // which is exactly the state that produces "stored credential missing
-  // id or publicKey" at login. If the read-back doesn't match what we wrote,
-  // log loudly (with shape, never the key material) and surface a clear
-  // error instead of claiming success.
-  //
-  // TYPE NORMALIZATION: the mysql2/TiDB driver can return VARCHAR columns as
-  // a Buffer (not a string) depending on charset/binary flags. A Buffer is
-  // never === to a string even with identical content, so we coerce both
-  // columns to string via `as string`-safe normalization before comparing.
-  // Comparing by content (not identity) avoids a false STORAGE_FAILED when
-  // the write actually succeeded.
-  const verifyRow = await db.$queryRaw<Array<{ cred: string | null; credId: string | null }>>`
-    SELECT passkey_credential AS cred, passkey_credential_id AS credId
-    FROM accounts
-    WHERE id = ${account.id}
-    LIMIT 1
-  `;
-  const rawWritten = verifyRow[0];
-  const normalizeStr = (v: string | Buffer | null | undefined): string | null => {
-    if (v == null) return null;
-    return Buffer.isBuffer(v) ? v.toString("utf8") : String(v);
-  };
-  const writtenCred = normalizeStr(rawWritten?.cred);
-  const writtenCredId = normalizeStr(rawWritten?.credId);
-  if (writtenCred !== stored || writtenCredId !== credential.id) {
-    console.error(
-      "[passkey/register-verify] write verification FAILED for account",
-      account.id,
-      "| credId matches:", writtenCredId === credential.id,
-      "| cred blob matches:", writtenCred === stored,
-      "| written credId length:", writtenCredId?.length ?? 0,
-      "| expected credId length:", credential.id.length,
-      "| written blob length:", writtenCred?.length ?? 0,
-      "| expected blob length:", stored.length,
-    );
-    return failWithCookieDelete(
-      {
-        error:
-          "Passkey could not be stored reliably. Please try again, or contact support if the problem persists.",
-        code: "STORAGE_FAILED",
-      },
-      500,
-    );
+    });
+  } catch (e) {
+    if (isUniqueConstraintError(e)) {
+      await audit({
+        actorId: account.id,
+        action: "auth.passkey_register_reuse_blocked",
+        targetType: "Account",
+        metadata: { credentialId: credential.id },
+        req,
+      }).catch(() => {});
+      return failWithCookieDelete(
+        {
+          error:
+            "This passkey is already registered to another account. Use a different passkey.",
+          code: "CREDENTIAL_REUSE",
+        },
+        409,
+      );
+    }
+    throw e;
   }
 
   await audit({
