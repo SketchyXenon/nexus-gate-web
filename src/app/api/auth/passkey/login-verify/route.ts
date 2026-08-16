@@ -132,19 +132,27 @@ export async function POST(req: NextRequest) {
   // below so the downstream truthiness check is unambiguous on both.
   // We also SELECT passkey_credential_id itself so login-verify can recover
   // the credential `id` from it if the JSON blob is missing that field.
+  //
+  // TYPE NOTE: the mysql2/TiDB driver can return VARCHAR/TEXT columns as a
+  // Buffer (not a string) depending on charset/binary flags. This broke the
+  // prior `written.credId === credential.id` comparison and would break
+  // JSON.parse(account.passkeyCredential). We normalize every string column
+  // to a real string below (Buffer -> utf8, else String()) so downstream
+  // parsing/comparison is type-safe across both Postgres (string) and
+  // TiDB/MySQL (string-or-Buffer).
   const rows = await db.$queryRaw<
     Array<{
       id: string;
-      email: string;
-      fullName: string;
-      role: string;
-      status: string;
+      email: string | Buffer;
+      fullName: string | Buffer;
+      role: string | Buffer;
+      status: string | Buffer;
       studentId: number | null;
-      program: string | null;
-      section: string | null;
-      supabaseAuthUid: string | null;
-      passkeyCredential: string | null;
-      passkeyCredentialId: string | null;
+      program: string | Buffer | null;
+      section: string | Buffer | null;
+      supabaseAuthUid: string | Buffer | null;
+      passkeyCredential: string | Buffer | null;
+      passkeyCredentialId: string | Buffer | null;
       isDeactivated: number | boolean | null;
     }>
   >`
@@ -158,12 +166,48 @@ export async function POST(req: NextRequest) {
     WHERE passkey_credential_id = ${credentialId}
     LIMIT 1
   `;
-  // Normalize isDeactivated to a real boolean (Postgres returns boolean,
-  // MySQL/TiDB returns 0/1). Map undefined/null to false for type safety.
-  for (const r of rows) {
-    r.isDeactivated = Boolean(r.isDeactivated);
-  }
-  const account = rows[0] ?? null;
+  // Normalize driver-dependent types: the mysql2/TiDB driver can return
+  // VARCHAR/TEXT columns as a Buffer (not a string) depending on charset/
+  // binary flags. A Buffer is never === to a string even with identical
+  // content — this broke the prior write-verification comparison and would
+  // break JSON.parse(account.passkeyCredential). We coerce every string
+  // column to a real string (Buffer -> utf8, else String()) and
+  // is_deactivated to boolean (pg returns boolean, mysql2 returns 0/1) so
+  // downstream parsing/comparison is type-safe across both providers.
+  const asString = (v: string | Buffer | null | undefined): string | null => {
+    if (v == null) return null;
+    return Buffer.isBuffer(v) ? v.toString("utf8") : String(v);
+  };
+  type NormalizedAccount = {
+    id: string;
+    email: string;
+    fullName: string;
+    role: string;
+    status: string;
+    studentId: number | null;
+    program: string | null;
+    section: string | null;
+    supabaseAuthUid: string | null;
+    passkeyCredential: string | null;
+    passkeyCredentialId: string | null;
+    isDeactivated: boolean;
+  };
+  const account: NormalizedAccount | null = rows[0]
+    ? {
+        id: rows[0].id,
+        email: asString(rows[0].email) ?? "",
+        fullName: asString(rows[0].fullName) ?? "",
+        role: asString(rows[0].role) ?? "",
+        status: asString(rows[0].status) ?? "",
+        studentId: rows[0].studentId,
+        program: asString(rows[0].program),
+        section: asString(rows[0].section),
+        supabaseAuthUid: asString(rows[0].supabaseAuthUid),
+        passkeyCredential: asString(rows[0].passkeyCredential),
+        passkeyCredentialId: asString(rows[0].passkeyCredentialId),
+        isDeactivated: Boolean(rows[0].isDeactivated),
+      }
+    : null;
 
   // Per-account checkpoint (user_id rate limit): now that we know which
   // account this credential belongs to, throttle by account ID. This stops

@@ -151,27 +151,36 @@ export async function POST(req: NextRequest) {
   // id or publicKey" at login. If the read-back doesn't match what we wrote,
   // log loudly (with shape, never the key material) and surface a clear
   // error instead of claiming success.
-  const verifyRow = await db.$queryRaw<
-    Array<{ cred: string | null; credId: string | null }>
-  >`
+  //
+  // TYPE NORMALIZATION: the mysql2/TiDB driver can return VARCHAR columns as
+  // a Buffer (not a string) depending on charset/binary flags. A Buffer is
+  // never === to a string even with identical content, so we coerce both
+  // columns to string via `as string`-safe normalization before comparing.
+  // Comparing by content (not identity) avoids a false STORAGE_FAILED when
+  // the write actually succeeded.
+  const verifyRow = await db.$queryRaw<Array<{ cred: string | null; credId: string | null }>>`
     SELECT passkey_credential AS cred, passkey_credential_id AS credId
     FROM accounts
     WHERE id = ${account.id}
     LIMIT 1
   `;
-  const written = verifyRow[0];
-  if (!written || written.cred !== stored || written.credId !== credential.id) {
+  const rawWritten = verifyRow[0];
+  const normalizeStr = (v: string | Buffer | null | undefined): string | null => {
+    if (v == null) return null;
+    return Buffer.isBuffer(v) ? v.toString("utf8") : String(v);
+  };
+  const writtenCred = normalizeStr(rawWritten?.cred);
+  const writtenCredId = normalizeStr(rawWritten?.credId);
+  if (writtenCred !== stored || writtenCredId !== credential.id) {
     console.error(
       "[passkey/register-verify] write verification FAILED for account",
       account.id,
-      "| credId matches:",
-      written?.credId === credential.id,
-      "| cred blob matches:",
-      written?.cred === stored,
-      "| written blob length:",
-      written?.cred?.length ?? 0,
-      "| expected blob length:",
-      stored.length,
+      "| credId matches:", writtenCredId === credential.id,
+      "| cred blob matches:", writtenCred === stored,
+      "| written credId length:", writtenCredId?.length ?? 0,
+      "| expected credId length:", credential.id.length,
+      "| written blob length:", writtenCred?.length ?? 0,
+      "| expected blob length:", stored.length,
     );
     return failWithCookieDelete(
       {
