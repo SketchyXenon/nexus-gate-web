@@ -125,7 +125,8 @@ export async function POST(req: NextRequest) {
 
   // O(log N) lookup: find the account by credential ID via the indexed
   // passkey_credential_id column. Uses raw SQL to avoid Prisma client
-  // type issues on Vercel's cached builds.
+  // type issues on Vercel's cached builds. Physical column names are
+  // snake_case (TiDB/Postgres via @map) — the production source of truth.
   // Note: is_deactivated is BOOLEAN. Postgres pg driver returns true/false;
   // MySQL/TiDB mysql2 driver returns 0/1 (number). We normalize to boolean
   // below so the downstream truthiness check is unambiguous on both.

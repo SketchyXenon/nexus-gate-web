@@ -111,6 +111,9 @@ export async function POST(req: NextRequest) {
   // passkey_credential_id (schema) is the final backstop. rowcount==0 here
   // means either reuse (credential belongs to another account) or the
   // account row vanished (concurrent delete) - both are safe rejects.
+  // Physical column names are snake_case (TiDB/Postgres via @map) — the
+  // production source of truth. Parameterized via Prisma tagged-template
+  // literals (06-security-architecture.md §5).
   const result = await db.$executeRaw`
     UPDATE accounts
     SET passkey_credential = ${stored},
