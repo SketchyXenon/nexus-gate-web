@@ -20,6 +20,7 @@ import {
   safeFindAccountByEmail,
   isAccountDeactivated,
 } from "@/lib/safe-account";
+import { getSafeRedirectBase } from "@/lib/app-url";
 
 const magicLinkSchema = z.object({
   email: z.string().email().max(255),
@@ -85,11 +86,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const appUrl =
-      process.env.NEXT_PUBLIC_APP_URL?.trim() || req.nextUrl.origin;
+    const appUrl = getSafeRedirectBase(req.nextUrl.origin);
 
     // Defense-in-depth: do NOT send a magic link to a deactivated account.
-    // Deactivation is a soft-delete — the Supabase Auth user still exists, so
+    // Deactivation is a soft-delete - the Supabase Auth user still exists, so
     // signInWithOtp would otherwise deliver a usable link. The callback also
     // revokes the session for deactivated users, but suppressing delivery here
     // avoids emailing a deactivated user entirely. The generic response below
@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
         options: {
           emailRedirectTo: appUrl,
           // 10-minute expiry (Supabase default is 3600s = 60 min).
-          // Links are single-use — once exchangeCodeForSession is called,
+          // Links are single-use - once exchangeCodeForSession is called,
           // the code is consumed and can't be replayed.
           shouldCreateUser: false,
         },

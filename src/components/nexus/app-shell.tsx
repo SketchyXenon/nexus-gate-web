@@ -46,19 +46,57 @@ import { NexusLogo } from "./nexus-logo";
 import { NotificationBell } from "./notification-bell";
 import { useOnlineStatus } from "@/hooks/use-online-status";
 import { useSessionTimeout } from "@/hooks/use-session-timeout";
-import { DashboardView } from "./views/dashboard";
-import { WhitelistView } from "./views/whitelist";
-import { EventsView } from "./views/events";
-import { ProjectQrView } from "./views/project-qr";
-import { ScannerView } from "./views/scanner";
-import { AttendanceView } from "./views/attendance";
-import { OverridesView } from "./views/overrides";
-import { AccountsView } from "./views/accounts";
-import { AuditLogsView } from "./views/audit-logs";
-import { ProfileView } from "./views/profile";
-import { CalendarView } from "./views/calendar";
-import { MyAttendanceView } from "./views/my-attendance";
+import dynamic from "next/dynamic";
 import { CardErrorBoundary } from "./error-boundary";
+
+// Code-split each view into its own chunk so the initial compile/load only
+// pulls the active view. Keeps the dev compile memory bounded and shrinks
+// the production initial bundle (views are auth-gated, so unauthenticated
+// visitors never download them).
+const viewLoading = () => (
+  <div className="flex items-center justify-center py-16">
+    <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+  </div>
+);
+const dyn = <T,>(loader: () => Promise<T>) =>
+  dynamic(loader as never, { loading: viewLoading }) as T;
+
+const DashboardView = dyn(() =>
+  import("./views/dashboard").then((m) => m.DashboardView),
+);
+const WhitelistView = dyn(() =>
+  import("./views/whitelist").then((m) => m.WhitelistView),
+);
+const EventsView = dyn(() =>
+  import("./views/events").then((m) => m.EventsView),
+);
+const ProjectQrView = dyn(() =>
+  import("./views/project-qr").then((m) => m.ProjectQrView),
+);
+const ScannerView = dyn(() =>
+  import("./views/scanner").then((m) => m.ScannerView),
+);
+const AttendanceView = dyn(() =>
+  import("./views/attendance").then((m) => m.AttendanceView),
+);
+const OverridesView = dyn(() =>
+  import("./views/overrides").then((m) => m.OverridesView),
+);
+const AccountsView = dyn(() =>
+  import("./views/accounts").then((m) => m.AccountsView),
+);
+const AuditLogsView = dyn(() =>
+  import("./views/audit-logs").then((m) => m.AuditLogsView),
+);
+const ProfileView = dyn(() =>
+  import("./views/profile").then((m) => m.ProfileView),
+);
+const CalendarView = dyn(() =>
+  import("./views/calendar").then((m) => m.CalendarView),
+);
+const MyAttendanceView = dyn(() =>
+  import("./views/my-attendance").then((m) => m.MyAttendanceView),
+);
 
 type ViewId =
   | "dashboard"
@@ -184,7 +222,7 @@ export function AppShell({
 
   // Offline-first identity + analytics: record each view change as a
   // privacy-preserving page-view ping (server hashes the public IP daily,
-  // never stores it raw). Fire-and-forget — never blocks the UI.
+  // never stores it raw). Fire-and-forget - never blocks the UI.
   useEffect(() => {
     trackVisit(`/app/${view}`);
   }, [view]);
@@ -323,7 +361,7 @@ export function AppShell({
                 <TooltipContent>
                   {online
                     ? "Connected"
-                    : "Offline — scans are saved and sent later"}
+                    : "Offline - scans are saved and sent later"}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -359,6 +397,7 @@ export function AppShell({
               size="icon"
               className="h-9 w-9 lg:hidden"
               onClick={() => openInfoModal("faq")}
+              aria-label="Help"
             >
               <HelpCircle className="h-4 w-4" />
             </Button>
@@ -420,6 +459,7 @@ function MobileNav({
         size="icon"
         className="h-9 w-9"
         onClick={() => setOpen(true)}
+        aria-label="Open menu"
       >
         <Menu className="h-5 w-5" />
       </Button>
@@ -449,6 +489,7 @@ function MobileNav({
                 size="icon"
                 className="h-8 w-8 text-sidebar-foreground/60 hover:text-sidebar-foreground"
                 onClick={() => setOpen(false)}
+                aria-label="Close menu"
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -474,7 +515,7 @@ function MobileNav({
                 );
               })}
             </nav>
-            {/* Logout + bug report — matches desktop sidebar */}
+            {/* Logout + bug report - matches desktop sidebar */}
             <div className="p-3 border-t border-sidebar-border space-y-1">
               <Button
                 variant="ghost"

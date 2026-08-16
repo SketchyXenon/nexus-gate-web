@@ -51,7 +51,9 @@ export function CookieConsent() {
                   <button
                     className="text-primary underline hover:no-underline"
                     onClick={() => {
-                      const event = new CustomEvent("open-info-modal", { detail: "privacy" });
+                      const event = new CustomEvent("open-info-modal", {
+                        detail: "privacy",
+                      });
                       window.dispatchEvent(event);
                     }}
                   >
@@ -73,6 +75,7 @@ export function CookieConsent() {
                 size="icon"
                 className="h-7 w-7 shrink-0"
                 onClick={() => setShow(false)}
+                aria-label="Dismiss cookie notice"
               >
                 <X className="h-4 w-4" />
               </Button>

@@ -69,7 +69,7 @@ const SELECT_NONE = "NONE";
 const PAGE_SIZE = 50;
 
 // ---------------------------------------------------------------------------
-// Sort keys — keep this list in sync with the dropdown options below.
+// Sort keys - keep this list in sync with the dropdown options below.
 // ---------------------------------------------------------------------------
 type SortKey =
   | "name-asc"
@@ -126,7 +126,7 @@ export function AttendanceView() {
   // Create the socket first so we can use its connected state to control polling.
   const socket = useAttendanceSocket(eventId);
   // Poll only when the socket is disconnected (fallback). When connected,
-  // Ably pushes realtime updates — no polling needed.
+  // Ably pushes realtime updates - no polling needed.
   const presenceQ = useEventAttendance(eventId, {
     socketConnected: socket.connected,
   });
@@ -139,7 +139,7 @@ export function AttendanceView() {
   const turnout =
     eligibleCount > 0
       ? `${Math.round((presentCount / eligibleCount) * 100)}%`
-      : "—";
+      : " - ";
 
   const programsInEvent = useMemo(() => {
     const set = new Set<string>();
@@ -312,6 +312,7 @@ export function AttendanceView() {
                     onClick={exportCsv}
                     disabled={!eventId || sorted.length === 0}
                     className="h-9"
+                    aria-label="Export CSV"
                   >
                     <Download className="h-4 w-4" />
                     <span className="hidden sm:inline">Export CSV</span>
@@ -323,7 +324,7 @@ export function AttendanceView() {
               </Tooltip>
             </div>
 
-            {/* Event picker — searchable combobox, full-width on mobile */}
+            {/* Event picker - searchable combobox, full-width on mobile */}
             <div className="flex flex-col sm:flex-row sm:items-end gap-2">
               <div className="flex-1 min-w-0 space-y-1.5">
                 <Label
@@ -377,10 +378,10 @@ export function AttendanceView() {
                     )}
                     <span className="font-medium">
                       {isLive
-                        ? "This event is live now — students can scan to check in."
+                        ? "This event is live now - students can scan to check in."
                         : isUpcoming
-                          ? "This event hasn't started yet — check-in is not open."
-                          : "This event has ended — check-in is closed."}
+                          ? "This event hasn't started yet - check-in is not open."
+                          : "This event has ended - check-in is closed."}
                     </span>
                   </div>
                 );
@@ -544,7 +545,7 @@ export function AttendanceView() {
                 </div>
               )}
 
-              {/* Data display — table on md+, cards on mobile */}
+              {/* Data display - table on md+, cards on mobile */}
               {!presenceQ.isLoading && sorted.length > 0 && (
                 <>
                   {/* Desktop / tablet table */}
@@ -590,7 +591,7 @@ export function AttendanceView() {
                                   {pageStart + i + 1}
                                 </TableCell>
                                 <TableCell className="font-mono text-xs tabular-nums">
-                                  {a.account.studentId ?? "—"}
+                                  {a.account.studentId ?? " - "}
                                 </TableCell>
                                 <TableCell className="font-medium">
                                   {a.account.fullName}
@@ -605,7 +606,7 @@ export function AttendanceView() {
                                     </Badge>
                                   ) : (
                                     <span className="text-muted-foreground">
-                                      —
+                                      -
                                     </span>
                                   )}
                                 </TableCell>
@@ -619,7 +620,7 @@ export function AttendanceView() {
                                     </Badge>
                                   ) : (
                                     <span className="text-muted-foreground">
-                                      —
+                                      -
                                     </span>
                                   )}
                                 </TableCell>
@@ -704,7 +705,7 @@ export function AttendanceView() {
                                   {a.account.fullName}
                                 </p>
                                 <p className="text-xs text-muted-foreground font-mono">
-                                  ID #{a.account.studentId ?? "—"}
+                                  ID #{a.account.studentId ?? " - "}
                                 </p>
                               </div>
                               <span className="text-[10px] text-muted-foreground tabular-nums shrink-0 mt-0.5">
@@ -783,7 +784,7 @@ export function AttendanceView() {
                   {/* Pagination */}
                   <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-1">
                     <p className="text-xs text-muted-foreground">
-                      Showing {pageStart + 1}–
+                      Showing {pageStart + 1}-
                       {Math.min(pageStart + PAGE_SIZE, sorted.length)} of{" "}
                       {sorted.length}
                       {sorted.length !== allRows.length &&

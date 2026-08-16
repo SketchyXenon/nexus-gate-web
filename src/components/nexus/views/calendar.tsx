@@ -2,10 +2,25 @@
 
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronLeft, ChevronRight, CalendarDays, CircleDot, Clock, X, Download, CalendarPlus } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  CalendarDays,
+  CircleDot,
+  Clock,
+  X,
+  Download,
+  CalendarPlus,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -18,7 +33,18 @@ import { getProgramLabel } from "@/lib/programs";
 import { getTimeStatus } from "@/lib/event-time";
 import { downloadIcsFile, downloadBulkIcsFile } from "@/lib/ics-export";
 import { toast } from "@/hooks/use-toast";
-import { format, isSameDay, isSameMonth, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, addMonths, parseISO } from "date-fns";
+import {
+  format,
+  isSameDay,
+  isSameMonth,
+  startOfMonth,
+  endOfMonth,
+  startOfWeek,
+  endOfWeek,
+  eachDayOfInterval,
+  addMonths,
+  parseISO,
+} from "date-fns";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -36,19 +62,27 @@ const toTimeEvent = (e: EventItem) => ({
 
 const timeStatusColor = (status: string): string => {
   switch (status) {
-    case "live": return "bg-emerald-500";
-    case "upcoming": return "bg-amber-500";
-    case "ended": return "bg-muted-foreground/40";
-    default: return "bg-red-500";
+    case "live":
+      return "bg-emerald-500";
+    case "upcoming":
+      return "bg-amber-500";
+    case "ended":
+      return "bg-muted-foreground/40";
+    default:
+      return "bg-red-500";
   }
 };
 
 const timeStatusLabel = (status: string): string => {
   switch (status) {
-    case "live": return "Live now";
-    case "upcoming": return "Upcoming";
-    case "ended": return "Ended";
-    default: return "Cancelled";
+    case "live":
+      return "Live now";
+    case "upcoming":
+      return "Upcoming";
+    case "ended":
+      return "Ended";
+    default:
+      return "Cancelled";
   }
 };
 
@@ -57,7 +91,11 @@ export function CalendarView() {
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
   // Fetch all events (including ended) for the calendar.
-  const { data, isLoading } = useEvents({ includeEnded: true, status: "all", sort: "oldest" });
+  const { data, isLoading } = useEvents({
+    includeEnded: true,
+    status: "all",
+    sort: "oldest",
+  });
 
   const events = data?.events ?? [];
 
@@ -94,7 +132,7 @@ export function CalendarView() {
 
   // Events for the selected day (in the modal).
   const selectedDayEvents = selectedDay
-    ? eventsByDate.get(format(selectedDay, "yyyy-MM-dd")) ?? []
+    ? (eventsByDate.get(format(selectedDay, "yyyy-MM-dd")) ?? [])
     : [];
 
   return (
@@ -109,17 +147,35 @@ export function CalendarView() {
                 {monthLabel}
               </CardTitle>
               <p className="text-xs text-muted-foreground mt-1">
-                {events.length} event{events.length === 1 ? "" : "s"} across all months
+                {events.length} event{events.length === 1 ? "" : "s"} across all
+                months
               </p>
             </div>
             <div className="flex items-center gap-1.5">
-              <Button variant="outline" size="sm" className="h-8" onClick={prevMonth}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={prevMonth}
+                aria-label="Previous month"
+              >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <Button variant="outline" size="sm" className="h-8 px-3" onClick={goToday}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-3"
+                onClick={goToday}
+              >
                 Today
               </Button>
-              <Button variant="outline" size="sm" className="h-8" onClick={nextMonth}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={nextMonth}
+                aria-label="Next month"
+              >
                 <ChevronRight className="h-4 w-4" />
               </Button>
               {events.length > 0 && (
@@ -171,7 +227,8 @@ export function CalendarView() {
                 {days.map((day) => {
                   const inMonth = isSameMonth(day, cursor);
                   const isToday = isSameDay(day, today);
-                  const dayEvents = eventsByDate.get(format(day, "yyyy-MM-dd")) ?? [];
+                  const dayEvents =
+                    eventsByDate.get(format(day, "yyyy-MM-dd")) ?? [];
                   const hasEvents = dayEvents.length > 0;
                   return (
                     <motion.button
@@ -223,15 +280,21 @@ export function CalendarView() {
               <div className="flex items-center gap-4 mt-4 flex-wrap">
                 <div className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                  <span className="text-[11px] text-muted-foreground">Live</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    Live
+                  </span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-amber-500" />
-                  <span className="text-[11px] text-muted-foreground">Upcoming</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    Upcoming
+                  </span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-muted-foreground/40" />
-                  <span className="text-[11px] text-muted-foreground">Ended</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    Ended
+                  </span>
                 </div>
               </div>
             </>
@@ -240,7 +303,10 @@ export function CalendarView() {
       </Card>
 
       {/* Day events dialog */}
-      <Dialog open={!!selectedDay} onOpenChange={(o) => !o && setSelectedDay(null)}>
+      <Dialog
+        open={!!selectedDay}
+        onOpenChange={(o) => !o && setSelectedDay(null)}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -278,7 +344,8 @@ export function CalendarView() {
                       </p>
                       <p className="text-xs text-muted-foreground mt-0.5 truncate">
                         {e.targetProgram
-                          ? (getProgramLabel(e.targetProgram) ?? e.targetProgram)
+                          ? (getProgramLabel(e.targetProgram) ??
+                            e.targetProgram)
                           : "All programs"}
                         {e.targetSection ? ` · ${e.targetSection}` : ""}
                       </p>
@@ -290,10 +357,10 @@ export function CalendarView() {
                           status === "live"
                             ? "border-emerald-500/40 text-emerald-600"
                             : status === "upcoming"
-                            ? "border-amber-500/40 text-amber-600"
-                            : status === "ended"
-                            ? "border-muted text-muted-foreground"
-                            : "border-red-500/40 text-red-600"
+                              ? "border-amber-500/40 text-amber-600"
+                              : status === "ended"
+                                ? "border-muted text-muted-foreground"
+                                : "border-red-500/40 text-red-600"
                         }`}
                       >
                         {timeStatusLabel(status)}
@@ -309,7 +376,10 @@ export function CalendarView() {
                             scheduledAt: e.scheduledAt,
                             endsAt: e.endsAt,
                           });
-                          toast({ title: "Event added to calendar", description: `"${e.title}" downloaded as .ics` });
+                          toast({
+                            title: "Event added to calendar",
+                            description: `"${e.title}" downloaded as .ics`,
+                          });
                         }}
                         aria-label={`Add ${e.title} to calendar`}
                       >

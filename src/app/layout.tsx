@@ -7,7 +7,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { ServiceWorkerRegister } from "@/components/sw-register";
 import { getAppUrl } from "@/lib/app-url";
 
-// JetBrains Mono — headings and subheadings
+// JetBrains Mono - headings and subheadings
 const jetbrains = JetBrains_Mono({
   variable: "--font-heading",
   subsets: ["latin"],
@@ -15,7 +15,7 @@ const jetbrains = JetBrains_Mono({
   weight: ["400", "500", "600", "700", "800"],
 });
 
-// Roboto Mono — body text
+// Roboto Mono - body text
 const roboto = Roboto_Mono({
   variable: "--font-body",
   subsets: ["latin"],
@@ -26,12 +26,13 @@ const roboto = Roboto_Mono({
 const APP_URL = getAppUrl();
 
 export const metadata: Metadata = {
+  metadataBase: APP_URL ? new URL(APP_URL) : undefined,
   title: {
     default: "Nexus Gate - Attendance System",
     template: "%s · Nexus Gate",
   },
   description:
-    "Simple, fast, and secure QR-based attendance. Scan a code to check in to your classes — no apps, no sign-in sheets.",
+    "Simple, fast, and secure QR-based attendance. Scan a code to check in to your classes - no apps, no sign-in sheets.",
   keywords: [
     "attendance system",
     "QR attendance",
@@ -60,7 +61,7 @@ export const metadata: Metadata = {
     locale: "en_US",
     ...(APP_URL ? { url: APP_URL } : {}),
     siteName: "Nexus Gate",
-    title: "Nexus Gate — Attendance, simplified.",
+    title: "Nexus Gate - Attendance, simplified.",
     description:
       "Scan a QR code to check in to your classes. No apps, no sign-in sheets, no waiting in line.",
     images: [
@@ -74,7 +75,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary",
-    title: "Nexus Gate — Attendance System",
+    title: "Nexus Gate - Attendance System",
     description:
       "Scan a QR code to check in to your classes. No apps, no sign-in sheets.",
     images: ["/icon-512.svg"],
@@ -103,7 +104,6 @@ export const viewport: Viewport = {
   userScalable: true,
 };
 
-// Structured data for SEO
 const structuredData = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",

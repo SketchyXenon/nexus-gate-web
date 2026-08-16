@@ -87,7 +87,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-// Sentinel value used by the program Select for the "— Not specified —" option.
+// Sentinel value used by the program Select for the " - Not specified - " option.
 // Radix Select doesn't accept empty-string values, so we use a sentinel and
 // translate it back to null/empty before submitting.
 const NO_PROGRAM = "__none__";
@@ -101,7 +101,11 @@ export function ProfileView() {
   const [program, setProgram] = useState<string>(NO_PROGRAM);
   const [year, setYear] = useState("1");
   const [section, setSection] = useState("");
-  const [loaded, setLoaded] = useState(false);
+  // Tracks the id of the profile we've already hydrated the form from.
+  // Replaces a boolean `loaded` flag - using the id lets us re-hydrate
+  // if a different account ever shows up, while still suppressing resets
+  // when the same profile object re-renders (e.g. React Query refetches).
+  const [loadedProfileId, setLoadedProfileId] = useState<string | null>(null);
 
   // Password dialog
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
@@ -180,16 +184,17 @@ export function ProfileView() {
     }
   }
 
-  // Load profile data once (useEffect, not render-time setState)
-  useEffect(() => {
-    if (profile && !loaded) {
-      setFullName(profile.fullName);
-      setProgram(profile.program ?? NO_PROGRAM);
-      setYear(String(profile.year ?? 1));
-      setSection(profile.section ?? "");
-      setLoaded(true);
-    }
-  }, [profile, loaded]);
+  // Hydrate the form fields from the fetched profile once per profile id.
+  // Uses the "adjust state when a prop changes" pattern (track the previous
+  // value during render) instead of a synchronous setState-in-effect,
+  // which would trigger a cascading render.
+  if (profile && profile.id !== loadedProfileId) {
+    setLoadedProfileId(profile.id);
+    setFullName(profile.fullName);
+    setProgram(profile.program ?? NO_PROGRAM);
+    setYear(String(profile.year ?? 1));
+    setSection(profile.section ?? "");
+  }
 
   function handleSaveClick() {
     if (!fullName.trim()) {
@@ -203,7 +208,7 @@ export function ProfileView() {
     if (!profile) return;
     setSaveConfirmOpen(false);
 
-    // Translate the "— Not specified —" sentinel back to empty/null for the API.
+    // Translate the " - Not specified - " sentinel back to empty/null for the API.
     const programValue = program === NO_PROGRAM ? "" : program;
 
     const vars: {
@@ -299,7 +304,7 @@ export function ProfileView() {
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
         <Card className="relative overflow-hidden border-primary/20">
           <div className="absolute -top-16 -right-16 h-48 w-48 rounded-full bg-primary/10 blur-3xl pointer-events-none" />
-          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary via-primary/60 to-transparent" />
+          <div className="absolute top-0 left-0 right-0 h-1 bg-primary" />
           <CardContent className="relative p-6">
             <div className="flex items-center gap-4">
               <div className="relative">
@@ -412,7 +417,7 @@ export function ProfileView() {
         </CardContent>
       </Card>
 
-      {/* Edit profile — excluded for admins */}
+      {/* Edit profile - excluded for admins */}
       {!isAdmin && (
         <Card>
           <CardHeader>
@@ -438,7 +443,7 @@ export function ProfileView() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {/* Full name — both users and organizers (numbers stripped, like registration) */}
+              {/* Full name - both users and organizers (numbers stripped, like registration) */}
               <div className="space-y-1.5">
                 <Label htmlFor="fullName">Full name</Label>
                 <Input
@@ -460,7 +465,7 @@ export function ProfileView() {
               {isUser && (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {/* Program (course) — dropdown, can only change once */}
+                    {/* Program (course) - dropdown, can only change once */}
                     <div className="space-y-1.5">
                       <Label
                         htmlFor="program"
@@ -473,7 +478,7 @@ export function ProfileView() {
                               <Lock className="h-3 w-3 text-amber-600 cursor-help" />
                             </TooltipTrigger>
                             <TooltipContent>
-                              Locked — course can only be changed once. Contact
+                              Locked - course can only be changed once. Contact
                               an admin to reset.
                             </TooltipContent>
                           </Tooltip>
@@ -493,11 +498,11 @@ export function ProfileView() {
                         </SelectTrigger>
                         <SelectContent className="max-w-[calc(100vw-1.5rem)]">
                           <SelectItem value={NO_PROGRAM}>
-                            — Not specified —
+                            - Not specified -
                           </SelectItem>
                           {PROGRAMS.map((p) => (
                             <SelectItem key={p.code} value={p.code}>
-                              {p.code} — {p.label}
+                              {p.code} - {p.label}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -584,7 +589,7 @@ export function ProfileView() {
         </Card>
       )}
 
-      {/* Change password — all roles, with 30-day cooldown */}
+      {/* Change password - all roles, with 30-day cooldown */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -622,7 +627,7 @@ export function ProfileView() {
         </CardContent>
       </Card>
 
-      {/* Passkey (WebAuthn) — register a biometric/security-key credential */}
+      {/* Passkey (WebAuthn) - register a biometric/security-key credential */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -659,13 +664,13 @@ export function ProfileView() {
         </CardContent>
       </Card>
 
-      {/* Registered Devices — self-service device key management */}
+      {/* Registered Devices - self-service device key management */}
       <RegisteredDevicesCard />
 
       {/* Notification preferences */}
       <NotificationPreferences />
 
-      {/* Danger Zone — account deactivation (soft delete) */}
+      {/* Danger Zone - account deactivation (soft delete) */}
       <Card className="border-destructive/30">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-destructive">
@@ -718,8 +723,8 @@ export function ProfileView() {
                   (profile.program ?? "") && (
                   <span className="block mt-2 text-amber-600 font-medium">
                     Warning: You are changing your course from "
-                    {profile.program || "— Not specified —"}" to "
-                    {program === NO_PROGRAM ? "— Not specified —" : program}".
+                    {profile.program || " - Not specified - "}" to "
+                    {program === NO_PROGRAM ? " - Not specified - " : program}".
                     This can only be done once.
                   </span>
                 )}
@@ -753,7 +758,7 @@ export function ProfileView() {
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleChangePassword} className="space-y-3">
-            {/* Current password — WITH eye toggle */}
+            {/* Current password - WITH eye toggle */}
             <div className="space-y-1.5">
               <Label htmlFor="currentPassword">Current password</Label>
               <div className="relative">
@@ -769,6 +774,9 @@ export function ProfileView() {
                   type="button"
                   onClick={() => setShowCurrentPassword(!showCurrentPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label={
+                    showCurrentPassword ? "Hide password" : "Show password"
+                  }
                 >
                   {showCurrentPassword ? (
                     <EyeOff className="h-4 w-4" />
@@ -778,7 +786,7 @@ export function ProfileView() {
                 </button>
               </div>
             </div>
-            {/* New password — WITH eye toggle + strength meter */}
+            {/* New password - WITH eye toggle + strength meter */}
             <div className="space-y-1.5">
               <Label
                 htmlFor="newPassword"
@@ -790,7 +798,7 @@ export function ProfileView() {
                     <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
                   </TooltipTrigger>
                   <TooltipContent>
-                    Must be "Good" or "Strong" — 8+ chars with uppercase,
+                    Must be "Good" or "Strong" - 8+ chars with uppercase,
                     lowercase, a number, and a special character (or 12+ chars).
                   </TooltipContent>
                 </Tooltip>
@@ -809,6 +817,9 @@ export function ProfileView() {
                   type="button"
                   onClick={() => setShowNewPassword(!showNewPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label={
+                    showNewPassword ? "Hide password" : "Show password"
+                  }
                 >
                   {showNewPassword ? (
                     <EyeOff className="h-4 w-4" />
@@ -819,7 +830,7 @@ export function ProfileView() {
               </div>
               <PasswordStrengthMeter password={newPassword} />
             </div>
-            {/* Confirm password — match indicator (no eye toggle) */}
+            {/* Confirm password - match indicator (no eye toggle) */}
             <div className="space-y-1.5">
               <Label htmlFor="confirmNewPassword">Confirm new password</Label>
               <div className="relative">

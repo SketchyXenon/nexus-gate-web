@@ -22,12 +22,9 @@ import {
   createSupabaseAdminClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
-import {
-  safeFindAccountByEmail,
-  isAccountDeactivated,
-} from "@/lib/safe-account";
+import { safeFindAccountByEmail } from "@/lib/safe-account";
 import { recordTermsAcceptance } from "@/lib/terms-acceptance";
-import { getAppUrl } from "@/lib/app-url";
+import { getSafeRedirectBase } from "@/lib/app-url";
 import { isUniqueConstraintError } from "@/lib/prisma-errors";
 
 // POST /api/auth/register
@@ -74,12 +71,12 @@ export async function POST(req: NextRequest) {
     // Check for existing email (safe lookup).
     const existingEmail = await safeFindAccountByEmail(email);
 
-    // ---- EXISTING EMAIL: reject duplicate registration ----
-    // If the email is already registered to an active account, refuse the
-    // registration with a clear error so the user is not silently "accepted".
-    // This also fixes the E2E flow where registered emails returned a fake
-    // 201 success (the prior enumeration-safe design masked real duplicates).
-    if (existingEmail && !isAccountDeactivated(existingEmail)) {
+    // Existing email — active OR deactivated. Both return the same conflict
+    // so an attacker cannot distinguish them (enumeration-safe), and a
+    // deactivated account's row + admin restore path is preserved. The prior
+    // code hard-deleted deactivated accounts on re-register, which was both an
+    // enumeration oracle (201 vs 409) and destroyed the only restore path.
+    if (existingEmail) {
       await audit({
         actorId: existingEmail.id,
         action: "auth.register_duplicate_attempt",
@@ -92,24 +89,6 @@ export async function POST(req: NextRequest) {
         "An account with this email already exists. Please sign in, or use the forgot-password option if you need to reset your password.",
         "EMAIL_EXISTS",
       );
-    }
-
-    // If the existing email account is deactivated, allow re-registration
-    // by removing the soft-deleted row AND the linked Supabase auth user.
-    if (existingEmail && isAccountDeactivated(existingEmail)) {
-      if (existingEmail.supabaseAuthUid) {
-        try {
-          const adminClient = createSupabaseAdminClient();
-          await adminClient.auth.admin
-            .deleteUser(existingEmail.supabaseAuthUid)
-            .catch(() => {});
-        } catch {
-          // Non-critical.
-        }
-      }
-      await db.account
-        .delete({ where: { id: existingEmail.id } })
-        .catch(() => {});
     }
 
     // Check student ID (still returns generic error - student IDs are not
@@ -140,7 +119,7 @@ export async function POST(req: NextRequest) {
 
     // Create the Supabase Auth user.
     const supabase = await createSupabaseServerClient();
-    const appUrl = getAppUrl() || req.nextUrl.origin;
+    const appUrl = getSafeRedirectBase(req.nextUrl.origin);
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,

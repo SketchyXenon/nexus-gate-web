@@ -16,6 +16,7 @@ import {
   createSupabaseAdminClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
+import { invalidateAccountCache } from "@/lib/supabase-session";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -102,6 +103,12 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
 
     // Delete the accounts row (cascades to attendance, overrides, tokens).
     await db.account.delete({ where: { id } });
+
+    // Invalidate the session cache so the deleted user loses access
+    // immediately instead of retaining it for up to the 30s cache TTL.
+    if (target.supabaseAuthUid) {
+      invalidateAccountCache(target.supabaseAuthUid);
+    }
 
     await audit({
       actorId: admin.id,

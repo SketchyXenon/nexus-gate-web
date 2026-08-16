@@ -82,12 +82,12 @@ const RESET_TOKEN_KEY = "ng_reset_token";
 // Ensures the reset form stays visible even if useMe() succeeds and page.tsx
 // would otherwise render AppShell. Cleared when the user completes the reset.
 const RECOVERY_PENDING_KEY = "ng_recovery_pending";
-// Sentinel value used by the program Select for the "— Not specified —" option.
+// Sentinel value used by the program Select for the " - Not specified - " option.
 // Radix Select doesn't accept empty-string values, so we use a sentinel and
 // translate it back to null/empty before submitting.
 const NO_PROGRAM = "__none__";
 
-// Demo accounts removed — use bootstrap-admin.ts to create the first admin.
+// Demo accounts removed - use bootstrap-admin.ts to create the first admin.
 
 export function LoginScreen({
   initialMode = "landing",
@@ -106,7 +106,7 @@ export function LoginScreen({
     const fromUrl = params.get("reset");
     if (fromUrl) {
       sessionStorage.setItem(RESET_TOKEN_KEY, fromUrl);
-      // Clean the URL — keep the path, drop the query string.
+      // Clean the URL - keep the path, drop the query string.
       window.history.replaceState({}, "", window.location.pathname);
       return fromUrl;
     }
@@ -174,7 +174,7 @@ export function LoginScreen({
     // signInWithOtp/resetPasswordForEmail (server-side). The browser
     // client can't read httpOnly cookies, so we must exchange server-side.
     // The callback returns the resolved type (recovery vs magiclink) from
-    // the session's AMR claim — more reliable than the URL type param.
+    // the session's AMR claim - more reliable than the URL type param.
     const codeExchangePromise = code
       ? fetch(
           `/api/auth/callback?code=${encodeURIComponent(code)}${type ? `&type=${encodeURIComponent(type)}` : ""}`,
@@ -290,12 +290,17 @@ function AuthScreen({
   const resetPassword = useResetPassword();
 
   // Reset the registration wizard when leaving register mode.
-  useEffect(() => {
+  // Track previous mode in render and reset synchronously - the canonical
+  // React "adjust state when a prop changes" pattern, which avoids a
+  // setState-in-effect cascading render.
+  const [prevMode, setPrevMode] = useState(mode);
+  if (mode !== prevMode) {
+    setPrevMode(mode);
     if (mode !== "register") {
       setRegStep(1);
       setAgreeTerms(false);
     }
-  }, [mode]);
+  }
 
   // ---- Debounced availability check for registration ----
   // Only check when email/studentId are format-valid. 400ms debounce.
@@ -328,7 +333,20 @@ function AuthScreen({
   // Clear stale "Checking..." errors when the availability check completes.
   // Without this, validateRegStep's "Checking..." message stays even after
   // the check resolves (the inline indicator updates, but the error text doesn't).
-  useEffect(() => {
+  // Use the "track previous value during render" pattern to avoid a
+  // synchronous setState-in-effect cascading render.
+  const [prevAvail, setPrevAvail] = useState<{
+    isLoading: boolean;
+    data: typeof availability.data;
+  }>({ isLoading: false, data: undefined });
+  if (
+    availability.isLoading !== prevAvail.isLoading ||
+    availability.data !== prevAvail.data
+  ) {
+    setPrevAvail({
+      isLoading: availability.isLoading,
+      data: availability.data,
+    });
     if (!availability.isLoading && availability.data) {
       setErrors((prev) => {
         const next = { ...prev };
@@ -337,7 +355,7 @@ function AuthScreen({
         return next;
       });
     }
-  }, [availability.data, availability.isLoading]);
+  }
 
   // ---- Magic link (passwordless email login) ----
   const [magicLinkSending, setMagicLinkSending] = useState(false);
@@ -566,7 +584,7 @@ function AuthScreen({
     }
     // Step 3: validate terms acceptance before submitting.
     if (!validateRegStep(3)) return;
-    // Translate the "— Not specified —" sentinel back to empty/null for the API.
+    // Translate the " - Not specified - " sentinel back to empty/null for the API.
     const programValue = program === NO_PROGRAM ? "" : program;
     register.mutate(
       {
@@ -645,9 +663,9 @@ function AuthScreen({
       { password: newPassword },
       {
         onSuccess: () => {
-          // The token is single-use — clear it so it can't be replayed.
+          // The token is single-use - clear it so it can't be replayed.
           onResetConsumed();
-          // Clear the recovery-pending flag — the user has completed the reset.
+          // Clear the recovery-pending flag - the user has completed the reset.
           if (typeof window !== "undefined") {
             sessionStorage.removeItem(RECOVERY_PENDING_KEY);
           }
@@ -687,6 +705,7 @@ function AuthScreen({
             size="sm"
             className="text-muted-foreground"
             onClick={() => openInfoModal("faq")}
+            aria-label="FAQ"
           >
             <HelpCircle className="h-4 w-4" />
           </Button>
@@ -695,6 +714,7 @@ function AuthScreen({
             size="sm"
             className="text-muted-foreground"
             onClick={() => openInfoModal("terms")}
+            aria-label="Terms"
           >
             <FileText className="h-4 w-4" />
           </Button>
@@ -727,7 +747,7 @@ function AuthScreen({
               transition={{ duration: 0.2 }}
             >
               <Card className="relative overflow-hidden border-border/60 shadow-xl backdrop-blur-sm bg-card/95">
-                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary via-primary/60 to-transparent" />
+                <div className="absolute top-0 left-0 right-0 h-1 bg-primary" />
                 <CardHeader>
                   <CardTitle className="font-heading text-2xl">
                     {mode === "login" && "Welcome back"}
@@ -833,6 +853,9 @@ function AuthScreen({
                               type="button"
                               onClick={() => setShowPassword(!showPassword)}
                               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                              aria-label={
+                                showPassword ? "Hide password" : "Show password"
+                              }
                             >
                               {showPassword ? (
                                 <EyeOff className="h-4 w-4" />
@@ -885,7 +908,7 @@ function AuthScreen({
                     </div>
                   )}
 
-                  {/* REGISTER — multi-step wizard */}
+                  {/* REGISTER - multi-step wizard */}
                   {mode === "register" && (
                     <div className="space-y-4">
                       <div className="relative">
@@ -911,7 +934,7 @@ function AuthScreen({
                         ))}
                       </div>
                       <p className="text-center text-[11px] text-muted-foreground -mt-1">
-                        Step {regStep} of 3 —{" "}
+                        Step {regStep} of 3 -{" "}
                         {regStep === 1
                           ? "Account"
                           : regStep === 2
@@ -978,6 +1001,11 @@ function AuthScreen({
                                     setShowRegPassword(!showRegPassword)
                                   }
                                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                                  aria-label={
+                                    showRegPassword
+                                      ? "Hide password"
+                                      : "Show password"
+                                  }
                                 >
                                   {showRegPassword ? (
                                     <EyeOff className="h-4 w-4" />
@@ -1077,7 +1105,7 @@ function AuthScreen({
                                 </p>
                               ) : (
                                 <p className="text-xs text-muted-foreground">
-                                  Letters only — no numbers
+                                  Letters only - no numbers
                                 </p>
                               )}
                             </div>
@@ -1147,7 +1175,7 @@ function AuthScreen({
                                 </p>
                               ) : studentIdCheckFailed ? (
                                 <p className="text-xs text-muted-foreground">
-                                  Couldn&apos;t verify — try again
+                                  Couldn&apos;t verify - try again
                                 </p>
                               ) : debouncedStudentId && !studentIdChecking ? (
                                 <p className="text-xs text-emerald-600 dark:text-emerald-400">
@@ -1203,11 +1231,11 @@ function AuthScreen({
                                   </SelectTrigger>
                                   <SelectContent className="max-w-[calc(100vw-1.5rem)]">
                                     <SelectItem value={NO_PROGRAM}>
-                                      — Not specified —
+                                      - Not specified -
                                     </SelectItem>
                                     {PROGRAMS.map((p) => (
                                       <SelectItem key={p.code} value={p.code}>
-                                        {p.code} — {p.label}
+                                        {p.code} - {p.label}
                                       </SelectItem>
                                     ))}
                                   </SelectContent>
@@ -1224,7 +1252,7 @@ function AuthScreen({
                               </div>
                             </div>
                             <p className="text-xs text-muted-foreground">
-                              Program and section are optional — you can set
+                              Program and section are optional - you can set
                               them later in your profile.
                             </p>
                             {/* Terms and Conditions checkbox (final step) */}
@@ -1366,7 +1394,7 @@ function AuthScreen({
                           }}
                         >
                           {needsEmailConfirmation
-                            ? "I've confirmed — sign in"
+                            ? "I've confirmed - sign in"
                             : "Continue to sign in"}
                           <ArrowRight className="h-4 w-4" />
                         </Button>
@@ -1536,6 +1564,11 @@ function AuthScreen({
                             type="button"
                             onClick={() => setShowNewPassword(!showNewPassword)}
                             className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                            aria-label={
+                              showNewPassword
+                                ? "Hide password"
+                                : "Show password"
+                            }
                           >
                             {showNewPassword ? (
                               <EyeOff className="h-4 w-4" />
@@ -1735,3 +1768,5 @@ function AuthBackground() {
     </div>
   );
 }
+
+// NexusLogo is imported from ./nexus-logo (shared with app-shell).

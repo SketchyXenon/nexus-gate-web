@@ -63,7 +63,7 @@ export function NotificationPreferences() {
     if (data?.prefs) {
       // Sync local state when the server data changes (e.g. on first load
       // or after a mutation invalidates the query). Intentional setState
-      // in effect — this is the standard "mirror server state locally" pattern.
+      // in effect - this is the standard "mirror server state locally" pattern.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPrefs(data.prefs);
     }
@@ -137,7 +137,10 @@ export function NotificationPreferences() {
                   <Icon className="h-4 w-4" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <Label className="text-sm font-medium cursor-pointer">
+                  <Label
+                    htmlFor={`notif-pref-${meta.key}`}
+                    className="text-sm font-medium cursor-pointer"
+                  >
                     {meta.label}
                   </Label>
                   <p className="text-xs text-muted-foreground mt-0.5">
@@ -152,6 +155,7 @@ export function NotificationPreferences() {
                     <Check className="h-3.5 w-3.5 text-emerald-500" />
                   )}
                   <Switch
+                    id={`notif-pref-${meta.key}`}
                     checked={value}
                     onCheckedChange={(v) => toggle(meta.key, v)}
                     disabled={update.isPending}
@@ -161,7 +165,10 @@ export function NotificationPreferences() {
             );
           })}
           <div className="pt-2">
-            <Badge variant="outline" className="text-[10px] text-muted-foreground">
+            <Badge
+              variant="outline"
+              className="text-[10px] text-muted-foreground"
+            >
               Changes apply to future notifications
             </Badge>
           </div>

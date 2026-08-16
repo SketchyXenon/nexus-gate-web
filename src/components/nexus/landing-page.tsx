@@ -94,13 +94,14 @@ export function LandingPage({ onSignIn, onRegister }: LandingPageProps) {
               size="icon"
               className="h-9 w-9"
               onClick={() => setMobileMenuOpen(true)}
+              aria-label="Open menu"
             >
               <Menu className="h-5 w-5" />
             </Button>
           </div>
         </div>
 
-        {/* Mobile menu dropdown — half-screen panel on the right */}
+        {/* Mobile menu dropdown - half-screen panel on the right */}
         <AnimatePresence>
           {mobileMenuOpen && (
             <>
@@ -113,7 +114,7 @@ export function LandingPage({ onSignIn, onRegister }: LandingPageProps) {
                 className="md:hidden fixed inset-0 h-[100dvh] z-40 bg-black/30"
                 onClick={() => setMobileMenuOpen(false)}
               />
-              {/* Panel — right half of screen */}
+              {/* Panel - right half of screen */}
               <motion.div
                 initial={{ x: "100%" }}
                 animate={{ x: 0 }}
@@ -131,6 +132,7 @@ export function LandingPage({ onSignIn, onRegister }: LandingPageProps) {
                     size="icon"
                     className="h-8 w-8"
                     onClick={() => setMobileMenuOpen(false)}
+                    aria-label="Close menu"
                   >
                     <X className="h-4 w-4" />
                   </Button>
@@ -203,9 +205,7 @@ export function LandingPage({ onSignIn, onRegister }: LandingPageProps) {
           >
             Attendance,
             <br />
-            <span className="bg-gradient-to-r from-primary via-primary to-primary/60 bg-clip-text text-transparent">
-              simplified.
-            </span>
+            <span className="text-primary">simplified.</span>
           </motion.h1>
           <motion.p
             initial={{ opacity: 0, y: 20 }}
@@ -214,8 +214,8 @@ export function LandingPage({ onSignIn, onRegister }: LandingPageProps) {
             className="mt-6 text-base sm:text-lg text-muted-foreground max-w-xl mx-auto leading-relaxed"
           >
             No more sign-in sheets or long lines. Your teacher shows a code, you
-            scan it with your phone, and you&apos;re marked present. It takes less
-            than a second.
+            scan it with your phone, and you&apos;re marked present. It takes
+            less than a second.
           </motion.p>
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -327,7 +327,7 @@ export function LandingPage({ onSignIn, onRegister }: LandingPageProps) {
               {
                 icon: Smartphone,
                 title: "Any device, anywhere",
-                desc: "Phone, tablet, or laptop. No app to install — just a website.",
+                desc: "Phone, tablet, or laptop. No app to install - just a website.",
               },
               {
                 icon: Lock,
@@ -450,7 +450,7 @@ export function LandingPage({ onSignIn, onRegister }: LandingPageProps) {
                     <strong className="text-foreground">
                       What we collect.
                     </strong>{" "}
-                    Name, email, student ID, program, and section — all from the
+                    Name, email, student ID, program, and section - all from the
                     registrar.
                   </p>
                   <p>

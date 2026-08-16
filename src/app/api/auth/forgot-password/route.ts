@@ -22,6 +22,7 @@ import {
   safeFindAccountByEmail,
   isAccountDeactivated,
 } from "@/lib/safe-account";
+import { getSafeRedirectBase, maskEmail } from "@/lib/app-url";
 
 // POST /api/auth/forgot-password
 // Sends a Supabase password-reset email. Enumeration-safe (same response
@@ -100,11 +101,14 @@ export async function POST(req: NextRequest) {
             data: { supabaseAuthUid: authData.user.id },
           });
           console.log(
-            `[forgot-password] auto-linked ${email} to Supabase Auth user ${authData.user.id}`,
+            `[forgot-password] auto-linked ${maskEmail(email)} to Supabase Auth user ${authData.user.id}`,
           );
         }
       } catch (e) {
-        console.error(`[forgot-password] auto-link failed for ${email}:`, e);
+        console.error(
+          `[forgot-password] auto-link failed for ${maskEmail(email)}:`,
+          e,
+        );
       }
     }
 
@@ -112,8 +116,7 @@ export async function POST(req: NextRequest) {
     // redirectTo if provided and valid (same-origin, verified by Zod), else
     // fall back to the app URL. Relative paths (e.g. "/reset") are resolved
     // against the app URL to produce an absolute URL for Supabase.
-    const appUrl =
-      process.env.NEXT_PUBLIC_APP_URL?.trim() || req.nextUrl.origin;
+    const appUrl = getSafeRedirectBase(req.nextUrl.origin);
     let finalRedirectTo = appUrl;
     if (redirectTo) {
       // Defense-in-depth: the Zod schema already rejected protocol-relative
@@ -139,7 +142,7 @@ export async function POST(req: NextRequest) {
     );
     if (resetError) {
       console.error(
-        `[forgot-password] resetPasswordForEmail failed for ${email}:`,
+        `[forgot-password] resetPasswordForEmail failed for ${maskEmail(email)}:`,
         resetError.message,
       );
     }

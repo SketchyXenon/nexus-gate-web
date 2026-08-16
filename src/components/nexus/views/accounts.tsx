@@ -424,7 +424,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
               </p>
             </div>
           )}
-          <div className="max-h-[32rem] overflow-y-auto ng-scroll">
+          <div className="max-h-[32rem] overflow-x-auto overflow-y-auto ng-scroll">
             <Table>
               <TableHeader className="sticky top-0 bg-card">
                 <TableRow>
@@ -476,11 +476,18 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                     }}
                     className="hover:bg-muted/40"
                   >
-                    <TableCell>
-                      <div className="flex items-center gap-2">
+                    <TableCell className="max-w-[10rem]">
+                      <div className="flex items-center gap-2 min-w-0">
                         <DiceBearAvatar fullName={a.fullName} size={28} />
-                        <div className="flex flex-col">
-                          <span className="font-medium">{a.fullName}</span>
+                        <div className="flex flex-col min-w-0">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="font-medium truncate">
+                                {a.fullName}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>{a.fullName}</TooltipContent>
+                          </Tooltip>
                           {a.organizationName && (
                             <Badge
                               variant="outline"
@@ -493,8 +500,8 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell text-xs text-muted-foreground">
-                      {a.email}
+                    <TableCell className="hidden sm:table-cell text-xs text-muted-foreground max-w-[12rem]">
+                      <span className="truncate block">{a.email}</span>
                     </TableCell>
                     <TableCell>
                       <Badge
@@ -542,11 +549,14 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                           </TooltipContent>
                         </Tooltip>
                       ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
+                        <span className="text-xs text-muted-foreground">
+                          {" "}
+                          -{" "}
+                        </span>
                       )}
                     </TableCell>
                     <TableCell className="hidden md:table-cell font-mono text-xs tabular-nums">
-                      {a.studentId != null ? a.studentId : "—"}
+                      {a.studentId != null ? a.studentId : " - "}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
                       {a.lastLoginAt
@@ -562,6 +572,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                               size="icon"
                               className="h-7 w-7 text-muted-foreground hover:text-primary"
                               onClick={() => openEdit(a)}
+                              aria-label="Edit"
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
@@ -591,6 +602,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                                       }),
                                   })
                                 }
+                                aria-label="Restore"
                               >
                                 {restoreMut.isPending &&
                                 restoreMut.variables === a.id ? (
@@ -617,6 +629,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                                     value: "SUSPENDED",
                                   })
                                 }
+                                aria-label="Suspend"
                               >
                                 <Ban className="h-3.5 w-3.5" />
                               </Button>
@@ -636,6 +649,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                                     value: "ACTIVE",
                                   })
                                 }
+                                aria-label="Reactivate"
                               >
                                 <CheckCircle2 className="h-3.5 w-3.5" />
                               </Button>
@@ -653,6 +667,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                                 onClick={() =>
                                   setDeleteTarget({ account: a, hard: true })
                                 }
+                                aria-label="Delete"
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                               </Button>
@@ -812,7 +827,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                         <SelectItem value="__none__">None</SelectItem>
                         {PROGRAMS.map((p) => (
                           <SelectItem key={p.code} value={p.code}>
-                            {p.code} — {p.label}
+                            {p.code} - {p.label}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -849,7 +864,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
               </>
             )}
             <p className="text-[11px] text-muted-foreground">
-              The account is created as Active — no email verification needed.
+              The account is created as Active - no email verification needed.
             </p>
             <Button
               type="submit"
@@ -1010,10 +1025,13 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                     position="popper"
                     className="max-h-[200px] z-[100]"
                   >
-                    <SelectItem value="__none__">— Not specified —</SelectItem>
+                    <SelectItem value="__none__">
+                      {" "}
+                      - Not specified -{" "}
+                    </SelectItem>
                     {PROGRAMS.map((p) => (
                       <SelectItem key={p.code} value={p.code}>
-                        {p.code} — {p.label}
+                        {p.code} - {p.label}
                       </SelectItem>
                     ))}
                   </SelectContent>

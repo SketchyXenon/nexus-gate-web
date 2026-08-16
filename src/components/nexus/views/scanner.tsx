@@ -99,7 +99,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
   const [feedbackKey, setFeedbackKey] = useState(0);
   const scanInFlightRef = useRef<boolean>(false);
   const lastCaptureAtRef = useRef<number>(0);
-  // Increased from 1750ms to 3000ms — gives the scanner more time to
+  // Increased from 1750ms to 3000ms - gives the scanner more time to
   // capture 3 consecutive sub-frames before resetting. The QR refreshes
   // every 500ms, so 3 frames need ~1.5s, but camera lag can cause gaps.
   const captureStaleMs = 3000;
@@ -158,7 +158,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
   // SECURITY: The HMACs are CLIENT-OBSERVED (captured from the real QR
   // frames). The server recomputes the expected HMAC for each sub-frame
   // index and compares it against the client-supplied value. This proves
-  // the scanner actually watched the QR change over time — a fabricated
+  // the scanner actually watched the QR change over time - a fabricated
   // set of indices without real HMACs is rejected.
   const handleDecode = useCallback(
     async (raw: string) => {
@@ -254,7 +254,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
 
       // Check if we have enough consecutive sub-frames
       if (collected < MIN_SUB_FRAMES) {
-        // Not enough yet — show progress feedback
+        // Not enough yet - show progress feedback
         setFeedbackKey((k) => k + 1);
         setFeedback({
           kind: "success",
@@ -264,7 +264,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
         return;
       }
 
-      // We have enough sub-frames — verify they're consecutive
+      // We have enough sub-frames - verify they're consecutive
       const sortedSubFrames = Array.from(subFramesRef.current.values()).sort(
         (a, b) => a.subFrame - b.subFrame,
       );
@@ -326,7 +326,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
         registerDeviceKeyWithServer(user.id).catch(() => {});
 
         // Lock scanning for 1.5 seconds to prevent duplicate scans.
-        // Reduced from 3s — 1.5s is enough for the QR to rotate to a new
+        // Reduced from 3s - 1.5s is enough for the QR to rotate to a new
         // sub-frame, and doesn't make the user wait too long between scans.
         scanningLockedRef.current = true;
         scanInFlightRef.current = false;
@@ -339,8 +339,8 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
           kind: "success",
           name: user.fullName,
           msg: online
-            ? "Scan captured — sending to the server now."
-            : "You're offline — your scan is saved and will be sent automatically when you reconnect.",
+            ? "Scan captured - sending to the server now."
+            : "You're offline - your scan is saved and will be sent automatically when you reconnect.",
         });
 
         // Reset sub-frame collection for the next scan
@@ -351,7 +351,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
         setFeedbackKey((k) => k + 1);
         // Detect WebCrypto exportKey errors (stale non-extractable keypair
         // from an older version of the app). The fix is to clear IndexedDB
-        // and regenerate — but we can't do that automatically without
+        // and regenerate - but we can't do that automatically without
         // user consent. Show a clear message instead.
         const errMsg = e instanceof Error ? e.message : String(e);
         const isCryptoKeyError =
@@ -395,7 +395,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
 
     // ---- Downscale to max 640px wide for faster jsQR decoding ----
     // jsQR's cost is O(width × height). A 1080p frame is ~2M pixels;
-    // at 640×360 it's ~230K pixels — 9x faster. The QR is still
+    // at 640×360 it's ~230K pixels - 9x faster. The QR is still
     // decodable at this resolution (it's projected on a screen).
     const MAX_W = 640;
     const scale = srcW > MAX_W ? MAX_W / srcW : 1;
@@ -504,7 +504,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
           </div>
         </CardHeader>
         <CardContent>
-          {/* Profile completion prompt — shown when the student hasn't set
+          {/* Profile completion prompt - shown when the student hasn't set
               their course/section yet. Course-specific events are hidden
               until they complete their profile. */}
           {needsProfile && (
@@ -682,7 +682,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                   ) : (
                     <WifiOff className="h-3 w-3" />
                   )}
-                  {online ? "Online" : "Offline — scans saved on this device"}
+                  {online ? "Online" : "Offline - scans saved on this device"}
                 </Badge>
                 {queue.syncing && (
                   <Badge variant="outline" className="gap-1.5">
@@ -826,6 +826,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                           size="icon"
                           className="h-6 w-6 text-muted-foreground hover:text-destructive"
                           onClick={() => queue.removeItem(item.id)}
+                          aria-label="Remove scan"
                         >
                           <Trash2 className="h-3 w-3" />
                         </Button>

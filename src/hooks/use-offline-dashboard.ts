@@ -9,12 +9,12 @@ import {
 } from "@/lib/rxdb";
 
 // ====================================================================
-// useOfflineDashboard — RxDB-backed offline snapshot for the dashboard.
+// useOfflineDashboard - RxDB-backed offline snapshot for the dashboard.
 // --------------------------------------------------------------------
 // Wraps the React Query result from useDashboard(). On success, persists
 // the payload to RxDB (IndexedDB). When the query is loading AND the
 // browser is offline, serves the last-known snapshot instead of an empty
-// skeleton — the offline-first identity.
+// skeleton - the offline-first identity.
 //
 // Per 04-testing-methodology.md: the hook is a thin adapter; the RxDB
 // store is unit-tested separately. This layer only orchestrates.
@@ -27,7 +27,6 @@ export function useOfflineDashboard<T>(
   isError: boolean,
 ): { snapshot: DashboardSnapshot<T> | null; stale: boolean } {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot<T> | null>(null);
-  const [stale, setStale] = useState(false);
 
   // Persist on successful query.
   useEffect(() => {
@@ -42,14 +41,12 @@ export function useOfflineDashboard<T>(
     if (!accountId) return;
     // Only hydrate when we have no fresh data (loading or error).
     if (!isLoading && !isError) {
-      setStale(false);
       return;
     }
     loadDashboardSnapshot<T>(accountId)
       .then((snap) => {
         if (mounted && snap) {
           setSnapshot(snap);
-          setStale(true);
         }
       })
       .catch(() => {});
@@ -58,7 +55,13 @@ export function useOfflineDashboard<T>(
     };
   }, [accountId, isLoading, isError]);
 
-  // Clear on unmount of the "session" — caller can call clearDashboardSnapshot
+  // Derive "stale" during render instead of tracking it as separate state
+  // (which would require a synchronous setStale(false) inside the effect
+  // when fresh data is present - a cascading setState). stale is true only
+  // when we're serving the offline snapshot during loading/error.
+  const stale = (!!isLoading || isError) && snapshot !== null;
+
+  // Clear on unmount of the "session" - caller can call clearDashboardSnapshot
   // explicitly on logout (kept here for symmetry, not auto-invoked).
   return { snapshot, stale };
 }

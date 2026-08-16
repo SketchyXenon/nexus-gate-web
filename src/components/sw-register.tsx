@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 // ====================================================================
 // Service Worker Registration + Install Prompt
 //
-// 1. Registers /sw.js on mount (production only — skipped in dev)
+// 1. Registers /sw.js on mount (production only - skipped in dev)
 // 2. Shows "Install app" banner when the browser fires beforeinstallprompt
 // 3. Shows "Update available" toast when a new SW takes over
 // ====================================================================
@@ -19,7 +19,8 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 export function ServiceWorkerRegister() {
-  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [installPrompt, setInstallPrompt] =
+    useState<BeforeInstallPromptEvent | null>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState(false);
 
@@ -38,11 +39,14 @@ export function ServiceWorkerRegister() {
         // Check for updates every 10 minutes.
         // Wrapped in try/catch: update() can throw InvalidStateError on
         // Vercel redeploys when the browser's SW state is temporarily invalid.
-        updateInterval = setInterval(() => {
-          registration.update().catch(() => {
-            // InvalidStateError or network failure — non-critical, skip.
-          });
-        }, 10 * 60 * 1000);
+        updateInterval = setInterval(
+          () => {
+            registration.update().catch(() => {
+              // InvalidStateError or network failure - non-critical, skip.
+            });
+          },
+          10 * 60 * 1000,
+        );
 
         // Listen for new service worker taking over
         registration.addEventListener("updatefound", () => {
@@ -53,14 +57,14 @@ export function ServiceWorkerRegister() {
               newWorker.state === "installed" &&
               navigator.serviceWorker.controller
             ) {
-              // New version installed — show update prompt
+              // New version installed - show update prompt
               setUpdateAvailable(true);
             }
           });
         });
       })
       .catch(() => {
-        // SW registration failed — non-critical, app still works
+        // SW registration failed - non-critical, app still works
       });
 
     // ---- Install prompt ----
@@ -73,7 +77,10 @@ export function ServiceWorkerRegister() {
 
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
     return () => {
-      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener(
+        "beforeinstallprompt",
+        handleBeforeInstallPrompt,
+      );
       if (updateInterval) clearInterval(updateInterval);
       if (installBannerTimeout) clearTimeout(installBannerTimeout);
     };
@@ -117,13 +124,18 @@ export function ServiceWorkerRegister() {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold">Install Nexus Gate</p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Add it to your home screen for faster access — works like an app.
+                    Add it to your home screen for faster access - works like an
+                    app.
                   </p>
                   <div className="flex gap-2 mt-3">
                     <Button size="sm" onClick={handleInstall}>
                       Install
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setShowInstallBanner(false)}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setShowInstallBanner(false)}
+                    >
                       Not now
                     </Button>
                   </div>
@@ -133,6 +145,7 @@ export function ServiceWorkerRegister() {
                   size="icon"
                   className="h-7 w-7 shrink-0"
                   onClick={() => setShowInstallBanner(false)}
+                  aria-label="Dismiss"
                 >
                   <X className="h-4 w-4" />
                 </Button>
