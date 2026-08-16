@@ -118,6 +118,12 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     }
   }
 
+  // Strip the internal Supabase Auth UID from the response (H4 leak).
+  // It's an internal architecture detail not needed by the admin UI.
+  const { supabaseAuthUid: _omit, ...safeResponse } = updated as {
+    supabaseAuthUid?: string;
+  };
+
   // If email changed, sync to Supabase Auth so login uses the new email.
   // Without this, the DB and auth layer diverge (user must log in with the
   // OLD email, and re-registration with the new email fails).
@@ -140,7 +146,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
           "uid:",
           updated.supabaseAuthUid,
         );
-        // Don't fail the whole request — the DB row is updated. The admin
+        // Don't fail the whole request - the DB row is updated. The admin
         // can re-sync via the Supabase dashboard if needed.
       }
     } catch (e) {
@@ -160,5 +166,5 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     req,
   });
 
-  return NextResponse.json(updated);
+  return NextResponse.json(safeResponse);
 }

@@ -74,11 +74,29 @@ async function readAccessToken(): Promise<string | null> {
 export interface JwtSession {
   authUid: string;
   email: string;
+  /** True if the session was established via a password-reset (recovery) link. */
+  isRecovery?: boolean;
 }
 
 // Returns true if local JWT validation is available (secret configured).
 export function isJwtValidationAvailable(): boolean {
   return getJwtSecret() !== null;
+}
+
+// Check if the JWT's AMR (Authentication Methods Reference) claim contains
+// a "recovery" entry. Per 06-security-architecture.md §2, a recovery session
+// must NOT grant general app access - it is scoped to password-reset only.
+// Returns true if the session is a recovery (password-reset) flow.
+function isRecoveryAmr(payload: Record<string, unknown>): boolean {
+  const amr = payload.amr;
+  if (!Array.isArray(amr)) return false;
+  return amr.some(
+    (entry) =>
+      typeof entry === "object" &&
+      entry !== null &&
+      "method" in entry &&
+      (entry as { method: string }).method === "recovery",
+  );
 }
 
 // Validate the Supabase access token locally and extract the authUid.
@@ -99,10 +117,8 @@ export async function getJwtSession(): Promise<JwtSession | null> {
     const authUid = payload.sub;
     if (!authUid) return null;
     const email =
-      (payload.email as string) ||
-      (payload["user_email"] as string) ||
-      "";
-    return { authUid, email };
+      (payload.email as string) || (payload["user_email"] as string) || "";
+    return { authUid, email, isRecovery: isRecoveryAmr(payload) };
   } catch {
     // Token invalid, expired, or signature mismatch.
     return null;

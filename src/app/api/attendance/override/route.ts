@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   // The whitelist is the primary source, but students who registered
   // directly (without being whitelisted) should also be eligible.
   // We look up the account ONCE here and reuse it below for the
-  // attendance upsert — avoids a redundant second findUnique.
+  // attendance upsert - avoids a redundant second findUnique.
   const student = await db.authorizedStudent.findUnique({
     where: { studentId },
   });
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
     studentProgram = student.program;
     studentSection = student.section;
   } else {
-    // Not on whitelist — must have an account to be eligible.
+    // Not on whitelist - must have an account to be eligible.
     if (!studentAccount) {
       return badRequest(
         "This student is not on the approved list and has no account.",
@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ---- Anti-cheating: same time window as scanning ----
-  // Uses the shared helper (plural — includes time-out window).
+  // Uses the shared helper (plural - includes time-out window).
   // Organizers can add overrides while EITHER the check-in window OR
   // the time-out window is live. This allows manual entries during
   // the full event lifecycle.
@@ -108,7 +108,16 @@ export async function POST(req: NextRequest) {
         where: {
           eventId_accountId: { eventId, accountId: studentAccount.id },
         },
-        update: {},
+        // M1 fix: previously update:{} was a no-op. When the student already
+        // has a QR-scanned attendance row, the override must mark it as
+        // override-sourced so CSV exports + analytics reflect the admin
+        // correction (otherwise the row still shows "QR Scan" for a student
+        // the admin manually overrode). Stamps scannedAt to now so the row
+        // reflects the override time, not the original scan time.
+        update: {
+          source: "override",
+          scannedAt: new Date(),
+        },
         create: { eventId, accountId: studentAccount.id, source: "override" },
       });
       return { override, attendance };

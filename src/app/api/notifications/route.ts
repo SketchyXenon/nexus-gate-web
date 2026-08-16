@@ -12,6 +12,12 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const unreadOnly = searchParams.get("unread") === "true";
+  // L3 fix: cursor-based pagination. The client passes the createdAt of the
+  // OLDEST notification in the current list as ?cursor=<iso>. We return the
+  // next page of older notifications + a hasMore flag. Default page size 50
+  // (matches the old hard cap), max 100 to prevent abuse.
+  const cursor = searchParams.get("cursor");
+  const limit = Math.min(Number(searchParams.get("limit")) || 50, 100);
 
   const where: Record<string, unknown> = {
     accountId: res.account.id,
@@ -19,13 +25,19 @@ export async function GET(req: NextRequest) {
   if (unreadOnly) {
     where.readAt = null;
   }
+  if (cursor) {
+    const cursorDate = new Date(cursor);
+    if (!isNaN(cursorDate.getTime())) {
+      where.createdAt = { lt: cursorDate };
+    }
+  }
 
-  // Run the list + count queries in parallel (was sequential).
-  const [notifications, unreadCount] = await Promise.all([
+  // Fetch limit+1 to detect if there's another page (hasMore).
+  const [rows, unreadCount] = await Promise.all([
     db.notification.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      take: 50,
+      take: limit + 1,
     }),
     db.notification.count({
       where: {
@@ -35,10 +47,18 @@ export async function GET(req: NextRequest) {
     }),
   ]);
 
+  const hasMore = rows.length > limit;
+  const notifications = hasMore ? rows.slice(0, limit) : rows;
+  const nextCursor = hasMore
+    ? notifications[notifications.length - 1]?.createdAt.toISOString()
+    : null;
+
   return NextResponse.json(
     {
       notifications,
       unreadCount,
+      hasMore,
+      nextCursor,
     },
     { headers: { "Cache-Control": "private, no-cache" } },
   );

@@ -4,7 +4,12 @@ import {
   importWhitelistSchema,
   whitelistPaginationSchema,
 } from "@/lib/validation";
-import { badRequest, parseBody, requireAuth } from "@/lib/api";
+import {
+  badRequest,
+  parseBody,
+  requireAuth,
+  checkRateLimitByKey,
+} from "@/lib/api";
 import { audit } from "@/lib/audit";
 
 // Allow up to 30s for large imports (up to 5000 students).
@@ -15,12 +20,12 @@ export const maxDuration = 30;
 // GET /api/whitelist (ORGANIZER+)
 // --------------------------------------------------------------------
 // Returns a merged view of:
-//   1. Student accounts (role=USER) — registered students
-//   2. Authorized students with no account — pending imports
+//   1. Student accounts (role=USER) - registered students
+//   2. Authorized students with no account - pending imports
 //
 // Each student record includes:
-//   - status: "ACTIVE" | "PENDING" (PENDING = imported but not registered)
-//   - activated: true (registered) | false (imported, pending)
+//  - status: "ACTIVE" | "PENDING" (PENDING = imported but not registered)
+//  - activated: true (registered) | false (imported, pending)
 // ====================================================================
 export async function GET(req: NextRequest) {
   const res = await requireAuth("ORGANIZER");
@@ -89,7 +94,11 @@ export async function GET(req: NextRequest) {
       ? [{ studentId: "asc" as const }]
       : sort === "name"
         ? [{ fullName: "asc" as const }]
-        : [{ program: "asc" as const }, { section: "asc" as const }, { fullName: "asc" as const }];
+        : [
+            { program: "asc" as const },
+            { section: "asc" as const },
+            { fullName: "asc" as const },
+          ];
 
   const [registeredAccounts, pendingStudents, registeredCount, pendingCount] =
     await Promise.all([
@@ -121,8 +130,12 @@ export async function GET(req: NextRequest) {
             skip,
             take: pageSize,
           }),
-      statusFilter === "pending" ? 0 : db.account.count({ where: accountWhere }),
-      statusFilter === "registered" ? 0 : db.authorizedStudent.count({ where: authWhere }),
+      statusFilter === "pending"
+        ? 0
+        : db.account.count({ where: accountWhere }),
+      statusFilter === "registered"
+        ? 0
+        : db.authorizedStudent.count({ where: authWhere }),
     ]);
 
   // ---- Get registered studentIds for filtering pending (page-sized set only) ----
@@ -199,7 +212,7 @@ export async function GET(req: NextRequest) {
 // POST /api/whitelist (ORGANIZER+)
 // --------------------------------------------------------------------
 // Bulk import students into authorized_students table ONLY.
-// Does NOT create accounts — students self-register later.
+// Does NOT create accounts - students self-register later.
 // Imported students are flagged as activated=false (pending).
 // When a student registers, the register route sets activated=true.
 // ====================================================================
@@ -207,6 +220,13 @@ export async function POST(req: NextRequest) {
   const res = await requireAuth("ORGANIZER");
   if ("error" in res) return res.error;
   const { account } = res;
+
+  // Dedicated rate limit for bulk whitelist import (3/min). The default
+  // apiAccount (100/min) would allow 100 * 5000 = 500k row-upserts/min,
+  // an easy DoS vector. 3/min is enough for periodic roster refreshes.
+  // Fails CLOSED (sensitive preset) so an attacker can't bypass by noise.
+  const wlRateLimit = await checkRateLimitByKey(account.id, "whitelistImport");
+  if (wlRateLimit) return wlRateLimit;
 
   const body = await parseBody(req);
   const parsed = importWhitelistSchema.safeParse(body);

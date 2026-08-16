@@ -22,8 +22,11 @@ import { validatePushEndpoint } from "@/lib/url-safety";
 const subscriptionSchema = z.object({
   endpoint: z.string().min(1).max(2048),
   keys: z.object({
-    p256dh: z.string(),
-    auth: z.string(),
+    // Web Push p256dh/auth keys are base64url-encoded elliptic-curve
+    // points, typically ~100-200 chars. Cap at 512 to prevent storage-DoS
+    // (an attacker could otherwise submit multi-MB strings at 100/min).
+    p256dh: z.string().min(1).max(512),
+    auth: z.string().min(1).max(512),
   }),
 });
 
@@ -35,7 +38,9 @@ export async function POST(req: NextRequest) {
   const body = await parseBody(req);
   const parsed = subscriptionSchema.safeParse(body);
   if (!parsed.success) {
-    return badRequest(parsed.error.issues[0]?.message ?? "Invalid subscription");
+    return badRequest(
+      parsed.error.issues[0]?.message ?? "Invalid subscription",
+    );
   }
 
   // "in-app" is a sentinel for in-app notifications (no Web Push
@@ -45,14 +50,14 @@ export async function POST(req: NextRequest) {
   // in-app bell notifications). Skip the URL validation for this sentinel.
   const isInAppSentinel = parsed.data.endpoint === "in-app";
 
-  // SSRF defense: validate the push endpoint URL — but only for real
+  // SSRF defense: validate the push endpoint URL - but only for real
   // Web Push endpoints (not the "in-app" sentinel).
   if (!isInAppSentinel) {
     const urlCheck = await validatePushEndpoint(parsed.data.endpoint);
     if (!urlCheck.ok) {
       return badRequest(
         `Invalid push endpoint: ${urlCheck.reason}. The endpoint must be a valid HTTPS push service URL.`,
-        "INVALID_ENDPOINT"
+        "INVALID_ENDPOINT",
       );
     }
   }

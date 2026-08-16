@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const account = await getCurrentAccountSupabase();
+    const account = await getCurrentAccountSupabase({ allowRecovery: true });
     if (!account) {
       return badRequest(
         "This reset link is invalid or has expired. Please request a new one.",

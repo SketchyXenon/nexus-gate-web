@@ -8,7 +8,7 @@ import { hashVisitorIp } from "@/lib/analytics-hash";
 // --------------------------------------------------------------------
 // Records a page view WITHOUT storing the raw IP. The public IP is
 // HMAC-hashed (daily-rotating) so the row only identifies "same visitor
-// on the same day" — never the IP itself. Aggregated upserts deduplicate
+// on the same day" - never the IP itself. Aggregated upserts deduplicate
 // on (dayBucket, visitorHash, route), keeping the table bounded.
 //
 // Per 06-security-architecture.md §8 (data minimization): no raw IP, no
@@ -27,19 +27,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false }, { status: 400 });
   }
 
-  const route = (body.route || "/").toString().slice(0, 255);
-  if (!route.startsWith("/")) {
+  // M3 fix: validate route shape before storing. Reject empty, too long,
+  // non-path-prefixed, or control-character-bearing strings. This prevents
+  // stored XSS in the admin analytics view (the route is rendered in the
+  // admin dashboard). Cap at 255 to match the DB column (Visit.route).
+  const rawRoute = typeof body.route === "string" ? body.route : "/";
+  if (!rawRoute.startsWith("/") || rawRoute.length > 255) {
     return NextResponse.json({ ok: false }, { status: 400 });
   }
+  // Reject control chars (incl. <script>, newlines, NULs) - the route is
+  // rendered in the admin view and must be safe to display.
+  if (/[\x00-\x1f\x7f<>]/.test(rawRoute)) {
+    return NextResponse.json({ ok: false }, { status: 400 });
+  }
+  const route = rawRoute;
 
   // Public IP (the edge proxy sets x-forwarded-for). This is NOT the
-  // visitor's pure/private IP — it's the public routable address. We hash
+  // visitor's pure/private IP - it's the public routable address. We hash
   // it immediately and never persist the raw value.
   const forwarded = req.headers.get("x-forwarded-for");
   const publicIp = forwarded?.split(",")[0]?.trim() || null;
   const visitorHash = hashVisitorIp(publicIp);
 
-  // Country (optional, country-level only — from Cloudflare's CF-IPCountry).
+  // Country (optional, country-level only - from Cloudflare's CF-IPCountry).
   const country = req.headers.get("cf-ipcountry") || null;
 
   const day = new Date().toISOString().slice(0, 10);
@@ -75,7 +85,7 @@ export async function POST(req: NextRequest) {
 }
 
 // ====================================================================
-// GET /api/analytics — admin dashboard summary (last 7 days)
+// GET /api/analytics - admin dashboard summary (last 7 days)
 // ====================================================================
 
 export async function GET() {

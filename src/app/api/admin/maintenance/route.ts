@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { badRequest, parseBody, requireAuth } from "@/lib/api";
+import {
+  badRequest,
+  parseBody,
+  requireAuth,
+  invalidateMaintenanceCache,
+} from "@/lib/api";
 import { audit } from "@/lib/audit";
 
 // ====================================================================
@@ -14,8 +19,8 @@ import { audit } from "@/lib/audit";
 // Body: { enabled: boolean, message?: string }
 //
 // Persists two Setting rows:
-//   - maintenance_mode   = "true" | "false"
-//   - maintenance_message = the custom notice (only when provided)
+//  - maintenance_mode   = "true" | "false"
+//  - maintenance_message = the custom notice (only when provided)
 //
 // Returns the new state so the UI can update immediately.
 // ====================================================================
@@ -33,9 +38,7 @@ export async function POST(req: NextRequest) {
   const body = await parseBody(req);
   const parsed = maintenanceSchema.safeParse(body);
   if (!parsed.success) {
-    return badRequest(
-      parsed.error.issues[0]?.message ?? "Invalid input"
-    );
+    return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
   }
   const { enabled, message } = parsed.data;
 
@@ -49,7 +52,7 @@ export async function POST(req: NextRequest) {
   });
 
   // Only persist a message if one was provided. We don't clear an
-  // existing message when disabling — the admin may toggle back on
+  // existing message when disabling - the admin may toggle back on
   // and want the same notice reused.
   let finalMessage: string | null = null;
   if (message !== undefined) {
@@ -65,6 +68,10 @@ export async function POST(req: NextRequest) {
     });
     finalMessage = existing?.value ?? null;
   }
+
+  // L1 fix: invalidate the maintenance cache so the toggle takes effect
+  // immediately (was up to 10s stale). Must come AFTER the DB write commits.
+  invalidateMaintenanceCache();
 
   await audit({
     actorId: account.id,

@@ -74,10 +74,7 @@ export async function GET(_req: NextRequest) {
       attendances,
       needsProfile,
     });
-    userRes.headers.set(
-      "Cache-Control",
-      "private, no-cache",
-    );
+    userRes.headers.set("Cache-Control", "private, no-cache");
     return userRes;
   }
 
@@ -126,12 +123,33 @@ export async function GET(_req: NextRequest) {
     return ts === "live" || ts === "upcoming";
   });
 
+  // L2 fix: scope programCounts/sectionCounts to the caller's own program +
+  // section when they're an ORGANIZER (was leaking the ENTIRE student body's
+  // program/section distribution to every organizer). Admins still see all.
+  // An organizer only manages students in their own program/section, so the
+  // global counts were both irrelevant and an info leak.
+  const isOrganizer = account.role === "ORGANIZER";
+  const rosterWhere = isOrganizer
+    ? {
+        OR: [
+          { program: account.program ?? "__none__" },
+          {
+            AND: [
+              { program: account.program ?? "__none__" },
+              { section: account.section ?? "__none__" },
+            ],
+          },
+        ],
+      }
+    : {};
   const programGroups = await db.authorizedStudent.groupBy({
     by: ["program"],
+    where: rosterWhere,
     _count: true,
   });
   const sectionGroups = await db.authorizedStudent.groupBy({
     by: ["program", "section"],
+    where: rosterWhere,
     _count: true,
   });
   const programCounts: Record<string, number> = {};
@@ -156,16 +174,13 @@ export async function GET(_req: NextRequest) {
         targetSection: e.targetSection,
         scope: e.scope,
         presentCount: e._count.attendances,
-        owner: e.owner?.fullName ?? "—",
+        owner: e.owner?.fullName ?? " - ",
         timeStatus: getTimeStatus(e),
       };
     }),
     programCounts,
     sectionCounts,
   });
-  adminRes.headers.set(
-    "Cache-Control",
-    "private, no-cache",
-  );
+  adminRes.headers.set("Cache-Control", "private, no-cache");
   return adminRes;
 }

@@ -4,7 +4,7 @@ export const maxDuration = 10;
 import { NextRequest, NextResponse } from "next/server";
 import Ably from "ably";
 import { db } from "@/lib/db";
-import { forbidden, requireAuth } from "@/lib/api";
+import { forbidden, requireAuth, checkRateLimit } from "@/lib/api";
 
 // GET /api/ably/token?eventId=123
 // Issues a short-lived Ably TokenRequest with SUBSCRIBE-ONLY capability,
@@ -20,6 +20,13 @@ import { forbidden, requireAuth } from "@/lib/api";
 export async function GET(req: NextRequest) {
   const res = await requireAuth();
   if ("error" in res) return res.error;
+
+  // L4 fix: rate-limit token requests (HMAC signing is CPU-costly). Without
+  // this, an authenticated user could hammer the endpoint and saturate the
+  // CPU. The "api" preset (120/min per-IP) is appropriate - token requests
+  // are legitimate per page load, but a real user won't exceed a few per min.
+  const rl = await checkRateLimit(req, "api");
+  if (rl) return rl;
 
   const serverKey = process.env.ABLY_SERVER_KEY;
   if (!serverKey) {
@@ -73,10 +80,10 @@ export async function GET(req: NextRequest) {
   // program, and section in real time. Without this check, any authenticated
   // USER could subscribe to ANY event's channel and harvest other students'
   // PII. We apply the SAME visibility rule as GET /api/events:
-  //   - ADMIN: sees all events.
-  //   - ORGANIZER: open-to-all, OR their program (any section), OR exact match.
-  //   - USER: open-to-all, OR exact program + section match (strict).
-  // A 403 (not 404) is returned because the eventId is not a secret — it's a
+  //  - ADMIN: sees all events.
+  //  - ORGANIZER: open-to-all, OR their program (any section), OR exact match.
+  //  - USER: open-to-all, OR exact program + section match (strict).
+  // A 403 (not 404) is returned because the eventId is not a secret - it's a
   // sequential integer the client already has from the events list. Hiding
   // existence via 404 would be security-through-obscurity; the visibility
   // rule is the real control.

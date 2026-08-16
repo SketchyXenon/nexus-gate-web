@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
       account = await db.account.create({
         data: {
           email: d.email,
-          passwordHash: "",
+          // L5 fix: omit the dead passwordHash write (schema default "").
           fullName: d.fullName,
           role: d.role,
           status: d.status,

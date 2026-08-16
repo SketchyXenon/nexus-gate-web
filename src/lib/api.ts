@@ -1,5 +1,5 @@
 // ====================================================================
-// Nexus Gate — API Helpers
+// Nexus Gate - API Helpers
 // Unified error responses, RBAC enforcement, request parsing.
 // ====================================================================
 
@@ -71,12 +71,12 @@ export function tooManyRequests(retryAfterMs: number) {
 
 // ---- Database unavailability detection ----
 // PrismaClientInitializationError → can't connect to the DB (wrong creds,
-//   unreachable, TLS) — infrastructure issue.
-// PrismaClientRustPanicError → Prisma engine crashed — infrastructure.
+//   unreachable, TLS) - infrastructure issue.
+// PrismaClientRustPanicError → Prisma engine crashed - infrastructure.
 // PrismaClientUnknownRequestError → query execution failed. When the
 //   message contains "42P05" / "prepared statement ... already exists",
 //   it's the Supabase pooler (Supavisor/PgBouncer transaction mode)
-//   conflicting with Prisma's prepared statements — infrastructure, NOT
+//   conflicting with Prisma's prepared statements - infrastructure, NOT
 //   a code bug. The fix is adding ?pgbouncer=true to DATABASE_URL.
 // All of these should surface as 503, not 500.
 export function isDbUnavailableError(e: unknown): boolean {
@@ -142,6 +142,14 @@ async function isMaintenanceMode(): Promise<boolean> {
   return maintenanceInFlight;
 }
 
+// L1 fix: invalidate the maintenance cache so the admin's toggle takes
+// effect immediately (was 10s stale). Call from POST /api/admin/maintenance
+// after the DB write commits. Without this, a non-admin user could be
+// blocked (or unblocked) up to 10s after the admin toggled - confusing UX.
+export function invalidateMaintenanceCache(): void {
+  maintenanceCache = null;
+}
+
 function serviceUnavailable(message: string) {
   return NextResponse.json(
     { error: message, code: "MAINTENANCE" },
@@ -152,7 +160,7 @@ function serviceUnavailable(message: string) {
 // ---- RBAC guard: require an active account with minimum role ----
 // Automatically enforces:
 //   1. Maintenance mode (blocks non-admins)
-//   2. Per-account rate limiting (100 req/min — protects all endpoints)
+//   2. Per-account rate limiting (100 req/min - protects all endpoints)
 //   3. Role-based access control (minimumRole / exactRole)
 // Routes that need stricter limits (scans: 30/min) call checkRateLimitAuthed
 // explicitly in addition to this.

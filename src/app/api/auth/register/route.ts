@@ -174,7 +174,10 @@ export async function POST(req: NextRequest) {
       account = await db.account.create({
         data: {
           email,
-          passwordHash: "",
+          // L5 fix: omit the dead passwordHash write. The column has
+          // @default("") in the schema, and passwords are managed by
+          // Supabase Auth (never stored locally). Writing "" was a vestigial
+          // pattern from the pre-Supabase auth system.
           fullName,
           role: "USER",
           status: "PENDING_VERIFICATION",

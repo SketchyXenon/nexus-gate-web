@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 
 // ====================================================================
-// Nexus Gate — Cron Authorization
+// Nexus Gate - Cron Authorization
 // --------------------------------------------------------------------
 // Supports multiple auth methods to maximize compatibility with
 // third-party cron services (cron-job.org, Vercel Cron, EasyCron, etc.):
@@ -9,8 +9,15 @@ import type { NextRequest } from "next/server";
 //   1. Authorization: Bearer <secret>         (Vercel Cron, generic)
 //   2. Authorization: Basic <base64(user:secret)>  (cron-job.org "Password" field)
 //   3. x-cron-secret / x-cronjob-secret header (custom header)
-//   4. ?secret= / ?cron_secret= / ?token= query param (URL-based)
-//   5. { "secret": "..." } JSON body field (POST body)
+//   4. { "secret": "..." } JSON body field (POST body)
+//
+// The ?secret= / ?cron_secret= / ?token= query-param method is DEPRECATED
+// (M4 fix): query params are logged by proxies/CDNs (access logs, Referer
+// headers, browser history) and leak the secret. Header-based auth (methods
+// 1-3) keeps the secret out of URLs. The query param is still accepted for
+// backward compatibility with existing cron jobs, but logs a deprecation
+// warning so operators migrate. To migrate: move the secret from the URL
+// to an Authorization header or x-cron-secret header.
 //
 // The CRON_SECRET env var MUST be set. If not set, all requests are
 // rejected (fail-closed) and a server-side error is logged.
@@ -21,6 +28,10 @@ export interface CronAuthResult {
   reason?: string;
   method?: string;
 }
+
+// Throttle the deprecation warning to one per server instance (avoids log
+// spam if a cron job hits the query-param method every minute).
+let queryAuthWarned = false;
 
 /**
  * Check cron authorization. If `endpoint` is provided (e.g. "cleanup",
@@ -34,7 +45,9 @@ export function checkCronAuth(
   // Build the list of valid secrets: endpoint-specific first, then global.
   const secrets: string[] = [];
   if (endpoint) {
-    const specific = (process.env[`CRON_${endpoint.toUpperCase()}_SECRET`] || "").trim();
+    const specific = (
+      process.env[`CRON_${endpoint.toUpperCase()}_SECRET`] || ""
+    ).trim();
     if (specific) secrets.push(specific);
   }
   const globalSecret = (process.env.CRON_SECRET || "").trim();
@@ -61,13 +74,13 @@ export function checkCronAuth(
   // ---- Method 2: Authorization: Basic <base64(user:secret)> ----
   // cron-job.org's "Password" field sends this format. We decode and
   // check if the PASSWORD portion matches CRON_SECRET (username is
-  // ignored — only the secret matters).
+  // ignored - only the secret matters).
   if (authHeader.startsWith("Basic ")) {
     try {
       const decoded = Buffer.from(authHeader.slice(6), "base64").toString(
         "utf-8",
       );
-      // Format is "username:password" — take the part after the first colon
+      // Format is "username:password" - take the part after the first colon
       const colonIdx = decoded.indexOf(":");
       const password = colonIdx >= 0 ? decoded.slice(colonIdx + 1) : decoded;
       if (matchesAny(password.trim())) {
@@ -101,7 +114,12 @@ export function checkCronAuth(
     };
   }
 
-  // ---- Method 4: Query parameter ----
+  // ---- Method 4: Query parameter (DEPRECATED - leaks secret via logs) ----
+  // Kept for backward compatibility with existing cron jobs that put the
+  // secret in the URL. Logs a one-time warning so operators migrate to a
+  // header-based method (Bearer / x-cron-secret). Per 06-security-architecture.md
+  // §9, query params are captured in proxy access logs, Referer headers, and
+  // browser history - all of which leak the secret.
   const url = new URL(req.url);
   const querySecret = (
     url.searchParams.get("secret") ||
@@ -112,8 +130,17 @@ export function checkCronAuth(
     ""
   ).trim();
   if (querySecret) {
+    // Deprecation warning (throttled via a module-level flag to avoid log spam).
+    if (!queryAuthWarned) {
+      queryAuthWarned = true;
+      console.warn(
+        "[cron-auth] DEPRECATED: query-param secret auth detected. Move the" +
+          " secret to an Authorization: Bearer header or x-cron-secret header." +
+          " Query params leak via access logs / Referer / browser history.",
+      );
+    }
     if (matchesAny(querySecret)) {
-      return { ok: true, method: "query" };
+      return { ok: true, method: "query-deprecated" };
     }
     return {
       ok: false,
@@ -148,10 +175,15 @@ function constantTimeEqual(a: string, b: string): boolean {
 // Helper for routes that want to read the secret from a JSON body field.
 // Returns true if the body's "secret" or "cron_secret" field matches any
 // valid secret (endpoint-specific or global).
-export function checkBodySecret(body: unknown, endpoint?: "cleanup" | "reminders"): boolean {
+export function checkBodySecret(
+  body: unknown,
+  endpoint?: "cleanup" | "reminders",
+): boolean {
   const secrets: string[] = [];
   if (endpoint) {
-    const specific = (process.env[`CRON_${endpoint.toUpperCase()}_SECRET`] || "").trim();
+    const specific = (
+      process.env[`CRON_${endpoint.toUpperCase()}_SECRET`] || ""
+    ).trim();
     if (specific) secrets.push(specific);
   }
   const globalSecret = (process.env.CRON_SECRET || "").trim();

@@ -18,6 +18,8 @@ import { getAccountCache, setAccountCache } from "@/lib/account-cache";
 export interface SupabaseSession {
   authUid: string;
   email: string;
+  /** True if the session is a password-reset (recovery) flow. */
+  isRecovery?: boolean;
 }
 
 // Clear the cache for a specific user (called when account is updated).
@@ -26,35 +28,118 @@ export function invalidateAccountCache(authUid: string): void {
   void setAccountCache(authUid, null, 0).catch(() => {});
 }
 
+// Decode a JWT payload without signature verification (for reading claims
+// like AMR). Safe to use ONLY after the token has been validated by either
+// jose (JWT path) or supabase.auth.getUser() (network path). The signature
+// is NOT checked here - we only read the AMR claim.
+function decodeAmrFromToken(token: string): boolean {
+  const payload = token.split(".")[1];
+  if (!payload) return false;
+  const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(
+    normalized.length + ((4 - (normalized.length % 4)) % 4),
+    "=",
+  );
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(padded, "base64").toString("utf-8"),
+    ) as { amr?: Array<{ method: string }> };
+    return Array.isArray(decoded.amr)
+      ? decoded.amr.some((e) => e?.method === "recovery")
+      : false;
+  } catch {
+    return false;
+  }
+}
+
 // Read the session. Tries local JWT validation first (fast), falls back
 // to the Supabase network call (slow but always works).
-export async function getSupabaseSession(): Promise<SupabaseSession | null> {
+//
+// RECOVERY SESSION SCOPING (per 06-security-architecture.md §2):
+// A password-reset (recovery) session must NOT grant general app access.
+// By default, recovery sessions are REJECTED here (return null) so that
+// every endpoint protected by requireAuth() returns 401. Only the
+// /api/auth/reset-password endpoint opts in via { allowRecovery: true }.
+// This closes the bypass where a reset link, when clicked, logs the user
+// in without them knowing the password.
+export async function getSupabaseSession(options?: {
+  allowRecovery?: boolean;
+}): Promise<SupabaseSession | null> {
+  const allowRecovery = options?.allowRecovery === true;
+
   // Fast path: local JWT validation (no network round-trip).
   if (isJwtValidationAvailable()) {
     const jwtSession = await getJwtSession();
-    if (jwtSession) return jwtSession;
+    if (jwtSession) {
+      // Reject recovery sessions unless the caller explicitly allows them.
+      if (jwtSession.isRecovery && !allowRecovery) return null;
+      return jwtSession;
+    }
     // JWT validation failed (expired/invalid) - fall through to getUser()
     // which will refresh the session if possible.
   }
 
   if (!isSupabaseConfigured()) return null;
   const supabase = await createSupabaseServerClient();
+  // getSession() reads the cookie locally (no network) to get the
+  // access_token for AMR extraction. getUser() validates the token
+  // server-side. We need both: getUser() for auth, getSession() for AMR.
+  const { data: sessData } = await supabase.auth.getSession();
   const { data, error } = await supabase.auth.getUser();
   if (error || !data.user) return null;
-  return { authUid: data.user.id, email: data.user.email ?? "" };
+
+  // Extract the AMR from the access token to detect recovery sessions.
+  // The token's signature was already validated by getUser() above, so
+  // reading the AMR here is safe (no forgery risk).
+  const accessToken = sessData.session?.access_token;
+  const isRecovery = accessToken ? decodeAmrFromToken(accessToken) : false;
+  if (isRecovery && !allowRecovery) return null;
+
+  return {
+    authUid: data.user.id,
+    email: data.user.email ?? "",
+    isRecovery,
+  };
 }
 
 // Resolve the current account from the session.
 // Uses a two-tier cache (Redis + in-memory) to avoid DB queries.
-export async function getCurrentAccountSupabase(): Promise<ApiAccount | null> {
-  const session = await getSupabaseSession();
+//
+// options.allowRecovery: set true ONLY for /api/auth/reset-password. All
+// other callers use the default (false) which rejects recovery sessions.
+export async function getCurrentAccountSupabase(options?: {
+  allowRecovery?: boolean;
+}): Promise<ApiAccount | null> {
+  const session = await getSupabaseSession(options);
   if (!session) return null;
+
+  // NOTE: we do NOT cache recovery sessions, because the cache key is just
+  // authUid and a recovery session must not be reusable as a normal session
+  // by a later (non-allowRecovery) caller.
+  if (session.isRecovery) {
+    return resolveAccountFromDb(session.authUid, /* cacheResult */ false);
+  }
 
   // Check the unified cache (Redis first, then in-memory).
   const cached = await getAccountCache(session.authUid);
   if (cached !== undefined) return cached;
 
-  // Cache miss - fetch from DB.
+  const result = await resolveAccountFromDb(
+    session.authUid,
+    /* cacheResult */ true,
+  );
+  return result;
+}
+
+// Fetch the account from the DB by authUid, with P2022-safe fallback for
+// migration 0017 (is_deactivated column). When cacheResult is true, the
+// result (including null) is written to the Redis+in-memory cache so
+// subsequent requests skip the DB. Recovery sessions pass cacheResult=false
+// to avoid poisoning the cache with a session-scoped identity.
+async function resolveAccountFromDb(
+  authUid: string,
+  cacheResult: boolean,
+): Promise<ApiAccount | null> {
   // Safe: degrades gracefully if migration 0017 (is_deactivated) not applied.
   let account: {
     id: string;
@@ -73,7 +158,7 @@ export async function getCurrentAccountSupabase(): Promise<ApiAccount | null> {
 
   try {
     account = await db.account.findFirst({
-      where: { supabaseAuthUid: session.authUid },
+      where: { supabaseAuthUid: authUid },
       select: {
         id: true,
         email: true,
@@ -98,7 +183,7 @@ export async function getCurrentAccountSupabase(): Promise<ApiAccount | null> {
       (e as { code: string }).code === "P2022"
     ) {
       account = await db.account.findFirst({
-        where: { supabaseAuthUid: session.authUid },
+        where: { supabaseAuthUid: authUid },
         select: {
           id: true,
           email: true,
@@ -119,7 +204,7 @@ export async function getCurrentAccountSupabase(): Promise<ApiAccount | null> {
   }
 
   // Reject deactivated accounts (soft-deleted).
-  const result =
+  const result: ApiAccount | null =
     account && account.status === "ACTIVE" && !account.isDeactivated
       ? {
           ...account,
@@ -130,8 +215,10 @@ export async function getCurrentAccountSupabase(): Promise<ApiAccount | null> {
         }
       : null;
 
-  // Cache the result (including nulls, so we don't re-query for invalid accounts).
-  await setAccountCache(session.authUid, result, 30_000).catch(() => {});
+  if (cacheResult) {
+    // Cache the result (including nulls, so we don't re-query for invalid accounts).
+    await setAccountCache(authUid, result, 30_000).catch(() => {});
+  }
 
   return result;
 }
