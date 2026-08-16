@@ -4,7 +4,7 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
-// Only log queries in development — in production, query logging
+// Only log queries in development - in production, query logging
 // adds significant overhead (every query is serialized and printed).
 const logConfig = process.env.NODE_ENV === "production" ? [] : ["query"];
 
@@ -24,11 +24,21 @@ const globalWithKey = globalThis as unknown as {
 
 // If the cache key doesn't match (or there's no cached client),
 // create a fresh one and stamp the new key.
+//
+// SERVERLESS CONNECTION POOLING (300-concurrent target on TiDB Serverless):
+// The per-instance pool size is controlled by the `connection_limit` query
+// param in DATABASE_URL (NOT here) - Prisma's MySQL connector reads it from
+// the URL. The encode-tidb-url helper and example.env both append
+// `connection_limit=5&pool_timeout=10`. With ~60-100 warm Vercel instances
+// that yields 300-500 total connections, under TiDB Serverless's 1000-conn
+// cluster cap. We keep ONE PrismaClient per instance via the globalThis
+// singleton below so HMR (dev) and warm instances (prod) don't leak
+// connections - the historical serverless connection-exhaustion bug.
 if (
   globalWithKey.prisma &&
   globalWithKey.__prismaCacheKey === SCHEMA_CACHE_KEY
 ) {
-  // Cache hit — reuse the existing client.
+  // Cache hit - reuse the existing client.
 } else {
   globalWithKey.prisma = new PrismaClient({ log: logConfig as any });
   globalWithKey.__prismaCacheKey = SCHEMA_CACHE_KEY;

@@ -206,11 +206,22 @@ export async function POST(req: NextRequest) {
             );
           } else {
             verifiedAccount = account;
+            // Atomic compare-and-set on the stored credential: only write
+            // the new counter if the stored row hasn't changed since we read
+            // it. Closes the TOCTOU window where two concurrent logins both
+            // read counter=N and both write counter=N+1 (one would clobber the
+            // other's clone-detection advance). 0 rows affected is harmless:
+            // the other request already advanced the counter; this login's
+            // session is still valid because the assertion itself verified.
+            const oldStored = account.passkeyCredential ?? "{}";
             stored.counter = verification.authenticationInfo.newCounter;
-            await db.account.update({
-              where: { id: account.id },
-              data: { passkeyCredential: JSON.stringify(stored) },
-            });
+            const newStored = JSON.stringify(stored);
+            await db.$executeRaw`
+              UPDATE accounts
+              SET passkey_credential = ${newStored}
+              WHERE id = ${account.id}
+                AND passkey_credential = ${oldStored}
+            `;
           }
         }
       } else {
@@ -273,14 +284,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Activate pending accounts BEFORE establishing the session, so the
-  // session is for an ACTIVE account (not a pending one).
+  // SECURITY: a PENDING_VERIFICATION account has not confirmed its email.
+  // Activating it here would bypass the email-verification gate (the
+  // /api/auth/callback signup-confirmation is the single activation point).
+  // Reject with the generic verification-failed response so passkey login
+  // cannot be used to skip email confirmation.
   if (verifiedAccount.status === "PENDING_VERIFICATION") {
-    await db.account.update({
-      where: { id: verifiedAccount.id },
-      data: { status: "ACTIVE" },
-    });
-    (verifiedAccount as { status: string }).status = "ACTIVE";
+    return failWithCookieDelete(
+      {
+        error:
+          "Please verify your email before signing in. Check your inbox for a verification link.",
+        code: "EMAIL_NOT_VERIFIED",
+      },
+      403,
+    );
   }
 
   // Establish a Supabase session for the verified user.

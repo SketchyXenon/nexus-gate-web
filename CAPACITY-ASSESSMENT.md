@@ -1,4 +1,4 @@
-# Nexus Gate — Capacity Assessment Report
+# Nexus Gate - Capacity Assessment Report
 
 > **STATUS UPDATE (2026-07-15):** All 4 code-level bottlenecks listed below
 > have been **RESOLVED**. The capacity figures (platform tiers, DB growth,
@@ -16,10 +16,10 @@
 | Metric                                               | Estimate                                                                                                                           |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | **Realistic sustained concurrent users (free tier)** | **~500 users**                                                                                                                     |
-| **Peak burst concurrent users (free tier)**          | **~500–1,300 users** (Ably msg/s ceiling)                                                                                          |
+| **Peak burst concurrent users (free tier)**          | **~500-1,300 users** (Ably msg/s ceiling)                                                                                          |
 | **Hard ceiling platform**                            | **Ably Free** (1,000 msg/s peak + 3M msg/mo)                                                                                       |
-| **First code-level bottleneck**                      | ~~`/api/auth/passkey/login-verify` (N-row scan)~~ **RESOLVED** — now O(log N) via indexed `passkey_credential_id`                  |
-| **First DB-level bottleneck**                        | ~~`cron/event-reminders` N×M loop~~ **RESOLVED** — now bulk-fetch + `createMany`. `event_attendance` storage growth still applies. |
+| **First code-level bottleneck**                      | ~~`/api/auth/passkey/login-verify` (N-row scan)~~ **RESOLVED** - now O(log N) via indexed `passkey_credential_id`                  |
+| **First DB-level bottleneck**                        | ~~`cron/event-reminders` N×M loop~~ **RESOLVED** - now bulk-fetch + `createMany`. `event_attendance` storage growth still applies. |
 | **Storage exhaustion (Supabase Free 500MB)**         | **~6 weeks** at 2000 users / 200 events / 50% attendance                                                                           |
 | **Bandwidth exhaustion (Vercel Free 100GB)**         | **~1,300 MAU**                                                                                                                     |
 
@@ -91,16 +91,16 @@ Assumptions used across all analyses:
 
 | Rank  | Platform / Limit               | Break-point                       | Failure mode                                                                              |
 | ----- | ------------------------------ | --------------------------------- | ----------------------------------------------------------------------------------------- |
-| **1** | **Ably — 1,000 msg/s peak**    | **~500 users**                    | Realtime publish fails silently; organizers miss live updates (attendance still recorded) |
-| 2     | Sentry — 100 replays/mo        | <100 users                        | Replays dropped after 100th (config fix: lower sample to 0.01)                            |
-| 3     | Ably — 3M msgs/mo              | ~600 users (peak) / ~2,000 (mean) | Ably 429s; same silent failure                                                            |
-| 4     | Vercel — 100 GB bandwidth      | ~1,300 MAU                        | 502/503 over quota                                                                        |
-| 5     | Vercel — 10s function cap      | ~1,500 users                      | Scan POST truncated → 504 (idempotency prevents double-count)                             |
-| 6     | Sentry — 5,000 errors/mo       | ~1,500 users                      | Errors dropped (config fix: lower sampleRate to 0.3)                                      |
-| 7     | Supabase — 200 pooler conns    | ~3,000 users                      | New Vercel instances fail to acquire DB connection → 500s                                 |
-| 8     | Sentry — 50k perf transactions | ~2,200 users                      | Transactions dropped                                                                      |
+| **1** | **Ably - 1,000 msg/s peak**    | **~500 users**                    | Realtime publish fails silently; organizers miss live updates (attendance still recorded) |
+| 2     | Sentry - 100 replays/mo        | <100 users                        | Replays dropped after 100th (config fix: lower sample to 0.01)                            |
+| 3     | Ably - 3M msgs/mo              | ~600 users (peak) / ~2,000 (mean) | Ably 429s; same silent failure                                                            |
+| 4     | Vercel - 100 GB bandwidth      | ~1,300 MAU                        | 502/503 over quota                                                                        |
+| 5     | Vercel - 10s function cap      | ~1,500 users                      | Scan POST truncated → 504 (idempotency prevents double-count)                             |
+| 6     | Sentry - 5,000 errors/mo       | ~1,500 users                      | Errors dropped (config fix: lower sampleRate to 0.3)                                      |
+| 7     | Supabase - 200 pooler conns    | ~3,000 users                      | New Vercel instances fail to acquire DB connection → 500s                                 |
+| 8     | Sentry - 50k perf transactions | ~2,200 users                      | Transactions dropped                                                                      |
 
-**Bottleneck platform: Ably** — breaks between 500 and 2,000 concurrent users depending
+**Bottleneck platform: Ably** - breaks between 500 and 2,000 concurrent users depending
 on organizer fanout. Graceful degradation (fire-and-forget), so attendance recording
 continues; only the live dashboard updates degrade.
 
@@ -133,9 +133,9 @@ read-notification cleanup cron, `event_attendance` grows unbounded (no purge pol
 
 **Index gaps**:
 
-- `accounts.createdAt` — admin roster sorts by this, no index
-- `(ownerId, status, scheduledAt)` on events — only `(ownerId, status)` exists
-- **No `pg_trgm`/GIN indexes** — 7 routes use `LIKE '%q%'` (sequential scans):
+- `accounts.createdAt` - admin roster sorts by this, no index
+- `(ownerId, status, scheduledAt)` on events - only `(ownerId, status)` exists
+- **No `pg_trgm`/GIN indexes** - 7 routes use `LIKE '%q%'` (sequential scans):
   `/api/accounts`, `/api/events`, `/api/whitelist`, `/api/audit-logs`,
   `/api/attendance/overrides`, `/api/cron/event-reminders` (dedup check)
 
@@ -150,18 +150,18 @@ read-notification cleanup cron, `event_attendance` grows unbounded (no purge pol
 
 ### Top DB risks (ranked)
 
-1. **CRITICAL — `cron/event-reminders` N×M loop**: 5 events × 500 students = 2,500
-   sequential DB calls per cron tick. No `maxDuration` — will exceed Vercel's 10s
+1. **CRITICAL - `cron/event-reminders` N×M loop**: 5 events × 500 students = 2,500
+   sequential DB calls per cron tick. No `maxDuration` - will exceed Vercel's 10s
    Hobby cap and hold PgBouncer connections hostage.
-2. **`LIKE '%q%'` on growing tables** — 7 routes force sequential scans.
-3. **`event_attendance` unbounded growth** — no purge policy.
-4. **`audit_logs` indefinite append** — no purge policy (~22 MB/year, slow but unbounded).
+2. **`LIKE '%q%'` on growing tables** - 7 routes force sequential scans.
+3. **`event_attendance` unbounded growth** - no purge policy.
+4. **`audit_logs` indefinite append** - no purge policy (~22 MB/year, slow but unbounded).
 
 ---
 
 ## 5. API Route Bottlenecks (top 3 + honorable mentions)
 
-### TOP-1: `POST /api/auth/passkey/login-verify` — CRITICAL
+### TOP-1: `POST /api/auth/passkey/login-verify` - CRITICAL
 
 - **Issue**: `findMany({ where: { passkeyCredential: { not: null } } })` loads EVERY
   passkey-registered account, then a for-loop runs `verifyAuthenticationResponse`
@@ -171,16 +171,16 @@ read-notification cleanup cron, `event_attendance` grows unbounded (no purge pol
 - **Fix**: Add indexed `passkeyCredentialId` column; look up via
   `findUnique({ where: { passkeyCredentialId } })` instead of N-row scan.
 
-### TOP-2: `GET /api/whitelist` — HIGH
+### TOP-2: `GET /api/whitelist` - HIGH
 
 - **Issue**: Both `account.findMany` and `authorizedStudent.findMany` have NO
-  `take`/`skip` — entire result sets loaded into memory, merged, JS-sorted, sliced.
+  `take`/`skip` - entire result sets loaded into memory, merged, JS-sorted, sliced.
 - **Impact**: 5,000 students = ~10,000 rows fetched + JS sort per cache miss.
 - **Fix**: Push pagination into SQL (raw UNION with LIMIT/OFFSET, or two-query slice).
 
-### TOP-3: `GET /api/events/[id]/attendance` — HIGH
+### TOP-3: `GET /api/events/[id]/attendance` - HIGH
 
-- **Issue**: `findMany({ where: { eventId } })` with NO `take`/`skip` — returns ALL
+- **Issue**: `findMany({ where: { eventId } })` with NO `take`/`skip` - returns ALL
   attendance rows. `private, no-cache` → every request hits origin.
 - **Impact**: 1,000-attendee event = ~150KB JSON per response, every request. Polled
   by the Overrides page.
@@ -189,16 +189,16 @@ read-notification cleanup cron, `event_attendance` grows unbounded (no purge pol
 
 ### Honorable mentions
 
-- **`/api/cron/event-reminders`** — N+1 sequential queries per student per event.
+- **`/api/cron/event-reminders`** - N+1 sequential queries per student per event.
   Fix: bulk-fetch existing reminders + `createMany`.
-- **`/api/auth/check`, `/api/auth/register`, `/api/accounts/create`** — all call
+- **`/api/auth/check`, `/api/auth/register`, `/api/accounts/create`** - all call
   `admin.auth.admin.listUsers()` (fetches 1,000 users) to check ONE email for orphan
   reconciliation. Fix: use scoped `getUserByEmail` or query `auth.users` directly.
-- **`/api/dashboard`** (admin path) — 2 sequential `groupBy` after `Promise.all`.
+- **`/api/dashboard`** (admin path) - 2 sequential `groupBy` after `Promise.all`.
   Fix: include both in the existing `Promise.all`.
-- **`/api/attendance/override`** — redundant `findUnique({ where: { studentId } })`
+- **`/api/attendance/override`** - redundant `findUnique({ where: { studentId } })`
   called twice. Fix: reuse the first lookup.
-- **`maxDuration` coverage** — only 3 of ~30 routes set it. All Supabase-admin-call
+- **`maxDuration` coverage** - only 3 of ~30 routes set it. All Supabase-admin-call
   routes (`login`, `register`, `forgot-password`, `accounts/create`) risk the 10s
   Hobby cap under contention.
 
@@ -212,25 +212,25 @@ read-notification cleanup cron, `event_attendance` grows unbounded (no purge pol
 | --------------------- | ---------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
 | `login`               | 5/min      | per-IP + **per-email** + per-account | ✅ Per-email is the real backstop for NAT'd campus WiFi. Per-IP remains tight on shared IP (known trade-off, documented). |
 | `register`            | 5/min      | per-IP                               | ⚠️ Same shared-IP problem for onboarding. Acceptable for trickle onboarding; bulk onboarding should be staggered.         |
-| `otp`                 | 5/min      | per-IP                               | ✅ OK — OTP requests are naturally rare.                                                                                  |
+| `otp`                 | 5/min      | per-IP                               | ✅ OK - OTP requests are naturally rare.                                                                                  |
 | `check`               | 15/min     | per-IP                               | ⚠️ Marginal at 2000 users on shared IP.                                                                                   |
 | `scan`                | 60/min     | per-IP (fallback only)               | ✅ Authed scans use `scanAccount` (per-account).                                                                          |
 | `scanAccount`         | 30/min     | per-account                          | ✅ Each student scans once per event.                                                                                     |
 | `apiAccount`          | 100/min    | per-account                          | ✅ Auto-applied via `requireAuth`.                                                                                        |
-| `passkeyRegister`     | 10/min     | per-account                          | ✅ New — prevents credential-table pollution.                                                                             |
-| `adminMutation`       | 20/min     | per-account                          | ✅ New — closes admin-driven DoS on account create/delete.                                                                |
-| `whitelistImport`     | 3/min      | per-account                          | ✅ New — closes 500k row-updates/min DoS vector.                                                                          |
-| `whitelistImportFile` | 5/min      | per-account                          | ✅ New — closes CPU-exhaustion via heavy file parsing.                                                                    |
+| `passkeyRegister`     | 10/min     | per-account                          | ✅ New - prevents credential-table pollution.                                                                             |
+| `adminMutation`       | 20/min     | per-account                          | ✅ New - closes admin-driven DoS on account create/delete.                                                                |
+| `whitelistImport`     | 3/min      | per-account                          | ✅ New - closes 500k row-updates/min DoS vector.                                                                          |
+| `whitelistImportFile` | 5/min      | per-account                          | ✅ New - closes CPU-exhaustion via heavy file parsing.                                                                    |
 
-### In-memory vs Upstash
+### In-memory vs Aiven Redis
 
-- In-memory fallback (`Map`) is **per-Vercel-instance** — each instance has its own
+- In-memory fallback (`Map`) is **per-Vercel-instance** - each instance has its own
   buckets. 10 instances = 10× the effective brute-force budget. **Now LRU-capped at
   10,000 keys** to prevent memory exhaustion under IP rotation.
-- **Fail-open on Upstash errors** for general presets (avoids locking all users on
+- **Fail-open on Redis errors** for general presets (avoids locking all users on
   serverless). **Sensitive presets fail closed** (login, register, otp, passkeyVerify,
   passkeyRegister, passkeyAccount, loginAccount, adminMutation, whitelistImport,
-  whitelistImportFile) — an attacker cannot DDoS Upstash to bypass brute-force
+  whitelistImportFile) - an attacker cannot DDoS Redis to bypass brute-force
   protection.
 - **Caddy tier (5/60/100 r/m per-IP)** is the real backstop when Caddy is in the path.
   On pure Vercel without Caddy, none of those backstops exist.
@@ -240,7 +240,7 @@ read-notification cleanup cron, `event_attendance` grows unbounded (no purge pol
 - Saves ~6,000 DB queries/min at 2000 users × 5 API calls/min (60% reduction).
 - **Multi-instance caveat**: with N Vercel instances, cache effectiveness drops ~1/N
   under uniform load balancing.
-- `supabase.auth.getUser()` (network round-trip to Supabase Auth) is NOT cached —
+- `supabase.auth.getUser()` (network round-trip to Supabase Auth) is NOT cached - 
   only the Prisma query is. Could be eliminated by local JWT validation.
 
 ### Ably realtime capacity
@@ -273,7 +273,7 @@ read-notification cleanup cron, `event_attendance` grows unbounded (no purge pol
 
 | Concurrent users | Free tier status                                | First wall                                   | Action needed                                                     |
 | ---------------- | ----------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------- |
-| **100**          | ✅ All green                                    | None                                         | None — app handles this comfortably                               |
+| **100**          | ✅ All green                                    | None                                         | None - app handles this comfortably                               |
 | **500**          | ⚠️ Ably peak msg/s borderline                   | Ably 1,000 msg/s (50 organizers × 30s burst) | Upgrade Ably OR reduce fanout                                     |
 | **1,000**        | ❌ Ably msg/s exceeded; Sentry replays exceeded | Ably + Sentry config                         | Upgrade Ably; lower Sentry replay sample to 0.01                  |
 | **1,300**        | ❌ Vercel bandwidth exceeded                    | Vercel 100GB/mo                              | Upgrade to Vercel Pro ($20/mo)                                    |
@@ -314,28 +314,28 @@ read-notification cleanup cron, `event_attendance` grows unbounded (no purge pol
     self-hosted SSE broadcaster via Caddy (eliminates per-message billing).
 11. **Re-add a CDN/edge cache**: Cloudflare free proxy in front of Vercel, OR restore
     a minimal worker for `s-maxage` GET routes. Extends bandwidth ceiling 3-5×.
-12. **Configure Upstash Redis** for distributed rate limiting (eliminates per-instance
+12. **Configure Aiven Redis (REDIS_URL)** for distributed rate limiting (eliminates per-instance
     leak on Vercel serverless).
 
 ### Database optimizations (before ~2,000 MAU)
 
 13. **Add `pg_trgm` GIN indexes** on `accounts.fullName`, `accounts.email`,
     `events.title`, `audit_logs.action`, `authorized_students.fullName`,
-    `authorized_students.email`, `notifications.body` — turns `LIKE '%q%'` from seq
+    `authorized_students.email`, `notifications.body` - turns `LIKE '%q%'` from seq
     scan to ~O(log N).
 14. **Add purge policy** for `event_attendance` older than 180 days (archive to cold
     storage).
 15. **Add purge policy** for `audit_logs` (keep 90 days, archive rest).
 16. **Add composite `(ownerId, status, scheduledAt)` index** on events.
 17. **Cache JWT validation locally** instead of calling `supabase.auth.getUser()`
-    per request — eliminates one network round-trip per cold-start request.
+    per request - eliminates one network round-trip per cold-start request.
 18. **Migrate to Supabase Pro** ($25/mo) for 8 GB storage + higher pooler ceiling
     before crossing 400 MB or 150 concurrent users.
 
 ### Architectural (before multi-school rollout, 5,000+ MAU)
 
 19. **Consider `connection_limit=2-3`** for higher Prisma concurrency.
-20. **Move account cache to Redis** (Upstash) so all Vercel instances share one cache.
+20. **Move account cache to Redis** (Aiven) so all Vercel instances share one cache.
 21. **Defer audit writes** via `waitUntil` (Vercel) or a queue on hot paths
     (`/api/attendance`, `/api/attendance/override`, `/api/auth/login`).
 22. **Consider partitioning** `event_attendance` by month for very large deployments.
@@ -344,25 +344,25 @@ read-notification cleanup cron, `event_attendance` grows unbounded (no purge pol
 
 ## 9. Scalability Strengths (what's already done well)
 
-- **30s account cache** in `supabase-session.ts` — saves ~60% of DB queries at 2000 users.
-- **10s maintenance cache** in `api.ts` — saves a `Setting.findUnique` per authed request.
-- **`scanAccount` rate limit is per-account, not per-IP** — critical for school WiFi
+- **30s account cache** in `supabase-session.ts` - saves ~60% of DB queries at 2000 users.
+- **10s maintenance cache** in `api.ts` - saves a `Setting.findUnique` per authed request.
+- **`scanAccount` rate limit is per-account, not per-IP** - critical for school WiFi
   where 200+ students share one public IP.
-- **`apiAccount` auto-applied via `requireAuth`** — every authed route inherits a
+- **`apiAccount` auto-applied via `requireAuth`** - every authed route inherits a
   100/min ceiling without per-route boilerplate.
-- **Idempotency + UNIQUE(eventId, accountId)** — scan race conditions handled via
+- **Idempotency + UNIQUE(eventId, accountId)** - scan race conditions handled via
   P2002 catch; prevents double-counting.
-- **Tiered Caddy rate limits** — auth 5r/m, scan 60r/m, general 100r/m.
-- **Service worker** — stale-while-revalidate on app shell reduces Vercel bandwidth
+- **Tiered Caddy rate limits** - auth 5r/m, scan 60r/m, general 100r/m.
+- **Service worker** - stale-while-revalidate on app shell reduces Vercel bandwidth
   ~80% for repeat-visit navigations.
-- **Explicit Cache-Control on all GET routes** — per-user routes use `private, no-cache`
+- **Explicit Cache-Control on all GET routes** - per-user routes use `private, no-cache`
   (correct); public routes use `public, s-maxage` (edge-cacheable).
-- **Ably kept organizers-only** — students don't connect, keeping the app well under
+- **Ably kept organizers-only** - students don't connect, keeping the app well under
   the 200-connection free-tier limit even at 200 concurrent users.
-- **bcrypt cost 12 + Ed25519 device-bound certificates** — security isn't compromised
+- **bcrypt cost 12 + Ed25519 device-bound certificates** - security isn't compromised
   for scaling; the anti-cheating stack is cryptographically sound.
-- **Promise.all discipline** — most routes parallelize independent queries.
-- **`select` discipline** — most routes fetch only needed columns (exceptions noted).
+- **Promise.all discipline** - most routes parallelize independent queries.
+- **`select` discipline** - most routes fetch only needed columns (exceptions noted).
 
 ---
 
@@ -381,11 +381,11 @@ The **first storage wall is Supabase's 500 MB** (~6 weeks at 2000 users, driven 
 The **~~4 code-level bottlenecks~~** (passkey login N-scan, whitelist unbounded load,
 event-attendance unbounded load, cron N+1) ~~are all fixable with moderate effort~~
 have been **fixed** (see below). The passkey login-verify fix was the single
-highest-impact change — it was both a scalability bug and a potential DoS vector
+highest-impact change - it was both a scalability bug and a potential DoS vector
 (one request triggered N crypto operations).
 
 With the recommended fixes + Vercel Pro + Ably Pro + Supabase Pro (~$75/mo total),
-the app can comfortably handle **2,000–3,000 concurrent users** — the documented
+the app can comfortably handle **2,000-3,000 concurrent users** - the documented
 scalability target. Beyond that, horizontal scaling (multiple Next.js instances,
 Redis-backed cache, DB read replicas) would be needed.
 
@@ -404,7 +404,7 @@ All 4 code-level bottlenecks identified in §5 and §8 have been resolved:
 
 **Additional optimizations done since this report:**
 
-- pg_trgm GIN indexes on 7 columns (migration `0011`) — `LIKE '%q%'` is now ~O(log N)
+- pg_trgm GIN indexes on 7 columns (migration `0011`) - `LIKE '%q%'` is now ~O(log N)
 - Composite index `(ownerId, status, scheduledAt)` on events (migration `0011`)
 - `accounts.createdAt` index (migration `0011`)
 - Purge cron for `event_attendance` (>365d) + `audit_logs` (>365d) in `/api/cron/cleanup`
@@ -443,10 +443,10 @@ errors (zero new); `bun run test` 368 tests / 360 pass / 8 pre-existing fail
 
 - cooldownCutoff), all passing.
 
-**Remaining recommendations (not yet done — defer until scale demands):**
+**Remaining recommendations (not yet done - defer until scale demands):**
 
 - Local JWT validation (skip `supabase.auth.getUser()` network call)
-- Move account cache to Redis (needs Upstash configured)
+- Move account cache to Redis (needs REDIS_URL configured)
 - Defer audit writes via `waitUntil` (Vercel-specific)
 - Ably presence + delta compression (premature under 50 organizers/event)
-- `event_attendance` purge policy decision (product owner) — 500 MB Supabase Free exhausted in ~6 weeks at 2,000 users
+- `event_attendance` purge policy decision (product owner) - 500 MB Supabase Free exhausted in ~6 weeks at 2,000 users

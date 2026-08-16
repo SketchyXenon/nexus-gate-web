@@ -1,4 +1,4 @@
-# Nexus Gate — Architecture & Security Reference
+# Nexus Gate - Architecture & Security Reference
 
 ## System Architecture
 
@@ -12,7 +12,7 @@
 │  ┌─────┴──────────────┴──────────────┴───────────────┴─────┐ │
 │  │              API Client (React Query)                    │ │
 │  │  + IndexedDB (Ed25519 device key)                        │ │
-│  │  + localStorage (offline scan queue)                     │ │
+│  │  + localStorage (offline scan queue + SWR GET cache)     │ │
 │  │  + Session timeout (30 min inactivity)                   │ │
 │  └───────────────────────┬──────────────────────────────────┘ │
 └──────────────────────────┼────────────────────────────────────┘
@@ -21,37 +21,38 @@
 ┌─────────────────────────────────────────────────────────────┐
 │              VERCEL (Next.js 16, App Router)                  │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │  API Routes (43 routes)                               │   │
-│  │  /api/auth/*        — login, register, magic-link,    │   │
+│  │  API Routes (54 routes)                               │   │
+│  │  /api/auth/*       - login, register, magic-link,    │   │
 │  │                        passkey, refresh, callback       │   │
-│  │  /api/events/*      — CRUD + eligibility + delegation │   │
-│  │  /api/attendance    — QR scan (certificate verified)  │   │
-│  │  /api/profile/*     — profile, password, device keys  │   │
-│  │  /api/accounts/*    — admin account management        │   │
-│  │  /api/whitelist/*   — student roster + file import    │   │
-│  │  /api/dashboard     — role-aware dashboard data       │   │
-│  │  /api/notifications — push notifications              │   │
-│  │  /api/cron/*        — cron (reminders, cleanup)       │   │
+│  │  /api/events/*     - CRUD + eligibility + delegation │   │
+│  │  /api/attendance   - QR scan (certificate verified)  │   │
+│  │  /api/profile/*    - profile, password, device keys  │   │
+│  │  /api/accounts/*   - admin account management        │   │
+│  │  /api/whitelist/*  - student roster + file import    │   │
+│  │  /api/dashboard    - role-aware dashboard data       │   │
+│  │  /api/analytics    - visit analytics (admin read)   │   │
+│  │  /api/notifications - push notifications              │   │
+│  │  /api/cron/*       - cron (reminders, cleanup)       │   │
 │  └────────────────────────┬─────────────────────────────┘   │
 │  ┌────────────────────────┴─────────────────────────────┐   │
 │  │  Middleware (proxy.ts)                                │   │
-│  │  - CSRF Origin/Referer check (mutations only)         │   │
-│  │  - CSP (connect-src: self + Ably)                     │   │
-│  │  - X-Frame-Options / HSTS / nosniff                   │   │
-│  │  - Cron routes exempt from CSRF                       │   │
+│  │ - CSRF Origin/Referer check (mutations only)         │   │
+│  │ - CSP (connect-src: self + Ably)                     │   │
+│  │ - X-Frame-Options / HSTS / nosniff                   │   │
+│  │ - Cron routes exempt from CSRF                       │   │
 │  └────────────────────────┬─────────────────────────────┘   │
 │  ┌────────────────────────┴─────────────────────────────┐   │
 │  │  Security Layer                                       │   │
-│  │  - requireAuth() — session + role + status + rate     │   │
-│  │  - Account cache (30s TTL) — eliminates DB lookup     │   │
-│  │  - Brute-force lockout (5 attempts → 15 min lock)     │   │
+│  │ - requireAuth() - session + role + status + rate     │   │
+│  │ - Account cache (30s TTL) - eliminates DB lookup     │   │
+│  │ - Brute-force lockout (5 attempts → 15 min lock)     │   │
 │  │    atomic compare-and-set on lockedUntil (TOCTOU-safe)│   │
-│  │  - Enumeration-safe login (single generic 401)        │   │
-│  │  - Zod validation on every input                      │   │
-│  │  - Timing-safe HMAC comparison                        │   │
-│  │  - Password strength scorer (server-side)             │   │
-│  │  - 30-day profile + password cooldowns (compare-and-set)│   │
-│  │  - Ably token route enforces event visibility (BOLA)  │   │
+│  │ - Enumeration-safe login (single generic 401)        │   │
+│  │ - Zod validation on every input                      │   │
+│  │ - Timing-safe HMAC comparison                        │   │
+│  │ - Password strength scorer (server-side)             │   │
+│  │ - 30-day profile + password cooldowns (compare-and-set)│   │
+│  │ - Ably token route enforces event visibility (BOLA)  │   │
 │  └────────────────────────┬─────────────────────────────┘   │
 └───────────────────────────┼──────────────────────────────────┘
                             │
@@ -59,7 +60,7 @@
               ▼               ▼               ▼
 ┌──────────────────┐ ┌────────────────┐ ┌──────────────────┐
 │   Prisma + DB    │ │  Rate Limiter  │ │  Audit Logger    │
-│  (SQLite / PG)   │ │ (Memory/Upstash)│ │  (DB-backed)     │
+│  (SQLite / PG)   │ │ (Memory/Redis)  │ │  (DB-backed)     │
 │                  │ │                │ │                  │
 │  11 models:      │ │ Per-IP:        │ │ Every mutation   │
 │  Account         │ │ login (5/min)  │ │ logged with      │
@@ -74,18 +75,18 @@
 
 ┌─────────────────────────────────────────────────────────────┐
 │                     ABLY (Realtime)                           │
-│  - Managed realtime (no server to maintain)                   │
-│  - Free tier: 3M messages/month, 200 connections              │
-│  - Only organizers connect (~10-20 concurrent)                │
-│  - Server publishes via REST API (ABLY_SERVER_KEY)            │
-│  - Browser subscribes via token auth (/api/ably/token)        │
-│  - Falls back to 15s polling if Ably is not configured        │
+│ - Managed realtime (no server to maintain)                   │
+│ - Free tier: 3M messages/month, 200 connections              │
+│ - Only organizers connect (~10-20 concurrent)                │
+│ - Server publishes via REST API (ABLY_SERVER_KEY)            │
+│ - Browser subscribes via token auth (/api/ably/token)        │
+│ - Falls back to 15s polling if Ably is not configured        │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
 │         CLOUDFLARE TURNSTILE (Optional, Free)                │
-│  - Bot protection (CAPTCHA alternative, invisible to users)  │
-│  - No edge caching (no Cloudflare Worker in this codebase)   │
+│ - Bot protection (CAPTCHA alternative, invisible to users)  │
+│ - No edge caching (no Cloudflare Worker in this codebase)   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -104,7 +105,7 @@
 - A single photo captures only 1 sub-frame → rejected (insufficient frames)
 
 ### One-Attempt Policy
-- `@@unique([eventId, accountId])` on `EventAttendance` — atomic at the DB level
+- `@@unique([eventId, accountId])` on `EventAttendance` - atomic at the DB level
 - Early "already scanned" check before any crypto work
 - Race conditions fall back to P2002 unique constraint catch
 
@@ -121,7 +122,7 @@
 ### 2. Authorization (RBAC)
 - Three roles: `ADMIN`, `ORGANIZER`, `USER`
 - `requireAuth(minimumRole)` on every API route
-- Account status re-checked from DB (cached 30s) — suspended = instant lockout
+- Account status re-checked from DB (cached 30s) - suspended = instant lockout
 - Cache invalidated on role/status change
 - Maintenance mode blocks non-admins
 - Admin-only overrides (organizers cannot create manual attendance entries)
@@ -143,26 +144,31 @@
 ### 5. Rate Limiting
 - Per-IP for unauthenticated endpoints (login, register, forgot-password)
 - Per-account for authenticated endpoints (100/min default)
-- Scan endpoint: 30/min per account (not IP — correct for shared WiFi)
-- **Admin mutations** (account create/delete): 20/min per admin — prevents admin-driven DoS
+- Scan endpoint: 30/min per account (not IP - correct for shared WiFi)
+- **Admin mutations** (account create/delete): 20/min per admin - prevents admin-driven DoS
 - **Whitelist import** (JSON, up to 5000 rows): 3/min per organizer
 - **Whitelist file upload** (Excel/PDF/DOCX, up to 10MB): 5/min per organizer
 - **Passkey registration** (options + verify): 10/min per account
-- **Sensitive presets fail closed** on Upstash error (login, register, otp, passkeyVerify, passkeyRegister, passkeyAccount, loginAccount, adminMutation, whitelistImport, whitelistImportFile) — an attacker cannot DDoS the limiter to bypass brute-force protection
+- **Sensitive presets fail closed** on Redis error (login, register, otp, passkeyVerify, passkeyRegister, passkeyAccount, loginAccount, adminMutation, whitelistImport, whitelistImportFile) - an attacker cannot DDoS the limiter to bypass brute-force protection
 - In-memory fallback Map is **LRU-capped at 10,000 keys** to prevent memory exhaustion under IP rotation
 
 ### 6. Cryptography
 - HMAC-SHA256 for QR token signing
 - Ed25519 for scan certificate signatures (Web Crypto API on client, Node crypto on server)
 - bcrypt (cost 12) for password hashing
-- Timing-safe comparisons for all HMAC verifications
+- Timing-safe comparisons for all HMAC verifications (input-validated, never throws on malformed hex)
 - Device key fingerprint recomputed server-side (client can't fake it)
+- Passkey registration + login enforce `userVerification: "required"` end-to-end (possession + biometric factor); assertions without UV are rejected
+- Passkey credential reuse is rejected across accounts (globally-unique credential ID checked before overwrite)
+- Visit analytics uses HMAC-SHA256(secret, public_ip) with a daily-rotating secret - the raw IP is NEVER stored; the token is non-reversible and can't be correlated across days
 
 ### 7. Database Security
-- Row-Level Security (RLS) on all 11 tables (Supabase)
+- Row-Level Security (RLS) on all 13 tables (Supabase) - every table has explicit policies
+- Server-only tables (`terms_acceptances`, `visits`) have explicit deny-all RLS policies (`USING (false) WITH CHECK (false)`) for anon/authenticated - migration `0020`. Defense-in-depth: the service role bypasses RLS, but if that key leaks, anon/auth roles still get nothing
 - Guard trigger on `accounts` prevents self-escalation via REST API
 - Service role bypasses RLS (used by the Next.js backend)
 - CHECK constraints on all enum-like columns
+- `visits` table stores only the daily-hashed visitor token (no raw IP, no account binding) - migration `0019_visit_analytics.sql`
 
 ### 8. HTTP Security Headers
 - Content-Security-Policy (no `unsafe-eval`, `connect-src: self + *.ably.io + *.ably.net`)
@@ -179,8 +185,8 @@
 - Realtime password validation checklist on registration + password reset forms
 
 ### 10. File Upload Security
-- exceljs (replaces xlsx — prototype pollution CVE)
-- pdfjs-dist (replaces pdf-parse — DOMMatrix dependency)
+- exceljs (replaces xlsx - prototype pollution CVE)
+- pdfjs-dist (replaces pdf-parse - DOMMatrix dependency)
 - File size limit (10MB via Caddyfile)
 - Strict file type validation (xlsx, xls, pdf, docx, csv only)
 
@@ -189,7 +195,7 @@
 ### Ably (Managed Realtime)
 - Server publishes attendance events via Ably REST API (`ABLY_SERVER_KEY`)
 - Browser subscribes via Ably SDK with token authentication (`/api/ably/token` endpoint signs TokenRequests server-side using the SDK's `createTokenRequest`)
-- **Event visibility is enforced on the token route** — the same rule as `GET /api/events` (open-to-all OR exact program+section for students; program-wide or owner for organizers; admin bypass). A student cannot subscribe to another section's realtime channel. This closes a BOLA/API#1 vector that would have exposed other students' full name, student ID, program, and section.
+- **Event visibility is enforced on the token route** - the same rule as `GET /api/events` (open-to-all OR exact program+section for students; program-wide or owner for organizers; admin bypass). A student cannot subscribe to another section's realtime channel. This closes a BOLA/API#1 vector that would have exposed other students' full name, student ID, program, and section.
 - Only organizers connect (students don't need realtime)
 - Falls back to 15s polling if Ably is not configured
 - CSP allows `*.ably.io` (REST) and `*.ably.net` (WebSocket)
@@ -197,9 +203,11 @@
 ## Performance Optimizations
 
 ### Caching
-- Account cache (30s TTL) — eliminates 1 DB query per request
+- Account cache (30s TTL) - eliminates 1 DB query per request
 - Maintenance mode cache (10s TTL) with stampede guard
 - Browser caching via `Cache-Control: stale-while-revalidate` on all GET routes
+- **Client SWR cache** (`src/lib/api-cache.ts`) - stale-while-revalidate for GET endpoints: serves cached data instantly (from memory + localStorage), background-revalidates when stale (60s TTL). Offline-first: when `navigator.onLine` is false, the cache is the source of truth. `invalidatePrefix()` is called on mutations so stale data is never served after a write
+- **Offline scan queue** (`use-scan-queue.ts`) - signed scan certificates written to localStorage in <1ms; drained with exponential backoff + jitter when connectivity returns. Stuck "syncing" items are recovered on next load
 
 ### Polling
 - Notifications: 60s interval (was 30s)
@@ -211,8 +219,8 @@
 - Parallel queries via `Promise.all` on dashboard and events routes
 - 40 indexes covering all major query patterns
 - PgBouncer connection pooling (Supabase)
-- **Profile stats collapsed from 3 queries to 1** (`/api/profile/stats`) — the My-Attendance chart, scope breakdown, and streak are derived from a single `findMany` with JS bucketing, saving 2 DB round-trips per page load
-- **TOCTOU-safe cooldown enforcement** — profile and password cooldowns use conditional `updateMany` (where `lastChangedAt` null OR lt cutoff) so concurrent requests cannot both pass the read-only check
+- **Profile stats collapsed from 3 queries to 1** (`/api/profile/stats`) - the My-Attendance chart, scope breakdown, and streak are derived from a single `findMany` with JS bucketing, saving 2 DB round-trips per page load
+- **TOCTOU-safe cooldown enforcement** - profile and password cooldowns use conditional `updateMany` (where `lastChangedAt` null OR lt cutoff) so concurrent requests cannot both pass the read-only check
 - **Stable P2002 detection** via `isUniqueConstraintError(e)` (Prisma error code, not string match) on scan, override, and register routes
 
 ## Testing
@@ -236,17 +244,17 @@ bun run test
 ## Database Schema
 
 ### Models
-1. **Account** — users (admin, organizer, student)
-2. **AuthorizedStudent** — pre-approved student whitelist
-3. **VerificationToken** — verification tokens
-4. **RefreshToken** — rotating session tokens (legacy)
-5. **Event** — attendance events with program/section targeting + time-out windows
-6. **EventAttendance** — check-in records with certificate fields
-7. **AttendanceOverride** — manual check-ins (admin-only, idempotent)
-8. **Notification** — user notifications
-9. **AuditLog** — immutable audit trail
-10. **DeviceKey** — Ed25519 public keys per device
-11. **Setting** — key-value settings (maintenance mode, etc.)
+1. **Account** - users (admin, organizer, student)
+2. **AuthorizedStudent** - pre-approved student whitelist
+3. **VerificationToken** - verification tokens
+4. **RefreshToken** - rotating session tokens (legacy)
+5. **Event** - attendance events with program/section targeting + time-out windows
+6. **EventAttendance** - check-in records with certificate fields
+7. **AttendanceOverride** - manual check-ins (admin-only, idempotent)
+8. **Notification** - user notifications
+9. **AuditLog** - immutable audit trail
+10. **DeviceKey** - Ed25519 public keys per device
+11. **Setting** - key-value settings (maintenance mode, etc.)
 
 ### Key Indexes
 - `events`: `[status, scheduledAt]`, `[targetProgram, targetSection, status]`
@@ -262,6 +270,6 @@ bun run test
 | Vercel | Hobby | Next.js hosting + API | 100GB bandwidth/mo |
 | Supabase | Free | PostgreSQL + Auth | 500MB DB, 50k MAU |
 | Ably | Free | Realtime attendance | 3M messages/mo, 200 conn |
-| Cloudflare Turnstile | Free | Optional bot protection (CAPTCHA alternative) | — |
+| Cloudflare Turnstile | Free | Optional bot protection (CAPTCHA alternative) | - |
 
-**Scalability:** ~500 sustained concurrent scanning users / ~1,300 peak burst / ~1,300 MAU on free tiers. The first hard wall is Ably's 1,000 msg/s peak (degrades gracefully — attendance recording continues). See [CAPACITY-ASSESSMENT.md](./CAPACITY-ASSESSMENT.md) for the full analysis.
+**Scalability:** ~500 sustained concurrent scanning users / ~1,300 peak burst / ~1,300 MAU on free tiers. The first hard wall is Ably's 1,000 msg/s peak (degrades gracefully - attendance recording continues). See [CAPACITY-ASSESSMENT.md](./CAPACITY-ASSESSMENT.md) for the full analysis.

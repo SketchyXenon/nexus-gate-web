@@ -3,17 +3,19 @@
 //
 // Two-tier cache for account lookups:
 //   1. In-memory (0ms, per-instance, 30s TTL)
-//   2. Upstash Redis (1-2ms, shared across all Vercel instances, 30s TTL)
+//   2. Aiven Redis (1-2ms, shared across all Vercel instances, 30s TTL)
 //
 // Read path: check in-memory, then Redis, then DB (caller's responsibility).
 // Write path: write to both in-memory and Redis.
 // Invalidation: delete from both.
 //
-// Graceful degradation: if Upstash isn't configured, uses in-memory only.
+// Graceful degradation: if REDIS_URL isn't configured, uses in-memory only.
+// Uses the shared ioredis singleton from @/lib/redis (pooled, serverless-safe).
 // ====================================================================
 
 import "server-only";
 import type { ApiAccount } from "@/lib/api";
+import { redis, isRedisAvailable } from "@/lib/redis";
 
 // ---- In-memory layer (per-instance) ----
 const MEM_TTL_MS = 30_000;
@@ -40,24 +42,6 @@ function memEvict(): void {
 const REDIS_PREFIX = "ng:acct:";
 const REDIS_TTL_S = 30;
 
-let redisClient: import("@upstash/redis").Redis | null = null;
-let redisChecked = false;
-
-async function getRedis() {
-  if (redisChecked) return redisClient;
-  redisChecked = true;
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-  try {
-    const { Redis } = await import("@upstash/redis");
-    redisClient = new Redis({ url, token });
-    return redisClient;
-  } catch {
-    return null;
-  }
-}
-
 // ---- Public API ----
 
 // Get a cached account. Returns undefined if not in cache (caller queries DB).
@@ -72,23 +56,23 @@ export async function getAccountCache(
   }
 
   // Layer 2: Redis (shared across instances).
-  const redis = await getRedis();
-  if (redis) {
-    try {
-      const raw = await redis.get<string>(`${REDIS_PREFIX}${authUid}`);
-      if (raw !== null) {
-        const account = raw === "null" ? null : (JSON.parse(raw) as ApiAccount);
-        // Populate in-memory for subsequent requests.
-        memEvict();
-        memCache.set(authUid, {
-          account,
-          expiresAt: Date.now() + MEM_TTL_MS,
-        });
-        return account;
-      }
-    } catch {
-      // Redis error - fall through to undefined (cache miss).
+  if (!isRedisAvailable() || !redis) {
+    return undefined;
+  }
+  try {
+    const raw = await redis.get(`${REDIS_PREFIX}${authUid}`);
+    if (raw !== null) {
+      const account = raw === "null" ? null : (JSON.parse(raw) as ApiAccount);
+      // Populate in-memory for subsequent requests.
+      memEvict();
+      memCache.set(authUid, {
+        account,
+        expiresAt: Date.now() + MEM_TTL_MS,
+      });
+      return account;
     }
+  } catch {
+    // Redis error - fall through to undefined (cache miss).
   }
 
   return undefined;
@@ -103,8 +87,7 @@ export async function setAccountCache(
   if (ttlMs <= 0) {
     // Invalidation.
     memCache.delete(authUid);
-    const redis = await getRedis();
-    if (redis) {
+    if (isRedisAvailable() && redis) {
       await redis.del(`${REDIS_PREFIX}${authUid}`).catch(() => {});
     }
     return;
@@ -118,12 +101,12 @@ export async function setAccountCache(
   });
 
   // Write to Redis (shared across instances).
-  const redis = await getRedis();
-  if (redis) {
+  if (isRedisAvailable() && redis) {
     try {
       // Store null as the string "null" (negative cache), objects as JSON.
       const value = account === null ? "null" : JSON.stringify(account);
-      await redis.set(`${REDIS_PREFIX}${authUid}`, value, { ex: REDIS_TTL_S });
+      // EX = seconds TTL (matches REDIS_TTL_S). ioredis supports the EX option.
+      await redis.set(`${REDIS_PREFIX}${authUid}`, value, "EX", REDIS_TTL_S);
     } catch {
       // Non-critical - in-memory cache still works.
     }

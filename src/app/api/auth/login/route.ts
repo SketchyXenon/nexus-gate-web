@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Per-account checkpoint (only for existing accounts — non-existent emails
+    // Per-account checkpoint (only for existing accounts - non-existent emails
     // are covered by the per-email limit above, so this doesn't leak existence).
     if (preCheck) {
       const acctRl = await checkRateLimitByKey(preCheck.id, "loginAccount");
@@ -131,7 +131,7 @@ export async function POST(req: NextRequest) {
       // ---- Atomic increment + compare-and-set lock ----
       // The increment is atomic. The lock-set is a SEPARATE conditional
       // update (where: { lockedUntil: null }) so two concurrent failures
-      // can't both set the lock — the first wins, the second's condition
+      // can't both set the lock - the first wins, the second's condition
       // fails (0 rows). This closes the TOCTOU window where two concurrent
       // requests could both read count=4, both increment to 5, and both
       // skip the lock-set because neither had seen the other's increment.
@@ -178,7 +178,7 @@ export async function POST(req: NextRequest) {
       // email, deactivated) returns this identical response. Per
       // 06-security-architecture.md section 2, this prevents user enumeration.
       // The "email not confirmed" case is intentionally NOT surfaced as a
-      // distinct response — it would reveal the email exists and is unconfirmed.
+      // distinct response - it would reveal the email exists and is unconfirmed.
       return loginFailed();
     }
     const authUid = authData.user.id;
@@ -193,7 +193,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Reject deactivated accounts (defense-in-depth). Return the SAME generic
-    // failure as a wrong password — a distinct 403 would reveal the account
+    // failure as a wrong password - a distinct 403 would reveal the account
     // exists and is deactivated (an enumeration oracle). The legitimate user
     // who is deactivated will see "incorrect email or password" and should
     // contact an administrator, who can explain the deactivation.
@@ -202,8 +202,20 @@ export async function POST(req: NextRequest) {
       return loginFailed();
     }
 
-    // Activate PENDING_VERIFICATION accounts on first successful login.
+    // Activate PENDING_VERIFICATION accounts ONLY when Supabase confirms
+    // the email (email_confirmed_at set). Without this guard, a deployment
+    // with Supabase "Confirm email" OFF would let a user who knows the
+    // registration password activate without ever verifying email - an
+    // email-verification bypass. The signup-confirmation callback is the
+    // primary activation point; this is a sync fallback for the edge case
+    // where Supabase confirmed but our DB wasn't updated.
     if (account.status === "PENDING_VERIFICATION") {
+      if (!authData.user.email_confirmed_at) {
+        // Email not confirmed by Supabase. Do not activate. Sign out and
+        // return the generic failure (enumeration-safe).
+        await supabase.auth.signOut();
+        return loginFailed();
+      }
       // Safe update: sets emailVerifiedAt only if the column exists.
       try {
         await db.account.update({

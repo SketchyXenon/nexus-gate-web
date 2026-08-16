@@ -55,12 +55,28 @@ async function main() {
     // TiDB Serverless REQUIRES TLS. With the wrong param name, Prisma silently
     // skips TLS and TiDB rejects with "Connections using insecure transport
     // are prohibited". See https://docs.pingcap.com/tidbcloud/secure-connections-to-serverless-clusters
-    const url = `mysql://${encUser}:${encPass}@${host}:4000/${db}?sslaccept=strict`;
+    //
+    // CONNECTION POOLING (300-concurrent target):
+    //   connection_limit=5  - Prisma opens at most 5 connections per Vercel
+    //     serverless instance. With ~60-100 warm instances that is 300-500
+    //     total connections, comfortably under TiDB Serverless's 1000-conn
+    //     hard cap while leaving headroom for migrations/admin. The Prisma
+    //     default (num_cpus*2+1 = 3-5 on 1-2 vCPU) is already close, but
+    //     pinning it explicitly prevents a future instance-type change from
+    //     silently raising the per-instance ceiling and exhausting the cluster.
+    //   pool_timeout=10    - acquire() fails fast (10s) instead of hanging up
+    //     to the function's maxDuration (30s). A stuck acquire returns a
+    //     503-class error the client can retry, instead of a cold timeout.
+    const url = `mysql://${encUser}:${encPass}@${host}:4000/${db}?sslaccept=strict&connection_limit=5&pool_timeout=10`;
 
     console.log("\n--- Your encoded TIDB_DATABASE_URL ---");
     console.log(url);
     console.log("\nPaste this into your .env file as TIDB_DATABASE_URL.");
     console.log("Verify it works: bun run db:push:tidb");
+    console.log("\nPool config: connection_limit=5, pool_timeout=10");
+    console.log(
+      "  ~60-100 warm Vercel instances x 5 = 300-500 conns (under TiDB's 1000).",
+    );
   } finally {
     rl.close();
   }

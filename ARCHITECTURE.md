@@ -1,4 +1,4 @@
-# Nexus Gate — System Architecture Documentation
+# Nexus Gate - System Architecture Documentation
 
 > **Version**: 0.2.0 | **Last updated**: 2026-07-10 | **Author**: SketchyXenon
 > **Stack**: Next.js 16.1.1 · React 19 · TypeScript 5 · Prisma 6 · Supabase · Ably · Tailwind CSS 4
@@ -36,16 +36,16 @@
 
 A multi-layer anti-cheating stack that defeats screenshot, photo-replay, and offline-replay attacks without requiring specialized hardware:
 
-- **Two-tier rotating QR** — 15-second time blocks with 500ms sub-frames, each HMAC-signed
-- **Multi-frame liveness** — scanner must capture 3+ consecutive sub-frames (defeats single-photo capture)
-- **Ed25519 device-bound certificates** — each scan is cryptographically signed by the device's private key (stored in IndexedDB), verified server-side
-- **Offline-first sync queue** — signed certificates persist in localStorage, sync with exponential backoff
+- **Two-tier rotating QR** - 15-second time blocks with 500ms sub-frames, each HMAC-signed
+- **Multi-frame liveness** - scanner must capture 3+ consecutive sub-frames (defeats single-photo capture)
+- **Ed25519 device-bound certificates** - each scan is cryptographically signed by the device's private key (stored in IndexedDB), verified server-side
+- **Offline-first sync queue** - signed certificates persist in localStorage, sync with exponential backoff
 
 ### Target scale
 
-- **150–200 concurrent users** (sustained)
-- **3,000–3,500 total users** (departmental-wide)
-- **$0–75/month** infrastructure cost (free tiers → Pro plans)
+- **150-200 concurrent users** (sustained)
+- **3,000-3,500 total users** (departmental-wide)
+- **$0-75/month** infrastructure cost (free tiers → Pro plans)
 
 ---
 
@@ -75,24 +75,24 @@ A multi-layer anti-cheating stack that defeats screenshot, photo-replay, and off
 | `@simplewebauthn/server`  | 13.3.2  | Passkey/WebAuthn registration + verification  |
 | `@simplewebauthn/browser` | 13.3.0  | Client-side WebAuthn API                      |
 | bcryptjs                  | 3.0.3   | Password hashing (cost 12)                    |
-| Web Crypto API            | —       | Ed25519 keypair generation + signing (client) |
-| Node.js crypto            | —       | Ed25519 signature verification (server)       |
+| Web Crypto API            | -      | Ed25519 keypair generation + signing (client) |
+| Node.js crypto            | -      | Ed25519 signature verification (server)       |
 
 ### Realtime & infrastructure
 
 | Technology                              | Version        | Purpose                                                                |
 | --------------------------------------- | -------------- | ---------------------------------------------------------------------- |
 | Ably                                    | 2.23.0         | Managed realtime (REST publish server-side, SDK subscribe client-side) |
-| `@upstash/ratelimit` + `@upstash/redis` | 2.0.8 / 1.38.0 | Distributed rate limiting (fails open to in-memory on error)           |
+| `ioredis`                                | 6.0.0          | Distributed rate limiting + account cache (atomic Lua sliding window; fails open to in-memory on error) |
 | `@sentry/nextjs`                        | 10.62.0        | Error monitoring (3 configs: client/server/edge)                       |
-| Caddy                                   | —              | Reverse proxy (tiered rate limits, compression, health checks)         |
+| Caddy                                   | -             | Reverse proxy (tiered rate limits, compression, health checks)         |
 
 ### Frontend
 
 | Technology            | Version      | Purpose                                               |
 | --------------------- | ------------ | ----------------------------------------------------- |
 | Tailwind CSS          | 4            | Styling (CSS-based config via `@tailwindcss/postcss`) |
-| shadcn/ui             | —            | Component library (new-york style, ~55 primitives)    |
+| shadcn/ui             | -           | Component library (new-york style, ~55 primitives)    |
 | TanStack Query        | 5.82.0       | Server state (auto-refresh on 401, polling fallback)  |
 | TanStack Table        | 8.21.3       | Data tables                                           |
 | react-hook-form + Zod | 7.60 / 4.0.2 | Forms + validation (shared schemas client/server)     |
@@ -141,7 +141,7 @@ A multi-layer anti-cheating stack that defeats screenshot, photo-replay, and off
 │                    GATEWAY (Caddy :80/:81)                       │
 │  Tiered rate limits: scan 60r/m, general API 100r/m             │
 │  zstd/gzip compression, health checks, keepalive (100 conns)    │
-│  (No per-IP auth limit — NAT'd campus safety)                   │
+│  (No per-IP auth limit - NAT'd campus safety)                   │
 └─────────────────────────┬───────────────────────────────────────┘
                           │ reverse_proxy localhost:3000
                           ▼
@@ -216,7 +216,7 @@ A multi-layer anti-cheating stack that defeats screenshot, photo-replay, and off
 - `audit_logs`: `(actor_id, created_at)`, `(action, created_at)`, `(target_type, target_id, created_at)`
 - `device_keys`: `UNIQUE(fingerprint)`, `(account_id, revoked_at)`
 
-**pg_trgm GIN indexes** (migration 0011) on `accounts.full_name`, `accounts.email`, `events.title`, `authorized_students.full_name`, `authorized_students.email`, `audit_logs.action`, `notifications.body` — turns `LIKE '%query%'` from O(N) seq scan to O(log N).
+**pg_trgm GIN indexes** (migration 0011) on `accounts.full_name`, `accounts.email`, `events.title`, `authorized_students.full_name`, `authorized_students.email`, `audit_logs.action`, `notifications.body` - turns `LIKE '%query%'` from O(N) seq scan to O(log N).
 
 ### 4.3 Row-Level Security (RLS)
 
@@ -263,9 +263,9 @@ Anonymous role: **DENIED** on every table.
 
 ### 5.2 Three sign-in methods
 
-1. **Password** — Supabase `signInWithPassword` + app-layer brute-force lockout (5 fails → 15-min `lockedUntil`). The lock is set via an atomic compare-and-set update (`where: { lockedUntil: null }`) so two concurrent failures cannot both skip the lock-set. Login is **enumeration-safe**: wrong-password, non-existent email, unconfirmed email, and deactivated account all return an identical generic 401. A dummy `bcrypt.compare` runs on the not-found path to equalize timing.
-2. **Passkey / WebAuthn** — `@simplewebauthn/server` discoverable credentials. Login extracts credential ID from assertion, does **O(log N) indexed lookup** via `passkey_credential_id` column (was O(N) scan + N crypto ops — fixed). Session established via `admin.generateLink` → `verifyOtp` (magiclink). Registration (options + verify) is rate-limited at 10/min per account.
-3. **Magic link** — Supabase `signInWithOtp` (enumeration-safe responses)
+1. **Password** - Supabase `signInWithPassword` + app-layer brute-force lockout (5 fails → 15-min `lockedUntil`). The lock is set via an atomic compare-and-set update (`where: { lockedUntil: null }`) so two concurrent failures cannot both skip the lock-set. Login is **enumeration-safe**: wrong-password, non-existent email, unconfirmed email, and deactivated account all return an identical generic 401. A dummy `bcrypt.compare` runs on the not-found path to equalize timing.
+2. **Passkey / WebAuthn** - `@simplewebauthn/server` discoverable credentials. Login extracts credential ID from assertion, does **O(log N) indexed lookup** via `passkey_credential_id` column (was O(N) scan + N crypto ops - fixed). Session established via `admin.generateLink` → `verifyOtp` (magiclink). Registration (options + verify) is rate-limited at 10/min per account.
+3. **Magic link** - Supabase `signInWithOtp` (enumeration-safe responses)
 
 ### 5.3 RBAC
 
@@ -278,7 +278,7 @@ USER (1) < ORGANIZER (2) < ADMIN (3)
 | Capability                 | USER | ORGANIZER               | ADMIN      |
 | -------------------------- | ---- | ----------------------- | ---------- |
 | Scan QR to check in        | ✓    | ✗                       | ✗          |
-| View own attendance        | ✓    | —                       | —          |
+| View own attendance        | ✓    | -                      | -         |
 | Create/edit events         | ✗    | ✓ (own program/section) | ✓ (any)    |
 | View event attendance      | ✗    | ✓ (own + visible)       | ✓ (all)    |
 | Manual attendance override | ✗    | ✓                       | ✓          |
@@ -293,16 +293,16 @@ USER (1) < ORGANIZER (2) < ADMIN (3)
 ### 5.4 Password security
 
 - **bcrypt cost 12** via `hashPassword()` / `verifyPassword()`
-- **Server-side strength scorer** (`scorePassword()`) shared between client meter and server Zod schema — cannot be bypassed client-side
+- **Server-side strength scorer** (`scorePassword()`) shared between client meter and server Zod schema - cannot be bypassed client-side
 - **Minimum score 4/6**: length ≥ 8 + uppercase + lowercase + digit + (length ≥ 12 OR special char)
 - **Penalties**: common patterns (password, 123456, qwerty, etc.), 3+ sequential chars (abcd, 1234), 4+ repeated chars (aaaa)
 - **30-day cooldown** on password changes + profile updates, enforced via a TOCTOU-safe conditional `updateMany` (where `lastChangedAt` is null or older than the cutoff) so concurrent requests cannot both pass the read-only check and halve the cooldown
-- **RECOVERY-only AMR check** on reset-password — rejects `otp`/`magiclink` sessions to prevent stolen-session password takeover
+- **RECOVERY-only AMR check** on reset-password - rejects `otp`/`magiclink` sessions to prevent stolen-session password takeover
 
 ### 5.5 Session management
 
 - Supabase access tokens (15 min) + refresh tokens (7 days, rotating, HMAC-SHA256 hashed)
-- **30-second in-memory account cache** (`supabase-session.ts`) — saves ~60% of DB queries at 2000 users
+- **30-second in-memory account cache** (`supabase-session.ts`) - saves ~60% of DB queries at 2000 users
 - **30-min session timeout** with 25-min warning toast (`useSessionTimeout` hook)
 - `invalidateAccountCache(supabaseAuthUid)` called on role/status changes
 
@@ -344,8 +344,8 @@ The headline feature. A 10-step server-side verification pipeline on `POST /api/
 
 ### 7.1 Two-tier rotating QR
 
-- **Tier 1**: 15-second time blocks — `eventId.timeBlock.blockHmac`
-- **Tier 2**: 500ms sub-frames, 30 per block — appends `.subFrame.subHmac`
+- **Tier 1**: 15-second time blocks - `eventId.timeBlock.blockHmac`
+- **Tier 2**: 500ms sub-frames, 30 per block - appends `.subFrame.subHmac`
 - v8 (4-part) format with legacy v5 (3-part) fallback
 - QR refreshed every 500ms in the projector view via Web Crypto HMAC
 
@@ -372,7 +372,7 @@ Scanner captures **≥3 consecutive sub-frames**. Boundary-aware: sub-frame 29 o
 3. Ed25519 `verifySignedCertificate` (DB lookup by fingerprint + signature verify)
 4. `validateCertificateTimestamp` (60s forward / 120s grace with warning / 15min backward)
 5. Fetch event (must be `active`)
-6. `validateQrPayload` — HMAC recomputed against **`scannedAt`** (not server time — enables offline-first)
+6. `validateQrPayload` - HMAC recomputed against **`scannedAt`** (not server time - enables offline-first)
 7. `validateCertificateEventMatch`
 8. `verifySubFrameLiveness` (≥3 consecutive sub-frames, boundary-aware)
 9. Strict eligibility (open-to-all OR exact `program`+`section` match)
@@ -380,7 +380,7 @@ Scanner captures **≥3 consecutive sub-frames**. Boundary-aware: sub-frame 29 o
 
 ### 7.5 Idempotency
 
-`deriveIdempotencyKey = HMAC-SHA256(deviceFingerprint, eventId:nonce)` — deterministic. Re-draining a queued scan after partial success returns `{alreadyPresent: true}` instead of creating a duplicate. 1-hour TTL.
+`deriveIdempotencyKey = HMAC-SHA256(deviceFingerprint, eventId:nonce)` - deterministic. Re-draining a queued scan after partial success returns `{alreadyPresent: true}` instead of creating a duplicate. 1-hour TTL.
 
 ---
 
@@ -388,14 +388,14 @@ Scanner captures **≥3 consecutive sub-frames**. Boundary-aware: sub-frame 29 o
 
 ### 8.1 Defense-in-depth layers
 
-1. **Auth** — Supabase Auth + 3 sign-in methods + brute-force lockout + orphan reconciliation
-2. **Authz** — RBAC hierarchy (`USER < ORGANIZER < ADMIN`); `requireAuth` on every route; 30s account cache
-3. **Validation** — Zod 4 schemas on every API input; server-side password strength scorer shared with client
-4. **CSRF** — Same-origin Origin/Referer check on POST/PATCH/PUT/DELETE (port-insensitive); OPTIONS preflight early return
-5. **Rate limiting** — Per-email (login), per-IP (register), per-account (authenticated); Upstash prod (fails open) + in-memory dev
-6. **Crypto** — Ed25519 device-bound certificates; timing-safe HMAC comparisons; bcrypt cost 12; deterministic idempotency keys
-7. **DB security** — RLS on all 11 tables; service-role bypass; `guard_account_columns` trigger; `guard_last_admin` trigger; CHECK constraints on enums
-8. **HTTP headers** — Strict CSP (no `unsafe-eval`, `connect-src: self + *.ably.io`), X-Frame-Options (DENY prod), HSTS preload, Permissions-Policy (camera=self), X-XSS-Protection: 0
+1. **Auth** - Supabase Auth + 3 sign-in methods + brute-force lockout + orphan reconciliation
+2. **Authz** - RBAC hierarchy (`USER < ORGANIZER < ADMIN`); `requireAuth` on every route; 30s account cache
+3. **Validation** - Zod 4 schemas on every API input; server-side password strength scorer shared with client
+4. **CSRF** - Same-origin Origin/Referer check on POST/PATCH/PUT/DELETE (port-insensitive); OPTIONS preflight early return
+5. **Rate limiting** - Per-email (login), per-IP (register), per-account (authenticated); Aiven Redis prod (fails open) + in-memory dev
+6. **Crypto** - Ed25519 device-bound certificates; timing-safe HMAC comparisons; bcrypt cost 12; deterministic idempotency keys
+7. **DB security** - RLS on all 11 tables; service-role bypass; `guard_account_columns` trigger; `guard_last_admin` trigger; CHECK constraints on enums
+8. **HTTP headers** - Strict CSP (no `unsafe-eval`, `connect-src: self + *.ably.io`), X-Frame-Options (DENY prod), HSTS preload, Permissions-Policy (camera=self), X-XSS-Protection: 0
 
 ### 8.2 Additional security measures
 
@@ -403,13 +403,13 @@ Scanner captures **≥3 consecutive sub-frames**. Boundary-aware: sub-frame 29 o
 - **Strict file ext + MIME allowlist** on whitelist import
 - **Cloudflare Turnstile** with circuit breaker (fail-open on infra, fail-closed on token)
 - **Per-endpoint cron secrets** (`CRON_CLEANUP_SECRET` / `CRON_REMINDERS_SECRET`, falls back to `CRON_SECRET`)
-- **Open-redirect prevention** — `forgotPasswordSchema.redirectTo` validates same-origin
-- **Email XSS defense** — all URLs in HTML templates escaped with `escapeHtml()`
+- **Open-redirect prevention** - `forgotPasswordSchema.redirectTo` validates same-origin
+- **Email XSS defense** - all URLs in HTML templates escaped with `escapeHtml()`
 
 ### 8.3 Guard triggers
 
-- `guard_account_columns` — blocks REST API self-escalation of role/status/password (role-aware: skips for service role)
-- `guard_last_admin` — atomically prevents 0-admin state (TOCTOU race fix)
+- `guard_account_columns` - blocks REST API self-escalation of role/status/password (role-aware: skips for service role)
+- `guard_last_admin` - atomically prevents 0-admin state (TOCTOU race fix)
 
 ---
 
@@ -432,10 +432,10 @@ Server (attendance route)                Client (organizer views)
 └─────────────────┘                  └─────────────────┘
 ```
 
-- **Server publish**: `notifyAttendance()` in `realtime.ts` — REST POST to Ably, 5s timeout, 1 retry after 2s for transient failures (network errors, 5xx). 4xx errors are not retried (permanent).
-- **Token endpoint**: `/api/ably/token?eventId=N` — uses Ably SDK's `auth.createTokenRequest()` to sign a TokenRequest with subscribe-only capability scoped to `event:N`. 1h TTL. The browser never receives the server key.
-- **Client**: `useAttendanceSocket(eventId)` hook — Ably SDK with `authCallback` (fetches token from the endpoint), `{ connected, latest }` state, 10s connect timeout, polling fallback when Ably is unavailable.
-- **Scope**: organizers only (students don't connect — keeps under 200-connection free-tier limit).
+- **Server publish**: `notifyAttendance()` in `realtime.ts` - REST POST to Ably, 5s timeout, 1 retry after 2s for transient failures (network errors, 5xx). 4xx errors are not retried (permanent).
+- **Token endpoint**: `/api/ably/token?eventId=N` - uses Ably SDK's `auth.createTokenRequest()` to sign a TokenRequest with subscribe-only capability scoped to `event:N`. 1h TTL. The browser never receives the server key.
+- **Client**: `useAttendanceSocket(eventId)` hook - Ably SDK with `authCallback` (fetches token from the endpoint), `{ connected, latest }` state, 10s connect timeout, polling fallback when Ably is unavailable.
+- **Scope**: organizers only (students don't connect - keeps under 200-connection free-tier limit).
 - **Cleanup**: scoped `channel.unsubscribe("attendance", handler)` + `client.connection.off()` before `client.close()` (guarded by connection state to prevent "Uncaught (in promise) Connection closed" rejection).
 
 ---
@@ -444,7 +444,7 @@ Server (attendance route)                Client (organizer views)
 
 ### Single-route SPA
 
-The entire authenticated app lives at `/`. No App Router nested routing — `AppShell` holds `useState<ViewId>` with 10 possible values:
+The entire authenticated app lives at `/`. No App Router nested routing - `AppShell` holds `useState<ViewId>` with 10 possible values:
 
 | View         | Roles                  | Purpose                                        |
 | ------------ | ---------------------- | ---------------------------------------------- |
@@ -462,7 +462,7 @@ The entire authenticated app lives at `/`. No App Router nested routing — `App
 ### Composition tree
 
 ```
-layout.tsx (SERVER — fonts, SEO, JSON-LD, viewport)
+layout.tsx (SERVER - fonts, SEO, JSON-LD, viewport)
   └─ ThemeProvider (next-themes, defaultTheme="light")
       └─ Providers (TanStack QueryClient + TooltipProvider)
           └─ page.tsx (CLIENT)
@@ -493,9 +493,9 @@ AppShell
 
 3-step multi-step form with progress indicator:
 
-1. **Account** — email + password + confirm (real-time availability check, 400ms debounce)
-2. **Identity** — full name + student ID (real-time availability check)
-3. **Program** — optional program + section → submit
+1. **Account** - email + password + confirm (real-time availability check, 400ms debounce)
+2. **Identity** - full name + student ID (real-time availability check)
+3. **Program** - optional program + section → submit
 
 Per-step validation with race-condition fix: if user clicks Continue before debounce fires, `validateRegStep` forces the debounce immediately and blocks with "Checking…".
 
@@ -510,13 +510,13 @@ Per-step validation with race-condition fix: if user clicks Continue before debo
 2. Camera feed → jsQR decodes at 8 FPS (downscale to 640px)
 3. Collect 3+ consecutive sub-frames (each with client-observed HMAC)
 4. Build ScanCertificate:
-   - eventId, token (last captured), scannedAt, nonce, deviceFingerprint, subFrames[]
+  - eventId, token (last captured), scannedAt, nonce, deviceFingerprint, subFrames[]
 5. Sign with Ed25519 private key (IndexedDB, account-scoped)
 6. Enqueue to localStorage (ng_scan_queue_v2) in <1ms
 7. Background drain: exponential backoff + jitter
-   - POST /api/attendance with signed certificate
-   - 15-min sync window (validateCertificateTimestamp)
-   - Deterministic idempotency key prevents duplicates
+  - POST /api/attendance with signed certificate
+  - 15-min sync window (validateCertificateTimestamp)
+  - Deterministic idempotency key prevents duplicates
 8. Ably publish (organizer sees live update)
 ```
 
@@ -555,9 +555,9 @@ Per-step validation with race-condition fix: if user clicks Continue before debo
 
 **Key design**: `login` is per-email (not per-IP) because 200+ students share one campus IP. `scanAccount` is per-account (not per-IP) for the same reason. The per-account DB lockout (5 fails → 15-min) is the primary brute-force defense.
 
-**Sensitive presets fail closed** on Upstash error (login, register, otp, passkeyVerify, passkeyRegister, passkeyAccount, loginAccount, adminMutation, whitelistImport, whitelistImportFile) — an attacker cannot DDoS the limiter to bypass brute-force protection. General presets (`api`, `apiAccount`, `scan`, `scanAccount`, `passkeyOptions`, `check`) fail open to avoid locking all users during a transient Upstash outage.
+**Sensitive presets fail closed** on Redis error (login, register, otp, passkeyVerify, passkeyRegister, passkeyAccount, loginAccount, adminMutation, whitelistImport, whitelistImportFile) - an attacker cannot DDoS the limiter to bypass brute-force protection. General presets (`api`, `apiAccount`, `scan`, `scanAccount`, `passkeyOptions`, `check`) fail open to avoid locking all users during a transient Redis outage.
 
-**In-memory fallback** (no Upstash configured): LRU-capped at 10,000 keys to prevent memory exhaustion under IP rotation. On Vercel serverless (multi-instance) the in-memory counts diverge per instance — a documented free-tier trade-off; Upstash restores global consistency.
+**In-memory fallback** (no REDIS_URL configured): LRU-capped at 10,000 keys to prevent memory exhaustion under IP rotation. On Vercel serverless (multi-instance) the in-memory counts diverge per instance - a documented free-tier trade-off; Redis restores global consistency.
 
 ### Cache headers
 
@@ -578,7 +578,7 @@ Per-step validation with race-condition fix: if user clicks Continue before debo
 
 ## 13. Cron Jobs & Maintenance
 
-### Vercel Cron (2 jobs — Hobby tier max)
+### Vercel Cron (2 jobs - Hobby tier max)
 
 | Schedule                 | Route                       | Purpose                                                                                       |
 | ------------------------ | --------------------------- | --------------------------------------------------------------------------------------------- |
@@ -621,7 +621,7 @@ Bulk algorithm (was N×M sequential):
 | CSRF                                                       | Same-origin Origin/Referer check + SameSite=Lax cookies                                                             |
 | SSRF                                                       | URL safety validation on push endpoints                                                                             |
 | Device key registration race                               | P2002 catch (stable code-based detection) + re-fetch in `registerDeviceKey`                                         |
-| Ably channel BOLA                                          | Event visibility check on `/api/ably/token` — students cannot subscribe to another section's channel                |
+| Ably channel BOLA                                          | Event visibility check on `/api/ably/token` - students cannot subscribe to another section's channel                |
 | Profile/password cooldown TOCTOU                           | Conditional `updateMany` (compare-and-set on `lastChangedAt`)                                                       |
 | Admin-driven DoS (account create/delete, whitelist import) | Dedicated rate-limit presets (20/min, 3/min, 5/min) that fail closed                                                |
 | Rate-limiter memory exhaustion                             | LRU cap (10,000 keys) on in-memory fallback Map                                                                     |
@@ -632,14 +632,14 @@ Bulk algorithm (was N×M sequential):
 | Single view crash                                          | `CardErrorBoundary` wraps all views                                                                                 |
 | Passkey login N-row scan                                   | O(log N) indexed `passkey_credential_id` lookup                                                                     |
 
-### Documented limitations (not fixed — by design)
+### Documented limitations (not fixed - by design)
 
 | Limitation                               | Why not fixed                                                                                                                                                                                                                              |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Relay attack (video call)                | Fundamental limitation of device-side liveness. Defense is physical, not crypto.                                                                                                                                                           |
 | Device fingerprint collision             | Low probability for canvas-based fingerprinting. Document entropy.                                                                                                                                                                         |
 | Organizer role change mid-event          | 15s window acceptable. Demoted organizer already knew the secret.                                                                                                                                                                          |
-| Rate limiter per-instance on serverless  | In-memory counts diverge across Vercel instances without Upstash. Documented free-tier trade-off; Upstash restores global consistency. General presets fail open; sensitive presets fail closed.                                           |
+| Rate limiter per-instance on serverless  | In-memory counts diverge across Vercel instances without Redis. Documented free-tier trade-off; Redis restores global consistency. General presets fail open; sensitive presets fail closed.                                           |
 | Login timing equalization is approximate | Dummy bcrypt (~250ms) closely matches the Supabase wrong-password round-trip (~300ms). Sufficient to defeat practical timing attacks; not a cryptographically-constant-time guarantee (Supabase does not expose a constant-time auth API). |
 | "Email not confirmed" no longer surfaced | A distinct 403 would reveal the email exists and is unconfirmed. The legitimate unconfirmed user sees the generic 401 and can use "Forgot password" or contact admin. Deliberate UX cost of enumeration defense.                           |
 | DNS rebinding in URL safety              | Push endpoints are vendor-allowed, not user-controlled.                                                                                                                                                                                    |
@@ -651,7 +651,7 @@ Bulk algorithm (was N×M sequential):
 ### Estimated capacity (free tier)
 
 The hard ceilings are infra limits, not code limits. The code degrades
-gracefully — attendance recording survives realtime failure (Ably publish
+gracefully - attendance recording survives realtime failure (Ably publish
 is fire-and-forget with `.catch(() => {})`).
 
 | Concurrent users | Free tier                     | First wall                       | Action                               |
@@ -663,7 +663,7 @@ is fire-and-forget with `.catch(() => {})`).
 | 2,000            | ❌ Multiple limits            | Ably + Vercel + Supabase storage | Upgrade all + fix code bottlenecks   |
 | 3,000            | ❌ Supabase pooler            | 200 pooler connections           | Supabase Pro; `connection_limit=2-3` |
 
-**Sustained concurrent scanning users: ~500.** **Peak burst: ~500–1,300.**
+**Sustained concurrent scanning users: ~500.** **Peak burst: ~500-1,300.**
 **Monthly active users: ~1,300.** **DB storage exhaustion: ~6 weeks at 2,000 users.**
 
 See [CAPACITY-ASSESSMENT.md](./CAPACITY-ASSESSMENT.md) for the full
@@ -701,7 +701,7 @@ back-of-envelope analysis with per-constraint break-points.
 | Vercel   | 100GB bandwidth, 10s functions, 2 cron | $20/mo: 1TB, 60s functions | Hosting + serverless |
 | Supabase | 500MB DB, 50k MAU, 200 pooler conns    | $25/mo: 8GB, higher pooler | PostgreSQL + Auth    |
 | Ably     | 3M msgs/mo, 200 conns, 1000 msg/s      | $29/mo: 6M msgs            | Realtime             |
-| Sentry   | 5k errors, 100 replays, 50k perf       | —                          | Error monitoring     |
+| Sentry   | 5k errors, 100 replays, 50k perf       | -                         | Error monitoring     |
 
 ### Environment variables (22)
 
@@ -723,8 +723,7 @@ REFRESH_SECRET=
 NEXT_PUBLIC_APP_URL=
 
 # Rate limiting (optional)
-UPSTASH_REDIS_REST_URL=
-UPSTASH_REDIS_REST_TOKEN=
+REDIS_URL=
 
 # Email (Gmail SMTP)
 SMTP_HOST=smtp.gmail.com
@@ -790,7 +789,7 @@ Production block on `:80` (HTTP, no domain required). Tiered rate limits (scan 2
 | `ably/token/route.test.ts`      | 10    | Token signing, key parsing, spec compliance       |
 | `webauthn-context.test.ts`      | 8     | WebAuthn React context                            |
 | `passkey-credential.test.ts`    | 8     | WebAuthn credential storage                       |
-| `rate-limit.test.ts`            | 8     | Upstash + in-memory rate limiter                  |
+| `rate-limit.test.ts`            | 8     | Aiven Redis + in-memory rate limiter             |
 | `device-key-server.test.ts`     | 4     | Ed25519 device key verification                   |
 
 ### E2E verification
@@ -806,8 +805,8 @@ Agent Browser used for manual smoke testing after each change: page renders, reg
 ├── src/
 │   ├── app/
 │   │   ├── api/                    # 46 route.ts files (43 domain + health/settings/root)
-│   │   ├── layout.tsx              # Server component — fonts, SEO, providers
-│   │   ├── page.tsx                # Client gate — maintenance → login → app-shell
+│   │   ├── layout.tsx              # Server component - fonts, SEO, providers
+│   │   ├── page.tsx                # Client gate - maintenance → login → app-shell
 │   │   ├── error.tsx               # Route error boundary
 │   │   ├── global-error.tsx        # Layout-level error boundary
 │   │   └── globals.css             # Tailwind v4 + oklch amber/gold theme
@@ -885,7 +884,7 @@ Agent Browser used for manual smoke testing after each change: page renders, reg
 | Document version | 1.0          |
 | Last updated     | 2026-07-10   |
 | Author           | SketchyXenon |
-| Reviewers        | —            |
+| Reviewers        | -           |
 | License          | MIT          |
 
 ---

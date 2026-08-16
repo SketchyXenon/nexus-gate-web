@@ -1,13 +1,13 @@
 // ====================================================================
-// Nexus Gate — Production Schema (v7 — strict RLS-ready, optimized indexes)
+// Nexus Gate - Production Schema (v7 - strict RLS-ready, optimized indexes)
 // ====================================================================
 // Indexing strategy:
-//   - Composite indexes on the most common query patterns
-//   - Covering indexes for list + count queries (status + program + section)
-//   - Partial-style filtering via leading columns (status first, then scope)
+//  - Composite indexes on the most common query patterns
+//  - Covering indexes for list + count queries (status + program + section)
+//  - Partial-style filtering via leading columns (status first, then scope)
 // ====================================================================
 //
-// IMPORTANT — Provider is PostgreSQL.
+// IMPORTANT - Provider is PostgreSQL.
 // The app deploys to Vercel (serverless) and uses Supabase (PostgreSQL 15+).
 // SQLite CANNOT be used on Vercel serverless (ephemeral, read-only FS), so
 // the provider MUST be "postgresql" in production. The Supabase schema is
@@ -49,7 +49,7 @@ model Account {
   notificationEndpoint String?   @map("notification_endpoint")
   notificationKeys     String?   @map("notification_keys")
   passkeyCredential    String?   @map("passkey_credential")
-  passkeyCredentialId  String?   @map("passkey_credential_id")
+  passkeyCredentialId  String?   @unique @map("passkey_credential_id")
   supabaseAuthUid      String?   @unique @map("supabase_auth_uid")
   notificationEnabled  Boolean   @default(false) @map("notification_enabled")
   notificationPrefs    Json?     @map("notification_prefs")
@@ -96,7 +96,7 @@ model Account {
 }
 
 // ====================================================================
-// 2. AUTHORIZED STUDENTS — optional admin whitelist (not a gate)
+// 2. AUTHORIZED STUDENTS - optional admin whitelist (not a gate)
 // ====================================================================
 
 model AuthorizedStudent {
@@ -211,14 +211,14 @@ model Event {
 // ====================================================================
 // 6. EVENT ATTENDANCE
 // --------------------------------------------------------------------
-// Certificate fields (v8 — Tier 1 + Tier 2 anti-cheating):
-//   certificateNonce     — one-time-use nonce from the scan certificate
+// Certificate fields (v8 - Tier 1 + Tier 2 anti-cheating):
+//   certificateNonce    - one-time-use nonce from the scan certificate
 //                          (unique constraint = atomic duplicate rejection)
-//   certificateSubFrames — JSON array of captured sub-frame indices
+//   certificateSubFrames - JSON array of captured sub-frame indices
 //                          (proves multi-frame liveness, anti-screenshot)
-//   deviceFingerprint    — SHA-256 hash of the device's public key
+//   deviceFingerprint   - SHA-256 hash of the device's public key
 //                          (identifies which device made the scan)
-//   scannedAtClient      — client-reported scan timestamp (ms precision)
+//   scannedAtClient     - client-reported scan timestamp (ms precision)
 //                          (decouples token validity from sync time)
 // ====================================================================
 
@@ -240,7 +240,7 @@ model EventAttendance {
   deviceFingerprint    String?   @map("device_fingerprint")
   scannedAtClient      DateTime? @map("scanned_at_client") // client-reported scan time (for offline sync)
 
-  // Unique constraint: one check-in per (event, account) pair — atomic.
+  // Unique constraint: one check-in per (event, account) pair - atomic.
   // This is the CORE of the one-attempt policy: after the first successful
   // scan, the unique constraint rejects all subsequent attempts.
   @@unique([eventId, accountId])
@@ -293,10 +293,10 @@ model Notification {
   readAt    DateTime? @map("read_at")
   createdAt DateTime  @default(now()) @map("created_at")
 
-  // Composite: "list this account's notifications, newest first" — the
+  // Composite: "list this account's notifications, newest first" - the
   // single most common notification query
   @@index([accountId, createdAt])
-  // Composite: "count UNREAD notifications for this account" — used by
+  // Composite: "count UNREAD notifications for this account" - used by
   // the notification bell badge on every page load
   @@index([accountId, readAt])
   // Cron sweep: delete old read notifications
@@ -334,7 +334,7 @@ model AuditLog {
 }
 
 // ====================================================================
-// 10. DEVICE KEYS (v8 — Tier 1 anti-cheating)
+// 10. DEVICE KEYS (v8 - Tier 1 anti-cheating)
 // --------------------------------------------------------------------
 // Each registered device has an Ed25519 keypair. The PRIVATE key lives
 // only on the device (IndexedDB). The PUBLIC key is registered here.
@@ -410,7 +410,7 @@ model TermsAcceptance {
 // --------------------------------------------------------------------
 // No raw IP address is ever stored. The public IP is HMAC-hashed with a
 // daily-rotating server secret, producing a non-reversible token that
-// only identifies "same visitor on the same day" — nothing more. Per
+// only identifies "same visitor on the same day" - nothing more. Per
 // 06-security-architecture.md §8 (data minimization) and §11 (never log
 // full PII). Aggregated upserts deduplicate on (day_bucket, visitor_hash,
 // route), so the row count stays bounded.

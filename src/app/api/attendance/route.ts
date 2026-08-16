@@ -30,7 +30,7 @@ import { isUniqueConstraintError } from "@/lib/prisma-errors";
 export const maxDuration = 30;
 
 // ====================================================================
-// POST /api/attendance — scan QR token (v8 — signed certificate)
+// POST /api/attendance - scan QR token (v8 - signed certificate)
 // --------------------------------------------------------------------
 // ONE-ATTEMPT POLICY (strict):
 //   After the first successful scan (time-in), ALL subsequent scan
@@ -39,7 +39,7 @@ export const maxDuration = 30;
 //       message: "This QR was already scanned. You are already marked present." }
 //
 //   This is enforced ATOMICALLY by the unique constraint on
-//   (eventId, accountId). There is no time-out via QR — if time-out
+//   (eventId, accountId). There is no time-out via QR - if time-out
 //   is needed, organizers use the manual override system.
 //
 // SERVER-SIDE VALIDATIONS (cannot be bypassed by the client):
@@ -52,7 +52,7 @@ export const maxDuration = 30;
 //   7. Event eligibility (program + section strict match)
 //   8. Time window validation (check-in must be open)
 //   9. Idempotency (deterministic key from certificate nonce)
-//  10. Unique constraint (eventId, accountId) — atomic one-attempt enforcement
+//  10. Unique constraint (eventId, accountId) - atomic one-attempt enforcement
 // ====================================================================
 
 export async function POST(req: NextRequest) {
@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
     if (eventForTimeOut?.enableTimeOut && eventForTimeOut.status === "active") {
       const timeOutWindows = getEventTimeWindows(eventForTimeOut);
       if (timeOutWindows.timeOut?.isLive) {
-        // Time-out window is live — run the FULL anti-cheat pipeline before
+        // Time-out window is live - run the FULL anti-cheat pipeline before
         // recording the time-out. Previously this path only verified the
         // Ed25519 signature + timestamp, skipping token HMAC, event match,
         // and sub-frame liveness. That let a student with a registered
@@ -183,7 +183,7 @@ export async function POST(req: NextRequest) {
           );
           if (!liveness.ok) {
             return badRequest(
-              `Scan rejected: ${liveness.reason}. Please scan again — hold the camera steady for 2 seconds.`,
+              `Scan rejected: ${liveness.reason}. Please scan again - hold the camera steady for 2 seconds.`,
               liveness.reason,
             );
           }
@@ -199,17 +199,34 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        // All checks passed — record the time-out using scannedAt (offline-first).
-        const updated = await db.eventAttendance.update({
-          where: { id: existing.id },
-          data: { timeOutAt: new Date(signed.certificate.scannedAt) },
+        // All checks passed - record the time-out using scannedAt (offline-first).
+        // Atomic compare-and-set: only update if timeOutAt is still null. This
+        // closes the TOCTOU race where two concurrent time-out scans for the
+        // same (eventId, accountId) both pass the read-time null check above
+        // and both UPDATE - which would fire duplicate audit entries + double
+        // realtime notifications. If 0 rows are affected, a concurrent scan
+        // already recorded the time-out; return the already-complete response.
+        const timeOutAt = new Date(signed.certificate.scannedAt);
+        const result = await db.eventAttendance.updateMany({
+          where: { id: existing.id, timeOutAt: null },
+          data: { timeOutAt },
         });
+
+        if (result.count === 0) {
+          // A concurrent request already recorded the time-out. Idempotent:
+          // return success without double-auditing.
+          return NextResponse.json({
+            ok: true,
+            action: "time_out",
+            message: "Time-out was already recorded for this event.",
+          });
+        }
 
         await audit({
           actorId: account.id,
           action: "attendance.timeout",
           targetType: "EventAttendance",
-          targetId: updated.id,
+          targetId: existing.id,
           metadata: {
             eventId: signed.certificate.eventId,
             deviceFingerprint: signed.certificate.deviceFingerprint,
@@ -220,14 +237,14 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({
           ok: true,
           action: "time_out",
-          timeOutAt: updated.timeOutAt,
+          timeOutAt,
           message:
             "Time-out recorded. You're marked as checked out for this event.",
         });
       }
     }
 
-    // Time-out not enabled or not live — return "already scanned."
+    // Time-out not enabled or not live - return "already scanned."
     return NextResponse.json({
       ok: true,
       alreadyPresent: true,
@@ -306,7 +323,7 @@ export async function POST(req: NextRequest) {
   // The certificate must include at least MIN_SUB_FRAMES consecutive
   // sub-frames WITH their client-observed HMACs. The server verifies
   // each client-supplied HMAC against the server-recomputed value.
-  // This proves the scanner watched the QR change over time — a single
+  // This proves the scanner watched the QR change over time - a single
   // photo captures only 1 sub-frame (1 HMAC), which is < MIN_SUB_FRAMES.
   if (
     tokenValidation.format === "v8" &&
@@ -331,7 +348,7 @@ export async function POST(req: NextRequest) {
     );
     if (!liveness.ok) {
       return badRequest(
-        `Scan rejected: ${liveness.reason}. Please scan again — hold the camera steady for 2 seconds.`,
+        `Scan rejected: ${liveness.reason}. Please scan again - hold the camera steady for 2 seconds.`,
         liveness.reason,
       );
     }
@@ -341,7 +358,7 @@ export async function POST(req: NextRequest) {
   // For offline scans, use the certificate's scannedAt timestamp (when the
   // student actually scanned) instead of Date.now() (when the server
   // processes it). This allows offline scans to be synced after the window
-  // closes. Grace period: 15 minutes max — enough for "scan in a dead zone,
+  // closes. Grace period: 15 minutes max - enough for "scan in a dead zone,
   // walk to WiFi, sync" but not enough for photo-replay attacks.
   const certScannedAt = new Date(signed.certificate.scannedAt);
   const now = Date.now();
@@ -368,10 +385,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ---- Event eligibility (strict — mirrors GET /api/events visibility) ----
+  // ---- Event eligibility (strict - mirrors GET /api/events visibility) ----
   // A student is eligible to check in if and only if:
-  //   1. OPEN TO ALL — both targetProgram AND targetSection are null, OR
-  //   2. EXACT MATCH — targetProgram = student's program AND
+  //   1. OPEN TO ALL - both targetProgram AND targetSection are null, OR
+  //   2. EXACT MATCH - targetProgram = student's program AND
   //      targetSection = student's section.
   //
   // This is the SAME rule used by the events list endpoint. A student

@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
   }
 
   // SECURITY: require user verification. A passkey without UV is just a
-  // "something you have" factor — anyone with physical access to the device
+  // "something you have" factor - anyone with physical access to the device
   // could sign in. UV (biometric/PIN) makes it "something you have + are".
   // Reject if the authenticator did not verify the user during attestation.
   if (!verification.registrationInfo.userVerified) {
@@ -93,19 +93,36 @@ export async function POST(req: NextRequest) {
 
   const { credential } = verification.registrationInfo;
 
-  // SECURITY: reject credential reuse across accounts. WebAuthn credential
-  // IDs are globally unique (random bytes from the authenticator), so the
-  // same credential ID registered to a DIFFERENT account means one physical
-  // authenticator is being bound to two accounts (device-reuse attack).
-  // Without this check, the UPDATE below would silently overwrite account A's
-  // passkey row, letting account B reuse account A's authenticator.
-  const reuseRows = await db.$queryRaw<Array<{ id: string }>>`
-    SELECT id FROM accounts
-    WHERE passkey_credential_id = ${credential.id}
-      AND id <> ${account.id}
-    LIMIT 1
+  const stored = JSON.stringify({
+    id: credential.id,
+    publicKey: Buffer.from(credential.publicKey).toString("base64"),
+    counter: credential.counter,
+    // Transports are a browser hint for future login prompts (not
+    // cryptographically verified) - taken from the attestation response.
+    transports: body.response.response?.transports || [],
+  });
+
+  // SECURITY: atomic credential-reuse rejection + store in a SINGLE
+  // conditional UPDATE. The WHERE clause guards against TOCTOU races where
+  // two concurrent registrations both pass a separate reuse SELECT and both
+  // write the same credential_id. The `NOT EXISTS` subquery makes the DB
+  // the single source of truth: if another account already holds this
+  // credential_id, the UPDATE affects 0 rows. The @unique constraint on
+  // passkey_credential_id (schema) is the final backstop. rowcount==0 here
+  // means either reuse (credential belongs to another account) or the
+  // account row vanished (concurrent delete) - both are safe rejects.
+  const result = await db.$executeRaw`
+    UPDATE accounts
+    SET passkey_credential = ${stored},
+        passkey_credential_id = ${credential.id}
+    WHERE id = ${account.id}
+      AND NOT EXISTS (
+        SELECT 1 FROM accounts
+        WHERE passkey_credential_id = ${credential.id}
+          AND id <> ${account.id}
+      )
   `;
-  if (reuseRows.length > 0) {
+  if (result === 0) {
     await audit({
       actorId: account.id,
       action: "auth.passkey_register_reuse_blocked",
@@ -122,25 +139,6 @@ export async function POST(req: NextRequest) {
       409,
     );
   }
-
-  const stored = JSON.stringify({
-    id: credential.id,
-    publicKey: Buffer.from(credential.publicKey).toString("base64"),
-    counter: credential.counter,
-    // Transports are a browser hint for future login prompts (not
-    // cryptographically verified) — taken from the attestation response.
-    transports: body.response.response?.transports || [],
-  });
-
-  // Store both the full credential JSON and the extracted credential ID
-  // for O(log N) lookup during login. Uses raw SQL to avoid Prisma client
-  // type issues on Vercel's cached builds.
-  await db.$executeRaw`
-    UPDATE accounts
-    SET passkey_credential = ${stored},
-        passkey_credential_id = ${credential.id}
-    WHERE id = ${account.id}
-  `;
 
   await audit({
     actorId: account.id,

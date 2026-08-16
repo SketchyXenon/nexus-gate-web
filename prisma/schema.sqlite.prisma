@@ -1,5 +1,5 @@
 // ====================================================================
-// Nexus Gate — LOCAL DEV schema (SQLite)
+// Nexus Gate - LOCAL DEV schema (SQLite)
 // --------------------------------------------------------------------
 // This schema is used ONLY for local development (`bun run dev`).
 // It uses the SQLite provider so the app runs against a local file DB
@@ -13,11 +13,11 @@
 // IMPORTANT: This file has NO @map/@@map annotations because the local
 // SQLite database was created by `prisma db push` against this exact
 // schema, so its tables/columns use Prisma's default PascalCase /
-// camelCase naming. The two schemas describe the SAME models — they
+// camelCase naming. The two schemas describe the SAME models - they
 // only differ in provider + physical column names.
 //
 // When adding/removing a field, update BOTH schema files identically
-// (field names, types, relations, indexes) — only the provider and
+// (field names, types, relations, indexes) - only the provider and
 // @map annotations differ.
 // ====================================================================
 
@@ -28,7 +28,6 @@ generator client {
 datasource db {
   provider = "sqlite"
   url      = env("DATABASE_URL")
-  "mysql://2fag8b38gZhp6Hy.root:0JQkeFbzHtJO92bl@gateway01.ap-southeast-1.prod.aws.tidbcloud.com:4000/sys?ssl_accept=strict"
 }
 
 // ====================================================================
@@ -55,7 +54,7 @@ model Account {
   notificationEndpoint String?
   notificationKeys     String?
   passkeyCredential    String?
-  passkeyCredentialId  String?
+  passkeyCredentialId  String?  @unique
   supabaseAuthUid      String?  @unique
   notificationEnabled  Boolean  @default(false)
   notificationPrefs    String? // JSON string (SQLite has no native JSON type)
@@ -329,7 +328,7 @@ model TermsAcceptance {
 // --------------------------------------------------------------------
 // No raw IP address is ever stored. The public IP is HMAC-hashed with a
 // daily-rotating server secret, producing a non-reversible token that
-// only identifies "same visitor on the same day" — nothing more. Per
+// only identifies "same visitor on the same day" - nothing more. Per
 // 06-security-architecture.md §8 (data minimization) and §11 (never log
 // full PII). Aggregated upserts deduplicate on (dayBucket, visitorHash,
 // route), so the row count stays bounded.
@@ -338,7 +337,7 @@ model TermsAcceptance {
 model Visit {
   id           String   @id @default(cuid())
   dayBucket    String   // YYYY-MM-DD (UTC)
-  visitorHash  String   // HMAC(secret, ip) — non-reversible, daily-rotating
+  visitorHash  String   // HMAC(secret, ip) - non-reversible, daily-rotating
   route        String   // path visited (e.g. "/" or "/api/events")
   country      String?  // optional, from CF-IPCountry header (country-level only)
   visits       Int      @default(1) // upserted counter

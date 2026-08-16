@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { requireAuth, notFound } from "@/lib/api";
 
 // ====================================================================
-// GET /api/notifications — list current user's notifications
+// GET /api/notifications - list current user's notifications
 // Returns unread + recent read notifications.
 // ====================================================================
 export async function GET(req: NextRequest) {
@@ -35,15 +35,18 @@ export async function GET(req: NextRequest) {
     }),
   ]);
 
-  return NextResponse.json({
-    notifications,
-    unreadCount,
-  }, { headers: { "Cache-Control": "private, no-cache" } });
+  return NextResponse.json(
+    {
+      notifications,
+      unreadCount,
+    },
+    { headers: { "Cache-Control": "private, no-cache" } },
+  );
 }
 
 // ====================================================================
-// POST /api/notifications — mark all as read (or specific notification)
-// Body: { notificationId?: number } — if omitted, marks all as read
+// POST /api/notifications - mark all as read (or specific notification)
+// Body: { notificationId?: number } - if omitted, marks all as read
 // ====================================================================
 export async function POST(req: NextRequest) {
   const res = await requireAuth();
@@ -53,15 +56,21 @@ export async function POST(req: NextRequest) {
   const now = new Date();
 
   if (body?.notificationId) {
-    // Mark specific notification as read (must belong to the user)
-    const notif = await db.notification.findFirst({
-      where: { id: Number(body.notificationId), accountId: res.account.id },
-    });
-    if (!notif) return notFound("Notification not found");
-    await db.notification.update({
-      where: { id: Number(body.notificationId) },
+    // Mark specific notification as read. Atomic conditional update guards
+    // the read-then-write TOCTOU (a concurrent change to ownership/readAt
+    // between findFirst and update). The WHERE clause enforces both
+    // ownership (accountId) and idempotency (only unread rows update);
+    // 0 affected rows means not-found OR already-read - both return 404
+    // because the client should see the same outcome either way.
+    const upd = await db.notification.updateMany({
+      where: {
+        id: Number(body.notificationId),
+        accountId: res.account.id,
+        readAt: null,
+      },
       data: { readAt: now },
     });
+    if (upd.count === 0) return notFound("Notification not found");
   } else {
     // Mark all as read
     await db.notification.updateMany({

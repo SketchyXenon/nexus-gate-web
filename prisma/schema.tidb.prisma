@@ -59,7 +59,7 @@ model Account {
   notificationEndpoint String?   @map("notification_endpoint") @db.VarChar(500)
   notificationKeys     String?   @map("notification_keys") @db.Text
   passkeyCredential    String?   @map("passkey_credential") @db.LongText
-  passkeyCredentialId  String?   @map("passkey_credential_id") @db.VarChar(255)
+  passkeyCredentialId  String?   @unique @map("passkey_credential_id") @db.VarChar(255)
   supabaseAuthUid      String?   @unique @map("supabase_auth_uid") @db.VarChar(128)
   notificationEnabled  Boolean   @default(false) @map("notification_enabled")
   notificationPrefs    Json?     @map("notification_prefs")

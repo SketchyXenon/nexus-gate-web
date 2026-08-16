@@ -6,12 +6,12 @@
 // for historical integrity while blocking the user from accessing the app.
 //
 // Security:
-//   - Requires an authenticated session (requireAuth).
-//   - Requires re-authentication with the current password (prevents
+//  - Requires an authenticated session (requireAuth).
+//  - Requires re-authentication with the current password (prevents
 //     session-hijack deactivation) via Supabase signIn.
-//   - Revokes all refresh tokens + signs out the active session.
-//   - Invalidates the in-memory account cache (immediate effect).
-//   - Audit-logged as "profile.deactivate".
+//  - Revokes all refresh tokens + signs out the active session.
+//  - Invalidates the in-memory account cache (immediate effect).
+//  - Audit-logged as "profile.deactivate".
 //
 // Recovery: an admin can restore the account via
 // POST /api/accounts/[id]/restore.
@@ -32,6 +32,7 @@ import {
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
 import { invalidateAccountCache } from "@/lib/supabase-session";
+import { safeDeactivateAccount } from "@/lib/safe-account";
 
 export async function POST(req: NextRequest) {
   try {
@@ -60,38 +61,37 @@ export async function POST(req: NextRequest) {
       return badRequest("Incorrect password. Deactivation cancelled.");
     }
 
-    // Soft-delete: flag as deactivated (never hard-delete).
-    await db.account.update({
-      where: { id: account.id },
-      data: {
-        isDeactivated: true,
-        deactivatedAt: new Date(),
-        deactivatedReason: reason || null,
-        status: "DEACTIVATED",
-        failedLoginAttempts: 0,
-        lockedUntil: null,
-      },
-    });
+    // Soft-delete (flag as deactivated). Use the safe helper so a missing
+    // migration 0017 column (P2022) degrades to status-only update instead of
+    // throwing a 500 "Unable to deactivate account". This was the root cause
+    // of the reported deactivation-failure bug: the raw db.account.update used
+    // the is_deactivated/deactivated_at/deactivated_reason columns, and if
+    // migration 0017 wasn't applied, Prisma threw P2022 which fell through to
+    // the generic 500 catch below (isDbUnavailableError does NOT catch P2022).
+    await safeDeactivateAccount(account.id, reason || undefined);
 
-    // Revoke all refresh tokens (defense-in-depth).
+    // Revoke all refresh tokens (defense-in-depth). Logged on failure so
+    // operators can see partial deactivation, not silently swallowed.
     await db.refreshToken
       .updateMany({
         where: { accountId: account.id, revokedAt: null },
         data: { revokedAt: new Date() },
       })
-      .catch(() => {});
+      .catch((e) => {
+        console.warn("[deactivate] refresh-token revoke failed:", e);
+      });
 
-    // Invalidate the in-memory cache so the next request sees the deactivation.
-    // Fetch the supabaseAuthUid for cache invalidation.
-    const acct = await db.account.findUnique({
-      where: { id: account.id },
-      select: { supabaseAuthUid: true },
-    });
-    if (acct?.supabaseAuthUid) {
-      invalidateAccountCache(acct.supabaseAuthUid);
-    }
+    // Invalidate the in-memory + Redis account cache so the NEXT request sees
+    // the deactivation immediately (without waiting for the 30s TTL). The
+    // cache is keyed by supabaseAuthUid; account came from requireAuth which
+    // already loaded it, so we use it directly instead of a redundant fetch.
+    const cacheKey = account.supabaseAuthUid ?? account.id;
+    invalidateAccountCache(cacheKey);
 
-    // Sign out the active Supabase session.
+    // Sign out the active Supabase session. On a server client this clears
+    // the SSR-managed session cookie; getCurrentAccountSupabase also re-reads
+    // the DB on every request so a lingering cookie is rejected at the DB
+    // layer (isDeactivated check) until it naturally expires.
     await supabase.auth.signOut().catch(() => {});
 
     await audit({
