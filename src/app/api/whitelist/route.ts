@@ -6,6 +6,7 @@ import {
 } from "@/lib/validation";
 import {
   badRequest,
+  forbidden,
   parseBody,
   requireAuth,
   checkRateLimitByKey,
@@ -26,10 +27,17 @@ export const maxDuration = 30;
 // Each student record includes:
 //  - status: "ACTIVE" | "PENDING" (PENDING = imported but not registered)
 //  - activated: true (registered) | false (imported, pending)
+//
+// ABAC / POLP: organizers are scoped to their OWN program only. They
+// cannot list, search, or harvest students from other programs. Admins
+// see all programs. (06-security-architecture.md §3 - re-authorize every
+// object access; BOLA/IDOR defense.)
 // ====================================================================
 export async function GET(req: NextRequest) {
   const res = await requireAuth("ORGANIZER");
   if ("error" in res) return res.error;
+  const { account } = res;
+  const isAdmin = account.role === "ADMIN";
 
   const { searchParams } = new URL(req.url);
   const parsed = whitelistPaginationSchema.safeParse({
@@ -38,7 +46,11 @@ export async function GET(req: NextRequest) {
   });
   if (!parsed.success) return badRequest("Invalid pagination parameters");
   const { page, pageSize } = parsed.data;
-  const program = searchParams.get("program") || undefined;
+  // Organizers are forced to their own program; admins may query any.
+  // An organizer with no program set is scoped to a sentinel that matches
+  // no rows (sees nothing) - never the whole roster.
+  const requestedProgram = searchParams.get("program") || undefined;
+  const program = isAdmin ? requestedProgram : (account.program ?? "__none__");
   const section = searchParams.get("section") || undefined;
   const q = searchParams.get("q") || undefined;
   const statusFilter = searchParams.get("status") || undefined; // "registered" | "pending" | "all"
@@ -232,6 +244,26 @@ export async function POST(req: NextRequest) {
   const parsed = importWhitelistSchema.safeParse(body);
   if (!parsed.success) {
     return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
+  }
+
+  // ABAC / POLP: organizers may only import students into their OWN
+  // program. Any row targeting a different program is rejected (BOLA /
+  // mass-assignment defense). Admins may import any program.
+  const isAdmin = account.role === "ADMIN";
+  if (!isAdmin) {
+    if (!account.program) {
+      return forbidden(
+        "Your account has no program assigned. Ask an administrator to set your program before importing students.",
+      );
+    }
+    const offProgram = parsed.data.students.find(
+      (s) => s.program !== account.program,
+    );
+    if (offProgram) {
+      return forbidden(
+        `You can only import students for the ${account.program} program.`,
+      );
+    }
   }
 
   let inserted = 0;

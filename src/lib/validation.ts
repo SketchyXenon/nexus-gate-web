@@ -1,5 +1,5 @@
 // ====================================================================
-// Nexus Gate — Validation Schemas (Zod)
+// Nexus Gate - Validation Schemas (Zod)
 // Every API input is validated server-side.
 // ====================================================================
 
@@ -19,7 +19,7 @@ export const emailSchema = z
   .email("Enter a valid email address")
   .max(255);
 
-// Password schema — minimum standard: 8+ chars with uppercase, lowercase,
+// Password schema - minimum standard: 8+ chars with uppercase, lowercase,
 // number, and special character. Enforced server-side (cannot be bypassed).
 export const passwordSchema = z
   .string()
@@ -33,7 +33,7 @@ export const passwordSchema = z
     "Include at least one special character (!@#$%^&*...)",
   );
 
-// STRONG password schema — used by register, reset-password, change-password,
+// STRONG password schema - used by register, reset-password, change-password,
 // and admin-create-account routes. Runs the shared scorePassword() scorer on
 // the SERVER and rejects any password scoring below MIN_PASSWORD_SCORE (4).
 export const strongPasswordSchema = passwordSchema.refine(
@@ -78,10 +78,10 @@ export const programSchema = z
   .transform((val) => (val === "" ? null : val));
 
 // ---- Section schema (STRICT: must be "<number>-<letter>" format, max 3 chars) ----
-// Examples: "1-A", "2-B", "3-C" — valid (3 chars)
-// "10-A" — valid (4 chars, multi-digit year)
-// "2" — INVALID (no hyphen + letter)
-// "2-AB" — INVALID (5 chars, exceeds max for student sections)
+// Examples: "1-A", "2-B", "3-C" - valid (3 chars)
+// "10-A" - valid (4 chars, multi-digit year)
+// "2" - INVALID (no hyphen + letter)
+// "2-AB" - INVALID (5 chars, exceeds max for student sections)
 // The number and letter can be multi-char (e.g. "10-A") but the total
 // length is capped at 3 for student sections (single-digit year + single letter).
 export const sectionSchema = z
@@ -164,7 +164,7 @@ export const forgotPasswordSchema = z.object({
       (url) => {
         // Relative paths (single leading "/") are inherently same-origin.
         // CRITICAL: protocol-relative URLs ("//evil.com/path") also start
-        // with "/" but resolve to a cross-origin host in the browser — they
+        // with "/" but resolve to a cross-origin host in the browser - they
         // are an open-redirect vector and MUST be rejected. A safe relative
         // path is "/" followed by a non-slash character (or just "/").
         if (url === "/") return true;
@@ -194,7 +194,17 @@ export const whitelistRowSchema = z.object({
   studentId: studentIdSchema,
   email: emailSchema,
   fullName: z.string().trim().min(2).max(255),
-  program: z.string().trim().min(1).max(50),
+  // Program must be a known code (mirrors file-parser.ts). Prevents
+  // organizers from injecting garbage programs that would bypass event
+  // visibility matching.
+  program: z
+    .string()
+    .trim()
+    .min(1)
+    .max(50)
+    .refine((val) => PROGRAM_CODES.has(val), {
+      message: "Select a valid program from the list",
+    }),
   section: z
     .string()
     .trim()
@@ -357,7 +367,7 @@ export const updateEventSchema = eventBaseSchema
     { message: "Time-out close time must not exceed the event end time" },
   );
 
-// ---- Attendance (v8 — signed scan certificate) ----
+// ---- Attendance (v8 - signed scan certificate) ----
 // The scan endpoint accepts a SIGNED scan certificate instead of a raw
 // token. The certificate is cryptographically bound to the device and
 // includes the token + sub-frame captures (index + client-observed HMAC)
@@ -384,7 +394,7 @@ export const scanCertificateSchema = z.object({
   signature: z.string().min(1),
 });
 
-// Legacy scan schema (for backward compatibility — not used by new clients)
+// Legacy scan schema (for backward compatibility - not used by new clients)
 export const scanSchema = z.object({
   eventId: z.number().int().positive(),
   token: z.string().trim().min(1, "Token is required").max(500),
@@ -555,14 +565,14 @@ export const deactivateAccountSchema = z.object({
 });
 
 // ---- Pagination ----
-// Default pagination schema — caps pageSize at 100 to prevent abuse on
+// Default pagination schema - caps pageSize at 100 to prevent abuse on
 // list endpoints (accounts, audit-logs, overrides, etc.).
 export const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(50),
 });
 
-// Whitelist pagination schema — allows up to 500 per page. The override
+// Whitelist pagination schema - allows up to 500 per page. The override
 // page needs to fetch all eligible students for an event in one request
 // (to populate the student dropdown). Department-wide events can have
 // hundreds of students, so the default 100 cap is too low and causes

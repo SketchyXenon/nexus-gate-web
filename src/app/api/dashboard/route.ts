@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/api";
 import { getTimeStatus } from "@/lib/event-time";
-import { studentNeedsProfile } from "@/lib/event-visibility";
+import {
+  studentNeedsProfile,
+  visibleEventWhereOr,
+} from "@/lib/event-visibility";
 
 // GET /api/dashboard
 // Short cache to reduce DB load on repeated page loads (30s stale-while-revalidate).
@@ -12,20 +15,13 @@ export async function GET(_req: NextRequest) {
   const { account } = res;
 
   if (account.role === "USER") {
-    const hasProgramAndSection = !!account.program && !!account.section;
-    const eligibleBase = hasProgramAndSection
-      ? {
-          status: "active" as const,
-          OR: [
-            { targetProgram: null, targetSection: null },
-            { targetProgram: account.program, targetSection: account.section },
-          ],
-        }
-      : {
-          status: "active" as const,
-          targetProgram: null,
-          targetSection: null,
-        };
+    // v8: open-to-all, program-wide in the student's program, or exact
+    // program+section match. Organizers' program-scoped events now reach
+    // every student in that program.
+    const eligibleBase = {
+      status: "active" as const,
+      OR: visibleEventWhereOr(account.program, account.section),
+    };
 
     // Run all 3 queries in parallel (was 3 sequential awaits).
     const [totalAttended, attendances, allEligibleEvents] = await Promise.all([

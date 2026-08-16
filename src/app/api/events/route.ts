@@ -4,7 +4,10 @@ import { createEventSchema } from "@/lib/validation";
 import { badRequest, forbidden, parseBody, requireAuth } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import { getTimeStatus } from "@/lib/event-time";
-import { studentNeedsProfile } from "@/lib/event-visibility";
+import {
+  studentNeedsProfile,
+  visibleEventWhereOr,
+} from "@/lib/event-visibility";
 
 // GET /api/events
 // Returns active + upcoming events (not ended ones, to keep lists clean).
@@ -13,8 +16,8 @@ import { studentNeedsProfile } from "@/lib/event-visibility";
 // STRICT EVENT VISIBILITY (v7):
 //
 //   USER (student) sees an event if and only if:
-//     1. OPEN TO ALL — both targetProgram AND targetSection are null, OR
-//     2. EXACT COURSE+SECTION MATCH — targetProgram = student's program
+//     1. OPEN TO ALL - both targetProgram AND targetSection are null, OR
+//     2. EXACT COURSE+SECTION MATCH - targetProgram = student's program
 //        AND targetSection = student's section (BOTH must match).
 //   Program-wide events (targetSection null, targetProgram set) are HIDDEN
 //   from students. If the student hasn't set their program/section, they
@@ -22,7 +25,7 @@ import { studentNeedsProfile } from "@/lib/event-visibility";
 //
 //   ORGANIZER sees:
 //     1. Open-to-all events, OR
-//     2. Events in their own program (any section — for QR delegation), OR
+//     2. Events in their own program (any section - for QR delegation), OR
 //     3. Events that exactly match their program + section.
 //
 //   ADMIN sees ALL events (no filtering).
@@ -40,7 +43,7 @@ export async function GET(req: NextRequest) {
   // is requested we implicitly turn on includeEnded so the post-filter can
   // keep ended rows instead of stripping them.
   const statusFilter = searchParams.get("status") || undefined; // "active" | "upcoming" | "ended" | "all"
-  // v16-B: sort by scheduledAt — "newest" (desc, default) or "oldest" (asc)
+  // v16-B: sort by scheduledAt - "newest" (desc, default) or "oldest" (asc)
   const sort = searchParams.get("sort") || "newest";
   const sortDir: "desc" | "asc" = sort === "oldest" ? "asc" : "desc";
 
@@ -60,52 +63,24 @@ export async function GET(req: NextRequest) {
     where.title = { contains: q };
   }
 
-  // ---- Role-aware visibility filtering ----
-  if (account.role === "USER") {
-    // STRICT: open-to-all OR exact program+section match.
-    // Program-wide events (targetSection null, targetProgram set) are HIDDEN.
-    const hasProgramAndSection = !!account.program && !!account.section;
-    if (hasProgramAndSection) {
-      where.AND = [
-        {
-          OR: [
-            // Open to ALL programs AND sections (true department-wide)
-            { targetProgram: null, targetSection: null },
-            // EXACT program + section match (strict)
-            { targetProgram: account.program, targetSection: account.section },
-          ],
-        },
-      ];
-    } else {
-      // No program/section set → only open-to-all events. The frontend
-      // shows a "complete your profile" prompt via the `needsProfile` flag.
-      where.AND = [{ targetProgram: null, targetSection: null }];
-    }
-  } else if (account.role === "ORGANIZER") {
-    // Organizers see: open-to-all OR their program (any section) OR exact match.
-    // If the organizer hasn't set their program, they only see open-to-all.
-    if (account.program) {
-      where.AND = [
-        {
-          OR: [
-            // Open to ALL
-            { targetProgram: null, targetSection: null },
-            // Program-wide (any section) — for QR delegation
-            { targetProgram: account.program, targetSection: null },
-            // Exact program + section match
-            { targetProgram: account.program, targetSection: account.section },
-          ],
-        },
-      ];
-    } else {
-      where.AND = [{ targetProgram: null, targetSection: null }];
-    }
+  // ---- Role-aware visibility filtering (v8) ----
+  // USER + ORGANIZER share the same rule: open-to-all, program-wide in
+  // the caller's program, or exact program+section match. This makes an
+  // organizer's program-scoped event visible to every student in that
+  // program (v7 hid program-wide events, silently breaking the flow).
+  // ADMIN sees all active events (no filtering).
+  if (account.role === "USER" || account.role === "ORGANIZER") {
+    where.AND = [{ OR: visibleEventWhereOr(account.program, account.section) }];
   }
-  // ADMIN: no filtering — sees all active events.
 
   // SECURITY: Never return eventSecret to USER accounts. Only
   // ORGANIZER/ADMIN need it (to project QR codes). Students could
   // forge valid QR tokens if they had the secret.
+  // Organizers may only see the secret for events they OWN - disclosing
+  // another organizer's secret here would let them project QR locally and
+  // bypass the delegation gate in /api/events/[id]/secret (org-tag +
+  // delegationEnabled + departmental POLP). Non-owned rows are stripped
+  // below. Admins see all secrets.
   const canSeeSecret = account.role === "ADMIN" || account.role === "ORGANIZER";
 
   // Pagination: default page 1, 100 per page. Cap at 200 to prevent abuse.
@@ -158,10 +133,18 @@ export async function GET(req: NextRequest) {
     includeEnded || statusFilter === "ended" || statusFilter === "all";
 
   const eventsWithStatus = events
-    .map((e) => ({
-      ...e,
-      timeStatus: getTimeStatus(e),
-    }))
+    .map((e) => {
+      // POLP: organizers only keep the secret for events they own. Admins
+      // keep all. This is applied after fetch because the select is shared.
+      const isOwnOrAdmin = account.role === "ADMIN" || e.ownerId === account.id;
+      const { eventSecret: _stripped, ...rest } = e as typeof e & {
+        eventSecret?: unknown;
+      };
+      return {
+        ...(isOwnOrAdmin ? e : rest),
+        timeStatus: getTimeStatus(e),
+      };
+    })
     .filter((e) => {
       if (effectiveIncludeEnded) return true;
       // Hide ended events from active lists (but keep cancelled hidden too)

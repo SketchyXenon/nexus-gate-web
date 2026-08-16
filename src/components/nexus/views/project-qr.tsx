@@ -45,6 +45,7 @@ import {
   useEvents,
   useEventSecret,
   useEventAttendance,
+  useMe,
 } from "@/lib/api-client";
 import {
   generateQrPayload,
@@ -60,13 +61,20 @@ import { useAttendanceSocket } from "@/hooks/use-attendance-socket";
 // can't be reused by a student who isn't actually in the room.
 //
 // v16-B additions:
-//   - Fullscreen mode (Fullscreen API) for projection on a projector or TV
-//   - Larger, more prominent QR code
-//   - Responsive layout (mobile/tablet/desktop)
-//   - Visible refresh timer + live/connected indicators
+//  - Fullscreen mode (Fullscreen API) for projection on a projector or TV
+//  - Larger, more prominent QR code
+//  - Responsive layout (mobile/tablet/desktop)
+//  - Visible refresh timer + live/connected indicators
 export function ProjectQrView() {
   const { data: eventsData } = useEvents();
-  const events = eventsData?.events ?? [];
+  const { data: me } = useMe();
+  // POLP: department-wide events are not delegatable, so hide other
+  // organizers' departmental events from the projection picker. Own
+  // events (any scope) and non-departmental events stay selectable.
+  const events = (eventsData?.events ?? []).filter((e) => {
+    if (e.scope !== "departmental") return true;
+    return e.ownerId === me?.id;
+  });
 
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
   const eventId = selectedEventId ?? events[0]?.id ?? null;
@@ -75,7 +83,7 @@ export function ProjectQrView() {
   // Create the socket first so we can use its connected state to control polling.
   const socket = useAttendanceSocket(eventId);
   // Poll only when the socket is disconnected (fallback). When connected,
-  // Ably pushes realtime updates — no polling needed.
+  // Ably pushes realtime updates - no polling needed.
   const presenceQ = useEventAttendance(eventId, {
     socketConnected: socket.connected,
   });
@@ -112,7 +120,7 @@ export function ProjectQrView() {
         setBlock(t.timeBlock);
         setSubFrame(t.subFrame);
       } catch {
-        // Web Crypto hiccup — next tick will retry.
+        // Web Crypto hiccup - next tick will retry.
       }
     };
     // Initial render immediately
@@ -231,8 +239,8 @@ export function ProjectQrView() {
     .reverse();
 
   // Compute QR pixel size:
-  //   - Normal (non-fullscreen): 320 px (was 280) for a more prominent code
-  //   - Fullscreen: 70% of the smaller viewport dimension, capped at 720 px
+  //  - Normal (non-fullscreen): 320 px (was 280) for a more prominent code
+  //  - Fullscreen: 70% of the smaller viewport dimension, capped at 720 px
   //     so it never overflows on small projectors.
   const normalQrSize = 320;
   const fullscreenQrSize = Math.max(
@@ -281,7 +289,7 @@ export function ProjectQrView() {
             </Button>
           </div>
 
-          {/* QR code — fills most of the screen */}
+          {/* QR code - fills most of the screen */}
           <div className="relative grid place-items-center">
             <svg
               className="absolute inset-0 -rotate-90 pointer-events-none"
@@ -375,7 +383,7 @@ export function ProjectQrView() {
           </div>
           <p className="text-[10px] sm:text-xs text-white/50 text-center max-w-md">
             Hold your camera steady for ~2 seconds to scan. A new code appears
-            every 15 seconds — screenshots can&apos;t be reused.
+            every 15 seconds - screenshots can&apos;t be reused.
           </p>
         </div>
       )}
@@ -543,6 +551,31 @@ export function ProjectQrView() {
                     );
                   }
 
+                  if (code === "DELEGATION_DEPARTMENTAL_DISABLED") {
+                    return (
+                      <motion.div
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex flex-col items-center gap-4 py-16 text-center"
+                      >
+                        <div className="grid place-items-center h-16 w-16 rounded-full bg-amber-500/10 text-amber-600">
+                          <ShieldCheck className="h-8 w-8" />
+                        </div>
+                        <div>
+                          <p className="font-heading font-semibold text-lg">
+                            Delegation unavailable
+                          </p>
+                          <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+                            Department-wide events are open to everyone, so QR
+                            delegation is disabled for them (least privilege).
+                            Only the event creator or an administrator can
+                            project this code.
+                          </p>
+                        </div>
+                      </motion.div>
+                    );
+                  }
+
                   // Generic error
                   return (
                     <Alert variant="destructive">
@@ -677,11 +710,11 @@ export function ProjectQrView() {
                     </div>
                     <p className="text-[11px] text-center text-muted-foreground mt-2 flex items-center justify-center gap-1">
                       <Clock className="h-3 w-3" />A new code appears every 15
-                      seconds — old codes stop working right away.
+                      seconds - old codes stop working right away.
                     </p>
                   </div>
 
-                  {/* Fullscreen CTA — visible below the QR on small screens,
+                  {/* Fullscreen CTA - visible below the QR on small screens,
                       gives organizers an obvious "project this" button. */}
                   <Button
                     variant="outline"
@@ -713,7 +746,7 @@ export function ProjectQrView() {
                 {!socket.connected && eventId != null && (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 rounded-md p-2">
                     <WifiOff className="h-3.5 w-3.5" />
-                    Realtime link is offline — falling back to polling.
+                    Realtime link is offline - falling back to polling.
                   </div>
                 )}
 

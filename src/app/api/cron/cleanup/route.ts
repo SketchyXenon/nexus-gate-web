@@ -113,10 +113,14 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ ok: true, ...result });
         }
       } catch {
-        // Empty/invalid JSON — fall through to 401.
+        // Empty/invalid JSON - fall through to 401.
       }
     }
-    return authorizeCron(req) ?? NextResponse.json({ ok: true });
+    // Fail closed: if still unauthorized, authorizeCron returns a 401.
+    // If authorized, fall through and run the job (previously returned
+    // ok:true without running it - silent no-op).
+    const denied = authorizeCron(req);
+    if (denied) return denied;
   }
 
   const result = await runCleanup();

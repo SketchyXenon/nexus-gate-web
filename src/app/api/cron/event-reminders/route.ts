@@ -31,10 +31,14 @@ async function runEventReminders() {
   });
 
   if (upcomingEvents.length === 0) {
-    return { checkedEvents: 0, notificationsCreated: 0, timestamp: now.toISOString() };
+    return {
+      checkedEvents: 0,
+      notificationsCreated: 0,
+      timestamp: now.toISOString(),
+    };
   }
 
-  // Step 2: bulk-fetch all eligible students ONCE (was N+1 — one query
+  // Step 2: bulk-fetch all eligible students ONCE (was N+1 - one query
   // per event). Then distribute to events in memory.
   const allEligibleStudents = await db.account.findMany({
     where: {
@@ -45,18 +49,28 @@ async function runEventReminders() {
     select: { id: true, program: true, section: true },
   });
 
-  const eventConditions: Array<{ event: typeof upcomingEvents[0]; accountIds: string[] }> = [];
+  const eventConditions: Array<{
+    event: (typeof upcomingEvents)[0];
+    accountIds: string[];
+  }> = [];
 
   for (const event of upcomingEvents) {
     if (event.targetProgram && event.targetSection) {
-      // Exact program + section match — filter in memory.
+      // Exact program + section match - filter in memory.
       const accountIds = allEligibleStudents
-        .filter((s) => s.program === event.targetProgram && s.section === event.targetSection)
+        .filter(
+          (s) =>
+            s.program === event.targetProgram &&
+            s.section === event.targetSection,
+        )
         .map((s) => s.id);
       eventConditions.push({ event, accountIds });
     } else if (!event.targetProgram && !event.targetSection) {
-      // Open to all — all eligible students.
-      eventConditions.push({ event, accountIds: allEligibleStudents.map((s) => s.id) });
+      // Open to all - all eligible students.
+      eventConditions.push({
+        event,
+        accountIds: allEligibleStudents.map((s) => s.id),
+      });
     }
     // Events with only program OR only section (not both) are skipped.
   }
@@ -68,19 +82,20 @@ async function runEventReminders() {
 
   // Step 4: bulk-fetch existing reminder notifications for dedup.
   // One query instead of N (one per student per event). Dedup is based on
-  // the type field which encodes the eventId as "reminder:event:N" — this
+  // the type field which encodes the eventId as "reminder:event:N" - this
   // avoids false-positive matches from the old title-substring check
   // (e.g. "Math" matching "Math Review").
-  const existingReminders = allAccountIds.length > 0
-    ? await db.notification.findMany({
-        where: {
-          accountId: { in: allAccountIds },
-          type: { startsWith: "reminder:event:" },
-          createdAt: { gt: new Date(now.getTime() - 60 * 60 * 1000) },
-        },
-        select: { accountId: true, type: true },
-      })
-    : [];
+  const existingReminders =
+    allAccountIds.length > 0
+      ? await db.notification.findMany({
+          where: {
+            accountId: { in: allAccountIds },
+            type: { startsWith: "reminder:event:" },
+            createdAt: { gt: new Date(now.getTime() - 60 * 60 * 1000) },
+          },
+          select: { accountId: true, type: true },
+        })
+      : [];
 
   // Build a Set of "accountId:eventId" keys for O(1) dedup lookup.
   const existingKeys = new Set<string>();
@@ -194,10 +209,15 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ ok: true, ...result });
         }
       } catch {
-        // Empty/invalid JSON — fall through to 401.
+        // Empty/invalid JSON - fall through to 401.
       }
     }
-    return authorizeCron(req) ?? NextResponse.json({ ok: true });
+    // Header/query auth failed and body-secret fallback failed. Re-check
+    // via authorizeCron (returns a 401 response, or null if authorized).
+    // If authorized, run the job - previously this returned ok:true WITHOUT
+    // running the job (silent no-op). Fail closed: denied -> 401.
+    const denied = authorizeCron(req);
+    if (denied) return denied;
   }
 
   const result = await runEventReminders();

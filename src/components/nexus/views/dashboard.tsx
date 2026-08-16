@@ -515,6 +515,7 @@ export function DashboardView({ user, onNavigate }: Props) {
                         : "All programs"}
                       {e.targetSection ? ` · ${e.targetSection}` : ""} ·{" "}
                       {format(new Date(e.scheduledAt), "MMM d, HH:mm")}
+                      {e.owner ? ` · ${e.owner}` : ""}
                     </p>
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">

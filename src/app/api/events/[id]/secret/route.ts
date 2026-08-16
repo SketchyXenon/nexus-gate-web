@@ -8,15 +8,15 @@ type Ctx = { params: Promise<{ id: string }> };
 
 // GET /api/events/[id]/secret
 // Returns the eventSecret so the projector can generate rotating QR tokens
-// locally (Method 1 — HMAC-SHA256, 2 FPS sub-frame rotation).
+// locally (Method 1 - HMAC-SHA256, 2 FPS sub-frame rotation).
 //
 // ================================================================
-// STRICT QR DELEGATION RULES (v10 — organization tag enforced)
+// STRICT QR DELEGATION RULES (v10 - organization tag enforced)
 // ================================================================
 //
-//   - ADMIN: can project ANY event (bypasses all delegation checks)
-//   - EVENT OWNER: can always project their own event
-//   - OTHER ORGANIZER: can project ONLY IF ALL of the following are true:
+//  - ADMIN: can project ANY event (bypasses all delegation checks)
+//  - EVENT OWNER: can always project their own event
+//  - OTHER ORGANIZER: can project ONLY IF ALL of the following are true:
 //
 //       1. The organizer has a non-empty `organizationName` tag set.
 //          → If the admin has NOT set an org tag on the organizer's
@@ -33,7 +33,7 @@ type Ctx = { params: Promise<{ id: string }> };
 //       4. The organizer's org tag MATCHES the event owner's org tag.
 //          → e.g. both are "College of Technology"
 //          → This applies to BOTH open-to-all AND course-specific events.
-//            There is no exception for open-to-all — the org tag must
+//            There is no exception for open-to-all - the org tag must
 //            always match.
 //
 //   If ANY of these conditions fail, the organizer gets a 403 with a
@@ -50,11 +50,22 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   const event = await db.event.findUnique({
     where: { id: Number(id) },
     select: {
-      id: true, title: true, eventSecret: true, scheduledAt: true,
-      endsAt: true, checkInOpensAt: true, checkInClosesAt: true,
-      timeOutOpensAt: true, timeOutClosesAt: true, enableTimeOut: true,
-      targetProgram: true, targetSection: true, scope: true,
-      ownerId: true, status: true, delegatable: true,
+      id: true,
+      title: true,
+      eventSecret: true,
+      scheduledAt: true,
+      endsAt: true,
+      checkInOpensAt: true,
+      checkInClosesAt: true,
+      timeOutOpensAt: true,
+      timeOutClosesAt: true,
+      enableTimeOut: true,
+      targetProgram: true,
+      targetSection: true,
+      scope: true,
+      ownerId: true,
+      status: true,
+      delegatable: true,
       delegationEnabled: true,
     },
   });
@@ -74,21 +85,37 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   } else {
     // ---- OTHER ORGANIZER: strict delegation checks ----
 
+    // CHECK 0 (POLP): Departmental (open-to-all) events are NEVER
+    // delegatable. A departmental event targets the whole department, so
+    // letting another organizer project its QR is unnecessary privilege -
+    // the owner (or an admin) handles projection. Course/section-scoped
+    // events may still be delegated under the checks below.
+    if (event.scope === "departmental") {
+      return NextResponse.json(
+        {
+          error:
+            "QR delegation is not available for department-wide events. Departmental events are open to everyone - only the event creator or an administrator can project this QR code.",
+          code: "DELEGATION_DEPARTMENTAL_DISABLED",
+        },
+        { status: 403 },
+      );
+    }
+
     // CHECK 1: Organizer MUST have an organization tag.
     // If the admin has not set an org tag on this organizer's account,
-    // delegation is COMPLETELY DISABLED — no exceptions, not even for
+    // delegation is COMPLETELY DISABLED - no exceptions, not even for
     // open-to-all events. The admin must add the org tag first.
     const organizerOrg = account.organizationName?.trim();
     if (!organizerOrg) {
       return forbidden(
-        "QR delegation is disabled for your account because you have no organization tag. An administrator must set your organization tag before you can project another organizer's QR code."
+        "QR delegation is disabled for your account because you have no organization tag. An administrator must set your organization tag before you can project another organizer's QR code.",
       );
     }
 
     // CHECK 2: The event's delegationEnabled flag must be true.
     if (!event.delegationEnabled) {
       return forbidden(
-        "QR delegation is not enabled for this event. Only the event creator or an administrator can project this QR code."
+        "QR delegation is not enabled for this event. Only the event creator or an administrator can project this QR code.",
       );
     }
 
@@ -100,7 +127,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     const ownerOrg = owner?.organizationName?.trim();
     if (!ownerOrg) {
       return forbidden(
-        "QR delegation is blocked because the event creator has no organization tag. The administrator must set the event creator's organization tag before delegation can be used."
+        "QR delegation is blocked because the event creator has no organization tag. The administrator must set the event creator's organization tag before delegation can be used.",
       );
     }
 
@@ -109,11 +136,11 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     // There is NO exception for open-to-all events.
     if (ownerOrg !== organizerOrg) {
       return forbidden(
-        `You can only delegate QR projection within the same organization. The event creator is tagged "${ownerOrg}" but you are tagged "${organizerOrg}". Contact your administrator if this is incorrect.`
+        `You can only delegate QR projection within the same organization. The event creator is tagged "${ownerOrg}" but you are tagged "${organizerOrg}". Contact your administrator if this is incorrect.`,
       );
     }
 
-    // All checks passed — delegation is allowed.
+    // All checks passed - delegation is allowed.
     isDelegated = true;
     delegationMode = "same_organization";
     delegatedOrgTag = organizerOrg;
@@ -123,7 +150,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     return forbidden("This event is no longer active");
   }
 
-  // Use the shared time-window helper (plural — includes time-out window).
+  // Use the shared time-window helper (plural - includes time-out window).
   const windows = getEventTimeWindows(event);
   const checkInWindow = windows.checkIn;
   const timeOutWindow = windows.timeOut;
@@ -142,12 +169,14 @@ export async function GET(req: NextRequest, { params }: Ctx) {
           opensAt: checkInWindow.opensAt.toISOString(),
           closesAt: checkInWindow.closesAt.toISOString(),
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
     const lastClosesAt = timeOutWindow
-      ? (timeOutWindow.closesAt > checkInWindow.closesAt ? timeOutWindow.closesAt : checkInWindow.closesAt)
+      ? timeOutWindow.closesAt > checkInWindow.closesAt
+        ? timeOutWindow.closesAt
+        : checkInWindow.closesAt
       : checkInWindow.closesAt;
     return NextResponse.json(
       {
@@ -155,11 +184,11 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         code: "ENDED",
         closesAt: lastClosesAt.toISOString(),
       },
-      { status: 403 }
+      { status: 403 },
     );
   }
 
-  // At least one window is live — determine which mode we're in.
+  // At least one window is live - determine which mode we're in.
   const isCheckInLive = checkInWindow.isLive;
   const isTimeOutLive = timeOutWindow?.isLive ?? false;
   const activeWindow = isCheckInLive ? checkInWindow : timeOutWindow!;
@@ -184,22 +213,29 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     });
   }
 
-  // Event is live — return the secret
-  return NextResponse.json({
-    id: event.id, title: event.title, eventSecret: event.eventSecret,
-    scheduledAt: event.scheduledAt, endsAt: event.endsAt,
-    checkInOpensAt: event.checkInOpensAt,
-    checkInClosesAt: event.checkInClosesAt,
-    targetProgram: event.targetProgram,
-    targetSection: event.targetSection, scope: event.scope,
-    windowOpensAt: activeWindow.opensAt,
-    windowClosesAt: activeWindow.closesAt,
-    isCheckInLive,
-    isTimeOutLive,
-    enableTimeOut: event.enableTimeOut,
-    isDelegated,
-    delegatable: event.delegatable,
-    delegationEnabled: event.delegationEnabled,
-    delegationMode,
-  }, { headers: { "Cache-Control": "private, no-cache" } });
+  // Event is live - return the secret
+  return NextResponse.json(
+    {
+      id: event.id,
+      title: event.title,
+      eventSecret: event.eventSecret,
+      scheduledAt: event.scheduledAt,
+      endsAt: event.endsAt,
+      checkInOpensAt: event.checkInOpensAt,
+      checkInClosesAt: event.checkInClosesAt,
+      targetProgram: event.targetProgram,
+      targetSection: event.targetSection,
+      scope: event.scope,
+      windowOpensAt: activeWindow.opensAt,
+      windowClosesAt: activeWindow.closesAt,
+      isCheckInLive,
+      isTimeOutLive,
+      enableTimeOut: event.enableTimeOut,
+      isDelegated,
+      delegatable: event.delegatable,
+      delegationEnabled: event.delegationEnabled,
+      delegationMode,
+    },
+    { headers: { "Cache-Control": "private, no-cache" } },
+  );
 }

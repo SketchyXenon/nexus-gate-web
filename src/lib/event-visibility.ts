@@ -1,35 +1,39 @@
 // ====================================================================
-// Nexus Gate — Event visibility predicate (pure logic, unit-tested)
+// Nexus Gate - Event visibility predicate (pure logic, unit-tested)
 // ====================================================================
-// This module exports pure functions that encapsulate the STRICT
-// course/section alignment rule used by GET /api/events,
-// GET /api/dashboard, and the admin/organizer dashboards.
+// This module exports pure functions that encapsulate the course/section
+// alignment rule used by GET /api/events, GET /api/dashboard, and the
+// admin/organizer dashboards.
 //
-// STRICT RULE (v7):
+// VISIBILITY RULE (v8 - organizer events reach their students):
 //   An event is visible to a student if and only if ONE of the following
 //   is true:
 //
-//     1. OPEN TO ALL — both targetProgram AND targetSection are null
+//     1. OPEN TO ALL - both targetProgram AND targetSection are null
 //        (a true department-wide / school-wide event).
 //
-//     2. EXACT COURSE+SECTION MATCH — the event's targetProgram equals
-//        the student's program AND the event's targetSection equals the
-//        student's section. BOTH must match exactly.
+//     2. PROGRAM-WIDE MATCH - the event's targetProgram equals the
+//        student's program AND targetSection is null. This makes an
+//        organizer's program-scoped event (no specific section) visible
+//        to every student in that program.
 //
-//   Program-wide events (targetProgram set, targetSection null) are
-//   HIDDEN from students — the event must target the student's EXACT
-//   course + section combination, OR be open to everyone.
+//     3. EXACT COURSE+SECTION MATCH - targetProgram equals the student's
+//        program AND targetSection equals the student's section.
 //
-//   If the student hasn't set their program/section, they can ONLY see
-//   open-to-all events. The frontend shows a "complete your profile"
-//   prompt in that case.
+//   v7 hid program-wide events from students, which silently broke the
+//   organizer->student flow: organizers (faculty) usually have a program
+//   but no section, so their academic events defaulted to program-wide
+//   and were invisible to every student. v8 fixes that.
+//
+//   If the student hasn't set their program, they can ONLY see open-to-all
+//   events. The frontend shows a "complete your profile" prompt in that case.
 //
 // ROLE AWARENESS:
-//   - ADMIN: sees ALL events (no filtering).
-//   - ORGANIZER: sees all events in their OWN program (program-wide
-//     visibility for projection delegation), plus open-to-all events,
-//     plus exact-section matches.
-//   - USER: subject to the strict rule above.
+//  - ADMIN: sees ALL events (no filtering).
+//  - ORGANIZER: same rule as students (open-to-all, program-wide in their
+//     program, or exact section match). QR delegation is governed separately
+//     by /api/events/[id]/secret, not by list visibility.
+//  - USER: subject to the rule above.
 // ====================================================================
 
 export interface EventVisibilityInput {
@@ -43,81 +47,52 @@ export interface EventVisibilityInput {
 }
 
 /**
- * STRICT visibility predicate for USER (student) accounts.
+ * Visibility predicate for USER (student) accounts (v8).
  *
  * @returns `true` if the event is visible to the student, `false` otherwise.
  */
 export function isEventVisibleToStudent(input: EventVisibilityInput): boolean {
-  const { targetProgram, targetSection, studentProgram, studentSection } = input;
+  const { targetProgram, targetSection, studentProgram, studentSection } =
+    input;
 
-  // Rule 1: Open to ALL — both target fields null.
+  // Rule 1: Open to ALL - both target fields null.
   if (targetProgram === null && targetSection === null) {
     return true;
   }
 
-  // Rule 2: EXACT course + section match.
-  // The event must target the student's EXACT program AND section.
-  // Program-wide events (targetSection null but targetProgram set) are
-  // HIDDEN — the event must be specific to the student's section.
-  if (targetProgram !== null && targetSection !== null) {
-    // Student must have set BOTH program and section.
-    if (studentProgram === null || studentSection === null) return false;
-    // Exact match required on BOTH dimensions.
-    return targetProgram === studentProgram && targetSection === studentSection;
-  }
+  // Events with no targetProgram are not open-to-all and have no program
+  // to match against (e.g. section-only with null program) - hidden.
+  if (targetProgram === null) return false;
 
-  // Any other configuration (program-wide with null section, or
-  // section-only with null program) is HIDDEN from students under the
-  // strict rule. Only open-to-all or exact program+section matches
-  // are visible.
-  return false;
+  // Student must have set their program to see any program-scoped event.
+  if (studentProgram === null) return false;
+  if (targetProgram !== studentProgram) return false;
+
+  // Rule 2: Program-wide (targetSection null) -> visible to whole program.
+  if (targetSection === null) return true;
+
+  // Rule 3: Exact program + section match.
+  return studentSection !== null && targetSection === studentSection;
 }
 
 /**
  * Visibility predicate for ORGANIZER accounts.
  *
- * Organizers can see:
- *   1. Open-to-all events (for projection/QR delegation).
- *   2. Events in their OWN program (any section — so they can project
- *      QR codes for delegated events in their program).
- *   3. Events that exactly match their program + section.
- *
- * This is broader than the student rule because organizers need to
- * project QR codes for events they don't own but are in their program.
+ * Organizers use the same visibility rule as students (v8): open-to-all,
+ * program-wide in their own program, or exact program+section match.
+ * Cross-organizer QR projection is authorized separately by
+ * /api/events/[id]/secret (organization-tag + delegationEnabled), not by
+ * list visibility, so the list rule does not need to be broader.
  */
-export function isEventVisibleToOrganizer(input: EventVisibilityInput): boolean {
-  const { targetProgram, targetSection, studentProgram, studentSection } = input;
-
-  // Rule 1: Open to ALL.
-  if (targetProgram === null && targetSection === null) {
-    return true;
-  }
-
-  // If the organizer hasn't set their program, they can only see
-  // open-to-all events.
-  if (studentProgram === null) return false;
-
-  // Rule 2: Program-wide event in the organizer's program → visible.
-  if (targetProgram === studentProgram && targetSection === null) {
-    return true;
-  }
-
-  // Rule 3: Exact program + section match → visible.
-  if (
-    targetProgram === studentProgram &&
-    targetSection !== null &&
-    studentSection !== null &&
-    targetSection === studentSection
-  ) {
-    return true;
-  }
-
-  return false;
+export function isEventVisibleToOrganizer(
+  input: EventVisibilityInput,
+): boolean {
+  return isEventVisibleToStudent(input);
 }
 
 /**
  * Role-aware visibility dispatcher. Admins see everything; organizers
- * use the organizer rule; users use the strict student rule.
+ * and users use the v8 rule (open-to-all, program-wide, or exact match).
  *
  * @param role - "ADMIN" | "ORGANIZER" | "USER"
  * @param input - the event + student profile
@@ -125,7 +100,7 @@ export function isEventVisibleToOrganizer(input: EventVisibilityInput): boolean 
  */
 export function isEventVisibleToRole(
   role: "ADMIN" | "ORGANIZER" | "USER",
-  input: EventVisibilityInput
+  input: EventVisibilityInput,
 ): boolean {
   // Admins see ALL events (no filtering).
   if (role === "ADMIN") return true;
@@ -139,6 +114,37 @@ export function isEventVisibleToRole(
  *
  * Returns `true` if EITHER program OR section is missing.
  */
-export function studentNeedsProfile(studentProgram: string | null, studentSection: string | null): boolean {
+export function studentNeedsProfile(
+  studentProgram: string | null,
+  studentSection: string | null,
+): boolean {
   return studentProgram === null || studentSection === null;
+}
+
+/**
+ * Prisma WHERE fragment for the events a USER (student) or ORGANIZER may
+ * see on lists/dashboards. Centralizes the v8 rule so every read path
+ * (GET /api/events, GET /api/dashboard, GET /api/events/[id]) stays in
+ * sync with isEventVisibleToStudent.
+ *
+ * Returns an `OR` array suitable for `where.OR` (or wrapping in AND).
+ */
+export function visibleEventWhereOr(
+  studentProgram: string | null,
+  studentSection: string | null,
+): Record<string, unknown>[] {
+  // Open-to-all is always visible.
+  const or: Record<string, unknown>[] = [
+    { targetProgram: null, targetSection: null },
+  ];
+  // Program-scoped events require a matching program.
+  if (studentProgram) {
+    // Program-wide (any section) -> whole program sees it.
+    or.push({ targetProgram: studentProgram, targetSection: null });
+    // Exact program + section match.
+    if (studentSection) {
+      or.push({ targetProgram: studentProgram, targetSection: studentSection });
+    }
+  }
+  return or;
 }

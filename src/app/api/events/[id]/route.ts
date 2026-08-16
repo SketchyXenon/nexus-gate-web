@@ -9,19 +9,25 @@ import {
 } from "@/lib/api";
 import { updateEventSchema } from "@/lib/validation";
 import { audit } from "@/lib/audit";
+import { isEventVisibleToStudent } from "@/lib/event-visibility";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 // GET /api/events/[id]
-// SECURITY: Never returns eventSecret to USER accounts — they could forge
-// QR tokens with it. Only ORGANIZER (owner) and ADMIN see the secret.
+// SECURITY: Never returns eventSecret to USER accounts - they could forge
+// QR tokens with it. Only the event OWNER (organizer) and ADMIN see the
+// secret. Other organizers may VIEW a non-owned event's metadata when the
+// v8 visibility rule allows it (open-to-all / program-wide in their
+// program / exact section match), but the secret is stripped - they must
+// go through /api/events/[id]/secret for delegated QR projection.
 export async function GET(_req: NextRequest, { params }: Ctx) {
   const res = await requireAuth();
   if ("error" in res) return res.error;
   const { account } = res;
   const { id } = await params;
 
-  // Determine if this account is allowed to see the eventSecret
+  // Select the secret for any ADMIN or ORGANIZER; it is stripped below for
+  // organizers viewing events they do not own.
   const canSeeSecret = account.role === "ADMIN" || account.role === "ORGANIZER";
 
   const event = await db.event.findUnique({
@@ -30,7 +36,6 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       id: true,
       title: true,
       description: true,
-      // eventSecret ONLY included for ORGANIZER/ADMIN (to project QR codes)
       ...(canSeeSecret ? { eventSecret: true } : {}),
       ownerId: true,
       owner: { select: { id: true, fullName: true } },
@@ -54,24 +59,37 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   });
   if (!event) return notFound("Event not found");
 
-  if (account.role === "ORGANIZER" && event.ownerId !== account.id) {
-    return forbidden("You can only view your own events");
-  }
   if (account.role === "USER") {
-    // STRICT visibility (mirrors GET /api/events list scoping):
-    // Open-to-all OR exact program+section match. Program-wide events
-    // (targetProgram set, targetSection null) are HIDDEN from students.
-    const isOpenToAll = !event.targetProgram && !event.targetSection;
-    const isExactMatch =
-      !!event.targetProgram &&
-      !!event.targetSection &&
-      event.targetProgram === account.program &&
-      event.targetSection === account.section;
-    if (!isOpenToAll && !isExactMatch)
-      return forbidden("This event isn't available to you");
+    // v8 visibility (mirrors GET /api/events list scoping): open-to-all,
+    // program-wide in the student's program, or exact program+section match.
+    const visible = isEventVisibleToStudent({
+      targetProgram: event.targetProgram,
+      targetSection: event.targetSection,
+      studentProgram: account.program,
+      studentSection: account.section,
+    });
+    if (!visible) return forbidden("This event isn't available to you");
+  } else if (account.role === "ORGANIZER" && event.ownerId !== account.id) {
+    // Organizers may view metadata of non-owned events they're authorized
+    // to see (v8 rule), but NOT the secret. The secret is stripped below.
+    const visible = isEventVisibleToStudent({
+      targetProgram: event.targetProgram,
+      targetSection: event.targetSection,
+      studentProgram: account.program,
+      studentSection: account.section,
+    });
+    if (!visible) return forbidden("This event isn't available to you");
   }
 
-  return NextResponse.json(event, {
+  // POLP: strip the secret for organizers viewing events they don't own.
+  const isOwnerOrAdmin =
+    account.role === "ADMIN" || event.ownerId === account.id;
+  const { eventSecret: _stripped, ...withoutSecret } = event as typeof event & {
+    eventSecret?: unknown;
+  };
+  const payload = isOwnerOrAdmin ? event : withoutSecret;
+
+  return NextResponse.json(payload, {
     headers: {
       "Cache-Control": "private, no-cache",
     },
@@ -108,11 +126,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   if (account.role === "ORGANIZER") {
     // An organizer without a program cannot set a targetProgram (would allow
     // cross-program event creation). Previously the guard short-circuited.
-    if (
-      targetProgram !== undefined &&
-      targetProgram &&
-      !account.program
-    ) {
+    if (targetProgram !== undefined && targetProgram && !account.program) {
       return forbidden(
         "Your account has no program assigned. Ask an admin to set your program before targeting a specific program.",
       );
@@ -206,8 +220,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 }
 
 // DELETE /api/events/[id]
-// - ?hard=true → permanent deletion (ADMIN only) — removes event + all attendance
-// - default → soft delete (status="cancelled") — preserves attendance records
+// - ?hard=true → permanent deletion (ADMIN only) - removes event + all attendance
+// - default → soft delete (status="cancelled") - preserves attendance records
 export async function DELETE(req: NextRequest, { params }: Ctx) {
   const res = await requireAuth("ORGANIZER");
   if ("error" in res) return res.error;
@@ -223,7 +237,7 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
   }
 
   if (hardDelete) {
-    // Hard delete — ADMIN only. Permanently removes the event and all
+    // Hard delete - ADMIN only. Permanently removes the event and all
     // associated attendance records and overrides (via cascade).
     if (account.role !== "ADMIN") {
       return forbidden("Only administrators can permanently delete events.");
@@ -240,7 +254,7 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
     return NextResponse.json({ ok: true, deleted: true });
   }
 
-  // Soft delete — marks as cancelled, preserves attendance records
+  // Soft delete - marks as cancelled, preserves attendance records
   await db.event.update({
     where: { id: Number(id) },
     data: { status: "cancelled" },

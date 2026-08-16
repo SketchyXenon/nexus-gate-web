@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { forbidden, notFound, requireAuth } from "@/lib/api";
 import { getEventTimeWindows } from "@/lib/event-time";
 import { getProgramLabel } from "@/lib/programs";
+import { isEventVisibleToStudent } from "@/lib/event-visibility";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -11,16 +12,16 @@ type Ctx = { params: Promise<{ id: string }> };
 //
 // Returns full event info for the details dialog. Differs from the
 // organizer-only GET /api/events/[id] (which returns eventSecret) by:
-//   - NEVER returning eventSecret
-//   - returning the caller's own attendance record (for students)
-//   - returning computed check-in / time-out window status
-//   - returning a human-readable program label
+//  - NEVER returning eventSecret
+//  - returning the caller's own attendance record (for students)
+//  - returning computed check-in / time-out window status
+//  - returning a human-readable program label
 //
 // Access rules:
-//   - ADMIN: any event
-//   - ORGANIZER: own events (or any, since this is read-only details —
+//  - ADMIN: any event
+//  - ORGANIZER: own events (or any, since this is read-only details -
 //     but we still scope to own events to match the rest of the app)
-//   - USER: only events targeted at their program/section (so students
+//  - USER: only events targeted at their program/section (so students
 //     can't browse other classes' events)
 // ====================================================================
 
@@ -88,20 +89,15 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     }
   }
   if (account.role === "USER") {
-    // STRICT visibility (mirrors GET /api/events list scoping):
-    //   - Open-to-all events (targetProgram AND targetSection both null) → allow
-    //   - Exact program + section match → allow
-    //   - Program-wide events (targetProgram set, targetSection null) are
-    //     HIDDEN from students on the list, so they must also be rejected
-    //     here. Otherwise a student could read details of any program-wide
-    //     event by guessing the id.
-    const isOpenToAll = !event.targetProgram && !event.targetSection;
-    const isExactMatch =
-      !!event.targetProgram &&
-      !!event.targetSection &&
-      event.targetProgram === account.program &&
-      event.targetSection === account.section;
-    if (!isOpenToAll && !isExactMatch) {
+    // v8 visibility (mirrors GET /api/events list scoping): open-to-all,
+    // program-wide in the student's program, or exact program+section match.
+    const visible = isEventVisibleToStudent({
+      targetProgram: event.targetProgram,
+      targetSection: event.targetSection,
+      studentProgram: account.program,
+      studentSection: account.section,
+    });
+    if (!visible) {
       return forbidden("This event isn't available to you");
     }
   }
