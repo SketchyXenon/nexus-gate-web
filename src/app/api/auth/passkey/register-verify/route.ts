@@ -143,6 +143,46 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // VERIFY THE WRITE: read back the row to confirm the credential blob
+  // actually persisted. This catches storage-level issues (driver binding,
+  // charset, column truncation on TiDB) at registration time so the user is
+  // not silently left with a credential_id but an empty/missing blob —
+  // which is exactly the state that produces "stored credential missing
+  // id or publicKey" at login. If the read-back doesn't match what we wrote,
+  // log loudly (with shape, never the key material) and surface a clear
+  // error instead of claiming success.
+  const verifyRow = await db.$queryRaw<
+    Array<{ cred: string | null; credId: string | null }>
+  >`
+    SELECT passkey_credential AS cred, passkey_credential_id AS credId
+    FROM accounts
+    WHERE id = ${account.id}
+    LIMIT 1
+  `;
+  const written = verifyRow[0];
+  if (!written || written.cred !== stored || written.credId !== credential.id) {
+    console.error(
+      "[passkey/register-verify] write verification FAILED for account",
+      account.id,
+      "| credId matches:",
+      written?.credId === credential.id,
+      "| cred blob matches:",
+      written?.cred === stored,
+      "| written blob length:",
+      written?.cred?.length ?? 0,
+      "| expected blob length:",
+      stored.length,
+    );
+    return failWithCookieDelete(
+      {
+        error:
+          "Passkey could not be stored reliably. Please try again, or contact support if the problem persists.",
+        code: "STORAGE_FAILED",
+      },
+      500,
+    );
+  }
+
   await audit({
     actorId: account.id,
     action: "auth.passkey_registered",

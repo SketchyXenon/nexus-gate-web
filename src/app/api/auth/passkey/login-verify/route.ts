@@ -130,6 +130,8 @@ export async function POST(req: NextRequest) {
   // Note: is_deactivated is BOOLEAN. Postgres pg driver returns true/false;
   // MySQL/TiDB mysql2 driver returns 0/1 (number). We normalize to boolean
   // below so the downstream truthiness check is unambiguous on both.
+  // We also SELECT passkey_credential_id itself so login-verify can recover
+  // the credential `id` from it if the JSON blob is missing that field.
   const rows = await db.$queryRaw<
     Array<{
       id: string;
@@ -142,6 +144,7 @@ export async function POST(req: NextRequest) {
       section: string | null;
       supabaseAuthUid: string | null;
       passkeyCredential: string | null;
+      passkeyCredentialId: string | null;
       isDeactivated: number | boolean | null;
     }>
   >`
@@ -149,6 +152,7 @@ export async function POST(req: NextRequest) {
            student_id AS studentId, program, section,
            supabase_auth_uid AS supabaseAuthUid,
            passkey_credential AS passkeyCredential,
+           passkey_credential_id AS passkeyCredentialId,
            is_deactivated AS isDeactivated
     FROM accounts
     WHERE passkey_credential_id = ${credentialId}
@@ -180,7 +184,36 @@ export async function POST(req: NextRequest) {
   if (account) {
     try {
       const stored = JSON.parse(account.passkeyCredential || "{}");
+      // RECOVERY: register-verify sets passkey_credential_id and the JSON
+      // blob's `id` field to the SAME value (credential.id) in one UPDATE.
+      // So when the blob is missing/stale but the credential_id column has
+      // the value, we can safely recover `stored.id` from it — the column is
+      // the authoritative source (not a guess). This is not a security
+      // bypass: the credential ID is public, and the assertion still has to
+      // cryptographically verify against the stored public key.
+      if (!stored.id && account.passkeyCredentialId) {
+        console.warn(
+          "[passkey/login-verify] blob missing id — recovering from passkey_credential_id column for account",
+          account.id,
+        );
+        stored.id = account.passkeyCredentialId;
+      }
       const publicKey = decodeStoredPublicKey(stored.publicKey);
+      if (!publicKey && account.passkeyCredential) {
+        // Diagnostic: the blob has data but publicKey won't decode. Log the
+        // shape (NOT the value — it contains key material) so the operator
+        // can see whether it's empty, wrong type, or truncated.
+        console.warn(
+          "[passkey/login-verify] publicKey failed to decode for account",
+          account.id,
+          "| blob length:",
+          account.passkeyCredential.length,
+          "| publicKey field type:",
+          typeof stored.publicKey,
+          "| publicKey field truthy:",
+          !!stored.publicKey,
+        );
+      }
       if (stored.id && publicKey) {
         const verification = await verifyAuthenticationResponse({
           response: assertion,
