@@ -179,7 +179,10 @@ async function getScriptSha(): Promise<string | null> {
   if (scriptSha) return scriptSha;
   if (!redis) return null;
   try {
-    scriptSha = await redis.script("LOAD", SLIDING_WINDOW_LUA);
+    // ioredis returns RedisReturnType (Buffer | string | null) for SCRIPT LOAD.
+    // Cast to string; the SHA1 is always a 40-char hex string.
+    const sha = (await redis.script("LOAD", SLIDING_WINDOW_LUA)) as string;
+    scriptSha = typeof sha === "string" ? sha : null;
     return scriptSha;
   } catch {
     return null;

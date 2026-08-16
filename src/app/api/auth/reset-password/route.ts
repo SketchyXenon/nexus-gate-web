@@ -2,6 +2,7 @@
 export const maxDuration = 15;
 
 import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/db";
 import { resetPasswordSchema } from "@/lib/validation";
 import {
   badRequest,
@@ -133,8 +134,15 @@ export async function POST(req: NextRequest) {
     await supabase.auth.signOut().catch(() => {});
 
     // Invalidate the cached account so the next request re-reads from DB.
-    if (account.supabaseAuthUid) {
-      invalidateAccountCache(account.supabaseAuthUid);
+    // ApiAccount doesn't carry supabaseAuthUid, so fetch it (indexed lookup).
+    const acctRow = await db.account
+      .findUnique({
+        where: { id: account.id },
+        select: { supabaseAuthUid: true },
+      })
+      .catch(() => null);
+    if (acctRow?.supabaseAuthUid) {
+      invalidateAccountCache(acctRow.supabaseAuthUid);
     }
 
     await audit({

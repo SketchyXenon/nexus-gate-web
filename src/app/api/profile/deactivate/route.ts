@@ -83,9 +83,15 @@ export async function POST(req: NextRequest) {
 
     // Invalidate the in-memory + Redis account cache so the NEXT request sees
     // the deactivation immediately (without waiting for the 30s TTL). The
-    // cache is keyed by supabaseAuthUid; account came from requireAuth which
-    // already loaded it, so we use it directly instead of a redundant fetch.
-    const cacheKey = account.supabaseAuthUid ?? account.id;
+    // cache is keyed by supabaseAuthUid; ApiAccount doesn't carry it, so fetch
+    // it (one indexed lookup). Fall back to account.id if null (best-effort).
+    const acctRow = await db.account
+      .findUnique({
+        where: { id: account.id },
+        select: { supabaseAuthUid: true },
+      })
+      .catch(() => null);
+    const cacheKey = acctRow?.supabaseAuthUid ?? account.id;
     invalidateAccountCache(cacheKey);
 
     // Sign out the active Supabase session. On a server client this clears
