@@ -25,6 +25,7 @@ import { notifyAttendance } from "@/lib/realtime";
 import { audit } from "@/lib/audit";
 import { getEventTimeWindows } from "@/lib/event-time";
 import { isUniqueConstraintError } from "@/lib/prisma-errors";
+import { isEventVisibleToStudent } from "@/lib/event-visibility";
 
 // Allow up to 30s for scan processing under high concurrency.
 export const maxDuration = 30;
@@ -385,29 +386,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ---- Event eligibility (strict - mirrors GET /api/events visibility) ----
-  // A student is eligible to check in if and only if:
-  //   1. OPEN TO ALL - both targetProgram AND targetSection are null, OR
-  //   2. EXACT MATCH - targetProgram = student's program AND
-  //      targetSection = student's section.
-  //
-  // This is the SAME rule used by the events list endpoint. A student
-  // who can SEE the event in their list can SCAN it. A student who
-  // CANNOT see it (e.g. different program, or program-wide event they're
-  // not targeted to) CANNOT scan it.
-  //
-  // Examples:
-  //   Event: open-to-all → ALL students eligible
-  //   Event: BSIT + 1-A → only BSIT/1-A students eligible
-  //   Event: BSIT + null (program-wide) → NO students eligible
-  //     (program-wide events are hidden from students per strict rule)
-  const isOpenToAll = !event.targetProgram && !event.targetSection;
-  const isExactMatch =
-    !!event.targetProgram &&
-    !!event.targetSection &&
-    event.targetProgram === account.program &&
-    event.targetSection === account.section;
-  if (!isOpenToAll && !isExactMatch) {
+  // ---- Event eligibility (v8 - mirrors GET /api/events visibility) ----
+  // A student is eligible to check in iff they can SEE the event in their
+  // list: open-to-all, program-wide in their program, or exact program+
+  // section match. The shared predicate keeps scan eligibility in lockstep
+  // with list visibility - a student who can see an event can scan it.
+  const eligible = isEventVisibleToStudent({
+    targetProgram: event.targetProgram,
+    targetSection: event.targetSection,
+    studentProgram: account.program,
+    studentSection: account.section,
+  });
+  if (!eligible) {
     return forbidden(
       "You are not eligible for this event. Your course and section must match the event's target.",
     );

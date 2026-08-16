@@ -7,7 +7,6 @@ import { registerSchema } from "@/lib/validation";
 import {
   badRequest,
   checkRateLimit,
-  conflict,
   parseBody,
   dbUnavailable,
   isDbUnavailableError,
@@ -71,11 +70,12 @@ export async function POST(req: NextRequest) {
     // Check for existing email (safe lookup).
     const existingEmail = await safeFindAccountByEmail(email);
 
-    // Existing email — active OR deactivated. Both return the same conflict
-    // so an attacker cannot distinguish them (enumeration-safe), and a
-    // deactivated account's row + admin restore path is preserved. The prior
-    // code hard-deleted deactivated accounts on re-register, which was both an
-    // enumeration oracle (201 vs 409) and destroyed the only restore path.
+    // ENUMERATION-SAFE: if the email already exists, return the SAME 201
+    // success response as a fresh registration. An attacker cannot
+    // distinguish new vs existing by status code, body, or shape. The
+    // existing user is NOT modified; the audit log records the duplicate
+    // attempt server-side only. (06-security-architecture.md §2: identical
+    // response body + status for valid and invalid identifiers.)
     if (existingEmail) {
       await audit({
         actorId: existingEmail.id,
@@ -85,9 +85,16 @@ export async function POST(req: NextRequest) {
         req,
       }).catch(() => {});
 
-      return conflict(
-        "An account with this email already exists. Please sign in, or use the forgot-password option if you need to reset your password.",
-        "EMAIL_EXISTS",
+      return NextResponse.json(
+        {
+          ok: true,
+          message:
+            "Account created! Check your email to confirm your account, then sign in.",
+          email,
+          whitelisted: false,
+          needsEmailConfirmation: true,
+        },
+        { status: 201, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -127,16 +134,23 @@ export async function POST(req: NextRequest) {
     });
     if (authError || !authData.user) {
       // If Supabase says "already registered", the email exists in Supabase
-      // Auth (but not in our accounts table, or it was deactivated and deleted
-      // above). Reject with a clear 409 so the user is not silently accepted.
+      // Auth. Return the same enumeration-safe 201 as the local existing-email
+      // branch so this path is indistinguishable from a fresh registration.
       const msg = authError?.message ?? "";
       if (
         msg.toLowerCase().includes("already registered") ||
         msg.toLowerCase().includes("user already")
       ) {
-        return conflict(
-          "An account with this email already exists. Please sign in, or use the forgot-password option if you need to reset your password.",
-          "EMAIL_EXISTS",
+        return NextResponse.json(
+          {
+            ok: true,
+            message:
+              "Account created! Check your email to confirm your account, then sign in.",
+            email,
+            whitelisted: false,
+            needsEmailConfirmation: true,
+          },
+          { status: 201, headers: { "Cache-Control": "no-store" } },
         );
       }
       return badRequest(

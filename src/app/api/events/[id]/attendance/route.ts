@@ -3,18 +3,19 @@ import { db } from "@/lib/db";
 import { forbidden, notFound, requireAuth, badRequest } from "@/lib/api";
 import { hasMinimumRole } from "@/lib/rbac";
 import { paginationSchema } from "@/lib/validation";
+import { isEventVisibleToStudent } from "@/lib/event-visibility";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 // GET /api/events/[id]/attendance
 // --------------------------------------------------------------------
-// Authorization (v2):
-//   - ADMIN: can view attendance for ANY event.
-//   - ORGANIZER: can view attendance for events they can SEE:
-//       1. Events they own, OR
-//       2. Open-to-all events, OR
-//       3. Events in their own program (any section — for QR delegation), OR
-//       4. Events that exactly match their program + section.
+// Authorization (v8 - mirrors GET /api/events visibility):
+//  - ADMIN: can view attendance for ANY event.
+//  - ORGANIZER: can view attendance for events they can SEE per the v8
+//    rule (open-to-all, program-wide in their program, or exact program+
+//    section match), OR events they own. The previous isProgramMatch
+//    let a BSIT organizer read another section's (e.g. BSIT/2-B)
+//    attendance roster - an info leak. v8 closes it.
 //
 // Pagination: ?page=1&pageSize=100 (max 200). Returns total count for the
 // full roster so the client can show "X of Y present".
@@ -40,19 +41,16 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   });
   if (!event) return notFound("Event not found");
 
-  // ---- Authorization check (mirrors GET /api/events visibility) ----
+  // ---- Authorization check (v8 - mirrors GET /api/events visibility) ----
   if (!hasMinimumRole(account.role, "ADMIN")) {
     const isOwner = event.ownerId === account.id;
-    const isOpenToAll = !event.targetProgram && !event.targetSection;
-    const isProgramMatch =
-      !!event.targetProgram && event.targetProgram === account.program;
-    const isExactMatch =
-      !!event.targetProgram &&
-      !!event.targetSection &&
-      event.targetProgram === account.program &&
-      event.targetSection === account.section;
-
-    if (!isOwner && !isOpenToAll && !isProgramMatch && !isExactMatch) {
+    const visible = isEventVisibleToStudent({
+      targetProgram: event.targetProgram,
+      targetSection: event.targetSection,
+      studentProgram: account.program,
+      studentSection: account.section,
+    });
+    if (!isOwner && !visible) {
       return forbidden("You can only view attendance for your own events");
     }
   }
@@ -94,16 +92,19 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     }),
   ]);
 
-  return NextResponse.json({
-    event,
-    presentCount: totalCount,
-    eligibleCount,
-    attendances,
-    pagination: {
-      page,
-      pageSize,
-      total: totalCount,
-      totalPages: Math.ceil(totalCount / pageSize),
+  return NextResponse.json(
+    {
+      event,
+      presentCount: totalCount,
+      eligibleCount,
+      attendances,
+      pagination: {
+        page,
+        pageSize,
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / pageSize),
+      },
     },
-  }, { headers: { "Cache-Control": "private, no-cache" } });
+    { headers: { "Cache-Control": "private, no-cache" } },
+  );
 }

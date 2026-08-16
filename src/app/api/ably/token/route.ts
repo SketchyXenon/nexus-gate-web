@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Ably from "ably";
 import { db } from "@/lib/db";
 import { forbidden, requireAuth, checkRateLimit } from "@/lib/api";
+import { isEventVisibleToStudent } from "@/lib/event-visibility";
 
 // GET /api/ably/token?eventId=123
 // Issues a short-lived Ably TokenRequest with SUBSCRIBE-ONLY capability,
@@ -101,19 +102,18 @@ export async function GET(req: NextRequest) {
     return forbidden("This event is not available.");
   }
   if (account.role !== "ADMIN") {
-    const isOpenToAll = !event.targetProgram && !event.targetSection;
-    const isExactMatch =
-      !!event.targetProgram &&
-      !!event.targetSection &&
-      event.targetProgram === account.program &&
-      event.targetSection === account.section;
-    const isOrganizerProgramMatch =
-      account.role === "ORGANIZER" &&
-      !!event.targetProgram &&
-      event.targetProgram === account.program;
-    // Organizers also own their events (can always see their own channel).
+    // v8 visibility (mirrors GET /api/events): a user who can SEE the event
+    // can SUBSCRIBE to its realtime channel. Organizers who own the event
+    // always pass (they project the QR). Non-admin organizers use the same
+    // predicate as students + the owner check.
     const isOwner = event.ownerId === account.id;
-    if (!isOpenToAll && !isExactMatch && !isOrganizerProgramMatch && !isOwner) {
+    const visible = isEventVisibleToStudent({
+      targetProgram: event.targetProgram,
+      targetSection: event.targetSection,
+      studentProgram: account.program,
+      studentSection: account.section,
+    });
+    if (!visible && !isOwner) {
       return forbidden("You are not eligible to view this event.");
     }
   }
