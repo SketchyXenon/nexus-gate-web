@@ -162,13 +162,26 @@
 - Passkey credential reuse is rejected across accounts (globally-unique credential ID checked before overwrite)
 - Visit analytics uses HMAC-SHA256(secret, public_ip) with a daily-rotating secret - the raw IP is NEVER stored; the token is non-reversible and can't be correlated across days
 
-### 7. Database Security
-- Row-Level Security (RLS) on all 13 tables (Supabase) - every table has explicit policies
-- Server-only tables (`terms_acceptances`, `visits`) have explicit deny-all RLS policies (`USING (false) WITH CHECK (false)`) for anon/authenticated - migration `0020`. Defense-in-depth: the service role bypasses RLS, but if that key leaks, anon/auth roles still get nothing
-- Guard trigger on `accounts` prevents self-escalation via REST API
-- Service role bypasses RLS (used by the Next.js backend)
-- CHECK constraints on all enum-like columns
-- `visits` table stores only the daily-hashed visitor token (no raw IP, no account binding) - migration `0019_visit_analytics.sql`
+### 7. Database Security (TiDB Serverless — no built-in RLS)
+
+The application data layer runs on **TiDB Serverless** (MySQL-compatible).
+Supabase is used for **auth only** (sessions/JWT/email). Unlike the previous
+Postgres deployment, **TiDB has no Row-Level Security (RLS)** — row scoping
+is enforced entirely in the application layer. See
+[docs/tidb-data-protection.md](./docs/tidb-data-protection.md) for the full
+ADR. Compensating controls:
+
+- **Centralized visibility predicates** (`src/lib/event-visibility.ts`) — every read path imports `visibleEventWhereOr` / `isEventVisibleToStudent` instead of hand-rolling `where` clauses. 15 unit tests pin the behavior.
+- **Server-side authorization on every `[id]` route** — `requireAuth()` + ownership/scope check defends BOLA/IDOR per §3.
+- **Program-scoped organizers** — organizers can only read/write events within their own program (enforced in `events/route.ts` POST/PATCH and `attendance/export/route.ts`).
+- **TLS in transit** — `sslaccept=strict` in the TiDB connection URL; no plaintext.
+- **Connection pool caps** — `connection_limit=5` per instance; stays under TiDB Serverless's 1000-connection cluster cap (DoS defense).
+- **Parameterized queries only** — Prisma parameterizes every query; the single `$queryRaw` (dashboard stats) uses `Prisma.raw` for a hardcoded expression, never user input. Defends SQL injection per §5.
+- **Audit logging** (`src/lib/audit.ts`) — every privileged action logged with actor + target + IP. Breach detection per §11.
+- **Soft-delete pattern** — accounts use `isDeactivated`; events use `status="cancelled"`. No catastrophic hard-deletes.
+- **Atomic concurrency guards** — unique constraints + TOCTOU-safe compare-and-set updates prevent double-scan and cooldown races.
+- **TiDB Serverless at-rest encryption + point-in-time recovery** — provider-managed.
+- **Guard trigger on `accounts`** (legacy Postgres migration) — carried forward as an app-layer last-admin guard in the batch + single-account routes.
 
 ### 8. HTTP Security Headers
 - Content-Security-Policy (no `unsafe-eval`, `connect-src: self + *.ably.io + *.ably.net`)
@@ -218,7 +231,7 @@
 - Batch whitelist import (`createMany` instead of sequential upserts)
 - Parallel queries via `Promise.all` on dashboard and events routes
 - 40 indexes covering all major query patterns
-- PgBouncer connection pooling (Supabase)
+- **Prisma connection pooling** — `connection_limit=5&pool_timeout=10` in the TiDB connection URL caps per-instance connections (under TiDB Serverless's 1000-connection cluster cap). Local dev uses SQLite (file-based, no pooling needed).
 - **Profile stats collapsed from 3 queries to 1** (`/api/profile/stats`) - the My-Attendance chart, scope breakdown, and streak are derived from a single `findMany` with JS bucketing, saving 2 DB round-trips per page load
 - **TOCTOU-safe cooldown enforcement** - profile and password cooldowns use conditional `updateMany` (where `lastChangedAt` null OR lt cutoff) so concurrent requests cannot both pass the read-only check
 - **Stable P2002 detection** via `isUniqueConstraintError(e)` (Prisma error code, not string match) on scan, override, and register routes
@@ -268,7 +281,8 @@ bun run test
 | Service | Plan | Purpose | Limit |
 |---------|------|---------|-------|
 | Vercel | Hobby | Next.js hosting + API | 100GB bandwidth/mo |
-| Supabase | Free | PostgreSQL + Auth | 500MB DB, 50k MAU |
+| TiDB | Serverless (free) | MySQL-compatible app database | Free-tier storage + 1000 conn cap |
+| Supabase | Free | Auth only (sessions/JWT/email) | 50k MAU |
 | Ably | Free | Realtime attendance | 3M messages/mo, 200 conn |
 | Cloudflare Turnstile | Free | Optional bot protection (CAPTCHA alternative) | - |
 

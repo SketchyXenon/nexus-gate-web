@@ -117,6 +117,7 @@ export function AttendanceView() {
   const [sourceFilter, setSourceFilter] = useState<string>(FILTER_ALL);
   const [sortBy, setSortBy] = useState<SortKey>("time-desc");
   const [page, setPage] = useState(1);
+  const [exporting, setExporting] = useState(false);
 
   function changeEvent(id: number | null) {
     setUserSelectedEventId(id);
@@ -268,7 +269,7 @@ export function AttendanceView() {
     setPage(1);
   }
 
-  function exportCsv() {
+  async function exportCsv() {
     if (!eventId) {
       toast({
         title: "Select an event",
@@ -277,15 +278,24 @@ export function AttendanceView() {
       });
       return;
     }
-    // Use the server-side export endpoint, which exports ALL records for
-    // the event (not just the current page). The server also handles CSV
-    // escaping and sets the Content-Disposition header.
-    exportAttendanceCsv(Number(eventId));
-    toast({
-      title: "Downloading CSV",
-      description:
-        "All attendance records for this event are being downloaded.",
-    });
+    if (exporting) return;
+    setExporting(true);
+    try {
+      await exportAttendanceCsv(Number(eventId));
+      toast({
+        title: "Attendance exported",
+        description:
+          "The CSV has been downloaded, sorted by program, year, and section.",
+      });
+    } catch (e) {
+      toast({
+        title: "Couldn't export attendance",
+        description: e instanceof Error ? e.message : undefined,
+        variant: "destructive",
+      });
+    } finally {
+      setExporting(false);
+    }
   }
 
   return (
@@ -310,16 +320,23 @@ export function AttendanceView() {
                     variant="outline"
                     size="sm"
                     onClick={exportCsv}
-                    disabled={!eventId || sorted.length === 0}
+                    disabled={!eventId || sorted.length === 0 || exporting}
                     className="h-9"
                     aria-label="Export CSV"
                   >
-                    <Download className="h-4 w-4" />
-                    <span className="hidden sm:inline">Export CSV</span>
+                    {exporting ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                    <span className="hidden sm:inline">
+                      {exporting ? "Exporting…" : "Export CSV"}
+                    </span>
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  Download the current filtered list as a CSV file.
+                  Download all attendance records as a CSV, sorted by program,
+                  year, and section.
                 </TooltipContent>
               </Tooltip>
             </div>

@@ -415,7 +415,15 @@ export const updateAccountSchema = z
     status: z.enum(["PENDING_VERIFICATION", "ACTIVE", "SUSPENDED"]).optional(),
     fullName: fullNameSchema.optional(),
     email: emailSchema.optional(),
-    program: z.string().trim().max(50).optional().nullable(),
+    program: z
+      .string()
+      .trim()
+      .max(50)
+      .refine((val) => !val || PROGRAM_CODES.has(val), {
+        message: "Select a valid program from the list",
+      })
+      .optional()
+      .nullable(),
     section: z
       .string()
       .trim()
@@ -463,7 +471,15 @@ export const adminCreateAccountSchema = z
     password: strongPasswordSchema,
     fullName: fullNameSchema,
     role: z.enum(["ADMIN", "ORGANIZER"]),
-    program: z.string().trim().max(50).optional().nullable(),
+    program: z
+      .string()
+      .trim()
+      .max(50)
+      .refine((val) => !val || PROGRAM_CODES.has(val), {
+        message: "Select a valid program from the list",
+      })
+      .optional()
+      .nullable(),
     section: z
       .string()
       .trim()

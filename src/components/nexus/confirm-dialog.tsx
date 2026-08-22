@@ -11,12 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  AlertTriangle,
-  CheckCircle2,
-  Loader2,
-  HelpCircle,
-} from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, HelpCircle } from "lucide-react";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -27,16 +22,21 @@ interface ConfirmDialogProps {
   cancelLabel?: string;
   /** If true, shows red warning styling. Defaults to false. */
   destructive?: boolean;
-  /** The word the user must type to confirm (case-insensitive). Defaults to "DELETE". */
+  /** The word the user must type to confirm (case-insensitive). When
+   *  undefined, the dialog confirms in a single step (no type-to-confirm),
+   *  suitable for non-destructive actions like activation. */
   confirmText?: string;
   /** Override the step-2 warning text. Defaults to "This action cannot be undone." */
   step2Warning?: string;
   onConfirm: () => Promise<void> | void;
 }
 
-// Reusable double-confirmation dialog.
-// - destructive=true → red warning (for deletions, suspensions, cancellations)
-// - destructive=false → neutral/positive (for additions, activations, manual entries)
+// Reusable confirmation dialog.
+// - destructive=true → red warning styling.
+// - confirmText set → two-step confirmation (type the word to proceed) for
+//   destructive/irreversible actions.
+// - confirmText omitted → single-step confirm (just click), for reversible
+//   actions like activation.
 export function ConfirmDialog({
   open,
   onOpenChange,
@@ -45,11 +45,12 @@ export function ConfirmDialog({
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
   destructive = false,
-  confirmText = "DELETE",
+  confirmText,
   step2Warning,
   onConfirm,
 }: ConfirmDialogProps) {
-  const expected = confirmText.toUpperCase();
+  const requireTyped = !!confirmText;
+  const expected = (confirmText ?? "").toUpperCase();
   const [typed, setTyped] = useState("");
   const [step, setStep] = useState<1 | 2>(1);
   const [loading, setLoading] = useState(false);
@@ -61,6 +62,20 @@ export function ConfirmDialog({
   }
 
   async function handleConfirm() {
+    // If no type-to-confirm is required, execute immediately on click.
+    if (!requireTyped) {
+      setLoading(true);
+      try {
+        await onConfirm();
+        onOpenChange(false);
+        reset();
+      } catch {
+        // Error handling done by caller via toast
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     if (step === 1) {
       setStep(2);
       return;
@@ -81,7 +96,7 @@ export function ConfirmDialog({
   const Icon = destructive ? AlertTriangle : CheckCircle2;
   const iconColor = destructive ? "text-destructive" : "text-primary";
 
-  // Step 2 warning text
+  // Step 2 warning text (only used when requireTyped is true)
   const warningText =
     step2Warning ??
     (destructive
@@ -103,14 +118,11 @@ export function ConfirmDialog({
             {title}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {step === 1 ? (
+            {step === 1 || !requireTyped ? (
               description
             ) : (
               <>
-                <strong className="text-foreground">
-                  {warningText}
-                </strong>{" "}
-                Type{" "}
+                <strong className="text-foreground">{warningText}</strong> Type{" "}
                 <code className="font-mono bg-muted px-1.5 py-0.5 rounded text-xs">
                   {expected}
                 </code>{" "}
@@ -119,7 +131,7 @@ export function ConfirmDialog({
             )}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        {step === 2 && (
+        {requireTyped && step === 2 && (
           <input
             autoFocus
             type="text"
@@ -134,10 +146,20 @@ export function ConfirmDialog({
           <AlertDialogAction
             onClick={(e) => {
               e.preventDefault();
-              if (step === 2 && typed.toUpperCase() !== expected) return;
+              if (
+                requireTyped &&
+                step === 2 &&
+                typed.toUpperCase() !== expected
+              )
+                return;
               handleConfirm();
             }}
-            disabled={(step === 2 && typed.toUpperCase() !== expected) || loading}
+            disabled={
+              (requireTyped &&
+                step === 2 &&
+                typed.toUpperCase() !== expected) ||
+              loading
+            }
             className={
               destructive
                 ? "bg-destructive text-white hover:bg-destructive/90"
@@ -146,7 +168,7 @@ export function ConfirmDialog({
           >
             {loading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
-            ) : step === 1 ? (
+            ) : requireTyped && step === 1 ? (
               "Continue"
             ) : (
               confirmLabel

@@ -1,4 +1,4 @@
-# Nexus Gate — Full Documentation
+# Nexus Gate - Full Documentation
 
 ## Table of Contents
 
@@ -37,9 +37,11 @@ Nexus Gate is an attendance tracking system for educational institutions. It pre
 ## 2. Architecture
 
 ```
-Browser → Caddy Gateway → Next.js App (port 3000) → Prisma → SQLite/PostgreSQL
+Browser → Caddy Gateway → Next.js App (port 3000) → Prisma → SQLite (dev) / TiDB Serverless (prod)
                          → Realtime Mini-Service (port 3003, optional)
 ```
+
+> **Database**: App data lives in **TiDB Serverless** (MySQL-compatible, prod) or SQLite (local dev). Supabase is used for **auth only** (sessions/JWT/email). TiDB has no built-in RLS — row scoping is enforced at the app layer. See [docs/tidb-data-protection.md](./docs/tidb-data-protection.md).
 
 ### Key Files
 
@@ -55,7 +57,7 @@ Browser → Caddy Gateway → Next.js App (port 3000) → Prisma → SQLite/Post
 | `src/lib/event-visibility.ts` | Strict event filtering predicate |
 | `src/lib/validation.ts` | Zod schemas for all API inputs |
 | `src/lib/password-strength.ts` | Shared password scorer |
-| `src/lib/rate-limit.ts` | Rate limiting (memory/Upstash) |
+| `src/lib/rate-limit.ts` | Rate limiting (memory/Aiven Redis) |
 
 ---
 
@@ -122,7 +124,7 @@ Every API route uses `requireAuth(minimumRole)`:
 2. Each frame is parsed for `eventId`, `timeBlock`, `subFrame`, `subHmac`
 3. The scanner collects sub-frames until it has **3+ consecutive** ones
 4. A **scan certificate** is created:
-   - eventId, token, scannedAt, nonce, deviceFingerprint, subFrames (with HMACs)
+  - eventId, token, scannedAt, nonce, deviceFingerprint, subFrames (with HMACs)
 5. The certificate is **signed** with the device's Ed25519 private key
 6. The signed certificate is enqueued (offline queue in localStorage)
 7. When online, the certificate is sent to `POST /api/attendance`
@@ -155,23 +157,39 @@ Every API route uses `requireAuth(minimumRole)`:
 
 A student sees an event in their list if and only if:
 
-| Condition | Visible? |
+| Condition | Visible to students? |
 |-----------|----------|
 | Open to all (both targetProgram AND targetSection null) | ✅ |
+| Program-wide (targetProgram set, targetSection null) — student in that program | ✅ |
 | Exact program + section match | ✅ |
-| Program-wide (targetProgram set, targetSection null) | ❌ Hidden |
+| Program-wide — student in a different program | ❌ Hidden |
 | Different program | ❌ Hidden |
 | Different section | ❌ Hidden |
+| Student has no program/section set | Only open-to-all events |
+
+### Organizer Visibility (owns + v8)
+
+An organizer sees an event in their list if it is v8-visible to them **OR** they own it. The "owns" clause is critical: an organizer who creates a section-specific event (and has no matching section on their own profile) would never see their own event without it. Admins see all events.
+
+### Program-Scoped Organizers
+
+Organizers are limited to their own program scope:
+
+- Must have a program assigned (else they cannot create events).
+- **Cannot create department-wide (open-to-all) events** — reserved for admins.
+- `targetProgram` is forced to the organizer's own program (e.g. a BSIT organizer can only create BSIT-scoped events).
 
 ### Attendance Eligibility (matches visibility)
 
 The scan endpoint enforces the **same** rule. A student who can see the event can scan it. A student who cannot see it cannot scan it.
 
-### QR Projection (No Delegation)
+### QR Projection & Delegation (program-based)
 
-- **Admin**: can project ANY event
-- **Event Owner**: can project their own event
-- **Other Organizers**: RESTRICTED — cannot project another organizer's event
+- **Admin**: can project ANY event.
+- **Event Owner**: can project their own event (any scope).
+- **Other Organizers**: can project ONLY program-wide events (scope=academic, targetProgram set, targetSection null) where the owner opted in (`delegatable`), AND the delegate's program matches the event's `targetProgram`.
+- Department-wide events are never delegatable (open to all, unnecessary privilege).
+- Section-specific ("specified") events are never delegatable (small enough that only the owner/admin projects).
 
 ---
 
@@ -179,19 +197,19 @@ The scan endpoint enforces the **same** rule. A student who can see the event ca
 
 ### 8 Security Layers
 
-1. **Authentication**: Supabase Auth (cookie-based, PKCE) + app-layer brute-force lockout (5 fails → 15-min, atomic compare-and-set). **Enumeration-safe login** — single generic 401 for all failure paths + dummy bcrypt timing equalization.
+1. **Authentication**: Supabase Auth (cookie-based, PKCE) + app-layer brute-force lockout (5 fails → 15-min, atomic compare-and-set). **Enumeration-safe login** - single generic 401 for all failure paths + dummy bcrypt timing equalization.
 2. **Authorization**: RBAC (ADMIN/ORGANIZER/USER) with server-enforced checks on every route, including object-level (BOLA) on dynamic `[id]` routes and the Ably token route (event visibility check)
 3. **Input Validation**: Zod schemas on every API input; explicit field allowlists on all mutations (no mass assignment)
 4. **CSRF Defense**: Origin/Referer check + SameSite=Lax cookies
 5. **Rate Limiting**: Per-IP (unauth) + per-account (auth) + dedicated presets for admin mutations (20/min), whitelist imports (3/min), file uploads (5/min), passkey registration (10/min). Sensitive presets fail closed on limiter error. In-memory fallback LRU-capped at 10k keys.
 6. **Cryptography**: Ed25519 (certificates), HMAC-SHA256 (QR tokens), bcrypt (passwords), timing-safe comparisons, stable P2002 detection via Prisma error code
-7. **Database Security**: RLS on all tables, guard trigger on accounts, CHECK constraints
+7. **Database Security**: App-layer row scoping (TiDB has no RLS — see [docs/tidb-data-protection.md](./docs/tidb-data-protection.md)); centralized visibility predicates, server-side BOLA checks, TLS in transit, connection-pool caps, audit logging, soft-delete pattern
 8. **HTTP Headers**: CSP (no unsafe-eval), X-Frame-Options, HSTS, Permissions-Policy
 
 ### Error Handling (OWASP A10)
 
 - Error responses reveal only what the user needs, never stack traces or internal state
-- The `accounts/create` route returns a generic "Unable to create the account" message; the raw Supabase error is logged server-side only (closes an email-enumeration oracle)
+- The `accounts/create` route returns a generic "Unable to create the account" message; the raw DB error is logged server-side only (closes an email-enumeration oracle)
 - DB unavailability surfaces as 503 `DB_UNAVAILABLE`, not 500
 
 ### Concurrency Controls (TOCTOU-safe)
@@ -201,12 +219,17 @@ The scan endpoint enforces the **same** rule. A student who can see the event ca
 - **Profile/password cooldown**: conditional `updateMany` (where `lastChangedAt` null OR lt cutoff); if 0 rows affected, a concurrent request won the race
 - **Override idempotency**: `@@unique([eventId, studentId])` + P2002 catch inside a `$transaction`
 
-### File Upload Security
+### File Upload Security (5-layer defense-in-depth)
 
-- **Extensions**: Only `.xlsx`, `.xls`, `.pdf`, `.docx`, `.csv` accepted
-- **MIME types**: Validated server-side (defense-in-depth)
-- **Size limit**: 10MB
-- **Validation**: Both client-side (instant rejection) and server-side (cannot be bypassed)
+The whitelist import (`POST /api/whitelist/import-file`) validates the file's **actual content** (magic bytes), not just the client-provided filename/MIME. A renamed executable (`sample.exe` → `sample.docx`) is blocked before any parser runs. Implemented in `src/lib/file-security.ts`.
+
+1. **Filename hygiene** — rejects control characters (incl. null bytes), path traversal, leading/trailing dots, and any blocked-extension token anywhere in the name (`.xlsm`, `.xlsb`, `.exe`, `.js`, `.doc`, etc.).
+2. **Extension allowlist** — only `.xlsx`, `.xls`, `.pdf`, `.docx`, `.csv`.
+3. **Magic-byte sniff (authoritative)** — reads the file's true signature (ZIP `PK\x03\x04`, PDF `%PDF-`, OLE2 `D0CF11E0`, CSV printable-text heuristic). Disambiguates `.xlsx` vs `.docx` (both ZIP containers) by scanning the first 4 KB for `spreadsheetml`/`wordprocessingml` markers.
+4. **MIME consistency** — cross-checks the declared MIME vs the extension (defense-in-depth).
+5. **Content sanity** — rejects zero-length/empty files.
+
+The parser dispatches on the **sniffed** kind (not the untrusted filename), so a genuine `.csv` mislabeled as `.xlsx` is routed to the CSV parser by its true content. Stable error codes (`BLOCKED_EXTENSION`, `CONTENT_EXTENSION_MISMATCH`, `KIND_EXTENSION_MISMATCH`, `MIME_EXTENSION_MISMATCH`, etc.) drive precise UI feedback.
 
 ### Full Name Validation
 
@@ -269,6 +292,7 @@ The scan endpoint enforces the **same** rule. A student who can see the event ca
 | POST | `/api/accounts/create` | ADMIN | Create organizer/admin account |
 | PATCH | `/api/accounts/[id]` | ADMIN | Update account (last-admin guard) |
 | DELETE | `/api/accounts/[id]/delete` | ADMIN | Delete account (last-admin guard) |
+| POST | `/api/accounts/batch` | ADMIN | Batch activate/suspend/setRole (200-id cap, last-admin guard, self-action block; no bulk delete) |
 
 ### Whitelist (Students)
 
@@ -284,7 +308,7 @@ The scan endpoint enforces the **same** rule. A student who can see the event ca
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/ably/token` | Any | Sign Ably TokenRequest (subscribe-only, single channel). **Enforces event visibility** — students cannot subscribe to another section's channel. |
+| GET | `/api/ably/token` | Any | Sign Ably TokenRequest (subscribe-only, single channel). **Enforces event visibility** - students cannot subscribe to another section's channel. |
 | GET | `/api/dashboard` | Any | Role-aware dashboard data |
 | GET | `/api/settings` | None | Public settings (maintenance mode) |
 | GET | `/api/health` | None | Health check |
@@ -300,28 +324,28 @@ The scan endpoint enforces the **same** rule. A student who can see the event ca
 
 ### Models (11)
 
-1. **Account** — Users (admin, organizer, student) with auth + profile fields
-2. **AuthorizedStudent** — Pre-approved student whitelist
-3. **VerificationToken** — OTP tokens (legacy, kept for compatibility)
-4. **RefreshToken** — Rotating session tokens (HMAC-SHA256 hashed, O(1) lookup)
-5. **Event** — Attendance events with program/section targeting
-6. **EventAttendance** — Check-in records with certificate fields
-7. **AttendanceOverride** — Manual check-ins (idempotent: `@@unique([eventId, studentId])`)
-8. **Notification** — User notifications
-9. **AuditLog** — Immutable audit trail
-10. **DeviceKey** — Ed25519 public keys per device
-11. **Setting** — Key-value settings
+1. **Account** - Users (admin, organizer, student) with auth + profile fields
+2. **AuthorizedStudent** - Pre-approved student whitelist
+3. **VerificationToken** - OTP tokens (legacy, kept for compatibility)
+4. **RefreshToken** - Rotating session tokens (HMAC-SHA256 hashed, O(1) lookup)
+5. **Event** - Attendance events with program/section targeting
+6. **EventAttendance** - Check-in records with certificate fields
+7. **AttendanceOverride** - Manual check-ins (idempotent: `@@unique([eventId, studentId])`)
+8. **Notification** - User notifications
+9. **AuditLog** - Immutable audit trail
+10. **DeviceKey** - Ed25519 public keys per device
+11. **Setting** - Key-value settings
 
 ### Key Constraints
 
-- `Account.email` — UNIQUE
-- `Account.studentId` — UNIQUE
-- `EventAttendance.(eventId, accountId)` — UNIQUE (one-attempt policy)
-- `EventAttendance.idempotencyKey` — UNIQUE
-- `EventAttendance.certificateNonce` — UNIQUE
-- `AttendanceOverride.(eventId, studentId)` — UNIQUE (idempotent overrides)
-- `RefreshToken.tokenHash` — UNIQUE (O(1) lookup)
-- `DeviceKey.fingerprint` — UNIQUE
+- `Account.email` - UNIQUE
+- `Account.studentId` - UNIQUE
+- `EventAttendance.(eventId, accountId)` - UNIQUE (one-attempt policy)
+- `EventAttendance.idempotencyKey` - UNIQUE
+- `EventAttendance.certificateNonce` - UNIQUE
+- `AttendanceOverride.(eventId, studentId)` - UNIQUE (idempotent overrides)
+- `RefreshToken.tokenHash` - UNIQUE (O(1) lookup)
+- `DeviceKey.fingerprint` - UNIQUE
 
 ---
 
@@ -368,23 +392,23 @@ bun run test
 
 | Category | Tests | Key Files |
 |----------|-------|-----------|
-| Auth | 6 | `auth.test.ts` — bcrypt, HMAC |
-| QR Tokens | 46 | `qr-token.test.ts` — v8 format, sub-frames, liveness |
-| Validation | 48 | `validation.test.ts` — Zod schemas |
-| Integration | 28 | `scan-flow.integration.test.ts` — full flow, anti-cheat |
-| Visibility | 26 | `event-visibility.test.ts` — strict filtering |
-| Password | 27 | `password-strength.test.ts` — scoring |
-| Certificates | 21 | `scan-certificate.test.ts` — creation, idempotency |
-| Event Time | 19 | `event-time.test.ts` — time window validation |
-| Cooldowns | 21 | `cooldown.test.ts` — 30-day logic + TOCTOU-safe cutoff helper |
-| Pagination | 17 | `pagination.test.ts` — schema + helpers |
-| Section | 14 | `section-validation.test.ts` — year/section consistency |
-| ICS Export | 12 | `ics-export.test.ts` — calendar export |
-| Ably Token | 10 | `ably/token/route.test.ts` — signing, key parsing |
+| Auth | 6 | `auth.test.ts` - bcrypt, HMAC |
+| QR Tokens | 46 | `qr-token.test.ts` - v8 format, sub-frames, liveness |
+| Validation | 48 | `validation.test.ts` - Zod schemas |
+| Integration | 28 | `scan-flow.integration.test.ts` - full flow, anti-cheat |
+| Visibility | 26 | `event-visibility.test.ts` - strict filtering |
+| Password | 27 | `password-strength.test.ts` - scoring |
+| Certificates | 21 | `scan-certificate.test.ts` - creation, idempotency |
+| Event Time | 19 | `event-time.test.ts` - time window validation |
+| Cooldowns | 21 | `cooldown.test.ts` - 30-day logic + TOCTOU-safe cutoff helper |
+| Pagination | 17 | `pagination.test.ts` - schema + helpers |
+| Section | 14 | `section-validation.test.ts` - year/section consistency |
+| ICS Export | 12 | `ics-export.test.ts` - calendar export |
+| Ably Token | 10 | `ably/token/route.test.ts` - signing, key parsing |
 | WebAuthn | 16 | `webauthn-context.test.ts` + `passkey-credential.test.ts` |
-| Rate Limit | 8 | `rate-limit.test.ts` — Upstash + in-memory |
-| Prisma Errors | 4 | `prisma-errors.test.ts` — stable P2002 detection |
-| Device Key | 4 | `device-key-server.test.ts` — Ed25519 verification |
+| Rate Limit | 8 | `rate-limit.test.ts` - Aiven Redis + in-memory |
+| Prisma Errors | 4 | `prisma-errors.test.ts` - stable P2002 detection |
+| Device Key | 4 | `device-key-server.test.ts` - Ed25519 verification |
 
 ### E2E Testing
 
@@ -402,12 +426,20 @@ bun run lint
 
 ---
 
-## Appendix: Supabase Migrations
+## Appendix: Legacy Supabase (Postgres) Migrations
+
+> These SQL migrations are the **legacy Postgres schema** from when the app
+> data lived in Supabase. The app data has since migrated to **TiDB
+> Serverless** (MySQL-compatible); these files are retained for historical
+> reference and for any deployment still on Postgres. The active TiDB schema
+> is `prisma/schema.tidb.prisma`. Supabase is now used for **auth only**.
+> See [docs/tidb-data-protection.md](./docs/tidb-data-protection.md) for the
+> RLS-replacement controls.
 
 | # | File | Description |
 |---|------|-------------|
 | 1 | `0001_init.sql` | Initial schema |
 | 2 | `0002_settings_and_views.sql` | Settings + summary views |
-| 3 | `0003_strict_rls_indexes_v7.sql` | RLS + composite indexes |
+| 3 | `0003_strict_rls_indexes_v7.sql` | RLS + composite indexes (Postgres-only; TiDB uses app-layer scoping) |
 | 4 | `0004_device_keys_certificates_v8.sql` | DeviceKey table + certificate fields |
-| 5 | `0005_security_hardening_scalability_v8.sql` | RLS guard trigger, CHECK constraints, idempotent overrides |
+| 5 | `0005_security_hardening_scalability_v8.sql` | RLS guard trigger, CHECK constraints, idempotent overrides (Postgres-only) |

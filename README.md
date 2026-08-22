@@ -10,7 +10,11 @@ Nexus Gate is a production-ready attendance tracking system designed for educati
 - **Offline-First (15-min window)**: Scans are saved to `localStorage` and auto-sync when reconnected. A scan made in a WiFi dead zone is still valid if synced within 15 minutes. The token HMAC is validated against the scan's `scannedAt` timestamp, not server sync time. GET endpoints use a client-side stale-while-revalidate cache (`src/lib/api-cache.ts`) so the UI renders instantly from cache when offline, then revalidates in the background.
 - **Signed Scan Certificates**: Each scan is cryptographically bound to the student's device via Ed25519 signatures. Queue tampering breaks the signature and is rejected.
 - **One-Attempt Policy**: After the first successful scan, all subsequent attempts return "already scanned." Enforced atomically via a unique constraint on `(eventId, accountId)` with stable Prisma P2002 detection.
-- **Strict Event Visibility**: Students see only events for their exact course + section (or open-to-all events). The same rule is enforced on the Ably token route so a student cannot subscribe to another section's realtime channel.
+- **Strict Event Visibility**: Students see only events for their exact course + section (or open-to-all events). The same rule is enforced on the Ably token route so a student cannot subscribe to another section's realtime channel. Organizers always see events they own (plus v8-visible events), so an organizer's own section-specific event is never hidden from them.
+- **Program-Scoped Organizers**: Organizers are limited to their own program scope (e.g. a BSIT organizer can only create BSIT-scoped academic events; department-wide events are admin-only). Delegation is program-based: an organizer may project another organizer's QR only for program-wide events in their own program.
+- **Secure File Import**: The whitelist import runs a 5-layer defense-in-depth checkpoint (`src/lib/file-security.ts`) that validates the file's actual content (magic-byte sniff), not just the client-provided filename/MIME. Blocks renamed executables (`sample.exe` → `sample.docx`), masked double extensions, macro-enabled Office files (`.xlsm`/`.xlsb`), and content/extension mismatches before any parser runs.
+- **Sorted, Scope-Restricted Exports**: Attendance CSV exports are sorted by program, year, section, then student ID (intuitive roster grouping), with PHT-formatted timestamps and a UTF-8 BOM for Excel. Organizers only ever receive their own program's rows (defense-in-depth row filter), even on department-wide events.
+- **Admin Batch Operations**: Admins can activate, suspend, or re-role many accounts in one confirmed action. Bulk hard-delete is architecturally impossible (no DELETE method on the batch route) — an accidental or compromised batch call can never wipe the account table. Guards: 200-id cap, last-admin protection, self-action block.
 - **30-Day Cooldowns**: Profile updates and password changes are limited to once every 30 days. Enforced via a TOCTOU-safe compare-and-set database update - concurrent requests cannot halve the cooldown.
 - **Server-Side Password Strength**: Passwords are scored server-side - clients can't bypass the strength requirement.
 - **Realtime Password Validation**: Registration form shows a live strength meter + missing requirements as the user types.
@@ -27,13 +31,13 @@ Nexus Gate is a production-ready attendance tracking system designed for educati
 
 - **Framework**: Next.js 16 (App Router, Turbopack)
 - **Language**: TypeScript 5 (strict mode)
-- **Database**: Prisma ORM (SQLite dev / PostgreSQL prod via Supabase)
+- **Database**: Prisma ORM (SQLite dev / TiDB Serverless prod) — MySQL-compatible. Supabase is used for **auth only** (sessions/JWT/email); app data lives in TiDB. See [TiDB Data Protection](./docs/tidb-data-protection.md) for how row-level access is enforced at the app layer (TiDB has no built-in RLS).
 - **UI**: Tailwind CSS 4 + shadcn/ui (New York)
 - **State**: TanStack Query (server state)
 - **Auth**: Supabase Auth (email/password + magic link + passkey)
 - **Realtime**: Ably (managed realtime, free tier: 3M messages/month)
 - **File Parsing**: exceljs (Excel), pdfjs-dist (PDF), mammoth (DOCX), papaparse (CSV)
-- **Testing**: Vitest (487 unit + edge-case tests), Selenium-style E2E browser suite (agent-browser), endpoint authz scanner
+- **Testing**: Vitest (530 unit + integration tests across 4 suites), Selenium-style E2E browser suite (agent-browser), endpoint authz scanner
 
 ## Quick Start
 
@@ -43,7 +47,7 @@ bun install
 
 # Set up environment
 cp example.env .env
-# Edit .env with your values (DATABASE_URL, Supabase keys, ABLY_SERVER_KEY)
+# Edit .env with your values (DATABASE_URL, Supabase auth keys, ABLY_SERVER_KEY)
 
 # Create the first admin account
 bun run bootstrap:admin
@@ -84,19 +88,19 @@ inline. The migration `0001_init.sql` also inserts a seed admin
 | `bun run test:all` | Run the full pyramid: unit + endpoint scan + E2E |
 | `bun run bootstrap:admin` | Create the first admin account |
 | `bun run seed:events` | Seed test events for development |
-| `bun run db:push` | Push Prisma schema (Postgres prod) |
+| `bun run db:push` | Push Prisma schema (active provider) |
 | `bun run db:push:sqlite` | Push Prisma schema (SQLite dev) |
-| `bun run db:generate` | Regenerate Prisma client (Postgres) |
+| `bun run db:push:tidb` | Push Prisma schema (TiDB prod) |
 | `bun run db:generate:sqlite` | Regenerate Prisma client (SQLite) |
+| `bun run db:generate:tidb` | Regenerate Prisma client (TiDB) |
 
 ## Documentation
 
-- [Deployment Guide](./DEPLOYMENT-GUIDE.md) - Step-by-step Supabase + Vercel setup
+- [Deployment Guide](./DEPLOYMENT-GUIDE.md) - Step-by-step TiDB + Supabase-auth + Vercel setup
 - [Architecture & Security](./ARCHITECTURE-SECURITY.md) - System diagram + security layers
 - [Full Documentation](./DOCUMENTATION.md) - Comprehensive feature + API reference
+- [TiDB Data Protection](./docs/tidb-data-protection.md) - How row-level access is enforced without Postgres RLS
 - [Capacity Assessment](./CAPACITY-ASSESSMENT.md) - Scalability analysis + resolved bottlenecks
-- [Storage Architecture](./docs/storage-architecture.md) - IndexedDB vs localStorage per feature
-- [Activity Log](./docs/activity-log.md) - Concise changelog of all additions and fixes
 
 ## Testing
 
@@ -113,10 +117,14 @@ bunx vitest run tests/lib/qr-token.test.ts
 
 ### Test Coverage
 
-All tests live in `tests/lib/` (unit + edge-case) and `tests/e2e/` (browser + endpoint scanner), kept separate from production source.
+All tests live in `tests/unit/` (pure-logic unit tests), `tests/integration/` (data-layer integration tests), and `tests/e2e/` (browser + endpoint scanner), kept separate from production source.
 
 | File | Tests | What it covers |
 |------|-------|----------------|
+| `tests/unit/event-visibility.test.ts` | 15 | v8 visibility predicate (open-to-all, program-wide, exact section match), organizer rule, Prisma WHERE fragment, profile-completion check |
+| `tests/unit/file-security.test.ts` | 17 | 5-layer upload checkpoint: magic-byte sniff, masked extensions, renamed executables, macro files, MIME mismatch, boundary cases |
+| `tests/integration/export.test.ts` | 3 | Export sorting (program/year/section), organizer program-scope restriction, cross-program attendee exclusion |
+| `tests/integration/batch.test.ts` | 5 | Batch safety guards: self-action detection, last-admin guard, 200-id cap, suspend/activate/setRole |
 | `auth.test.ts` | 6 | Password hashing, HMAC |
 | `qr-token.test.ts` | 46 | v8 token generation, validation, sub-frame liveness |
 | `qr-token-edge-cases.test.ts` | 27 | Drift boundaries (±1/±2), subFrame range, malformed payloads, liveness gaps |
@@ -145,14 +153,15 @@ All tests live in `tests/lib/` (unit + edge-case) and `tests/e2e/` (browser + en
 | `tests/e2e/run-e2e.sh` | 7 | Selenium-style browser suite (landing, auth dialog, register, FAQ) |
 | `tests/e2e/scan-endpoints.sh` | 46 | All 54 routes probed for auth-gating + broken + auth-bypass |
 
-**Total: 487 unit/edge-case tests + 7 E2E + 46 endpoint scans.**
+**Total: 530 unit/integration tests + 7 E2E + 46 endpoint scans.**
 
 ## Infrastructure ($0/month)
 
 | Service | Plan | Purpose |
 |---------|------|---------|
 | Vercel | Hobby (free) | Next.js hosting + API routes |
-| Supabase | Free | PostgreSQL database + Auth |
+| TiDB | Serverless (free tier) | MySQL-compatible app database |
+| Supabase | Free | Auth only (sessions/JWT/email) |
 | Ably | Free | Realtime attendance updates (3M messages/mo) |
 | Cloudflare Turnstile | Free | Optional bot protection (CAPTCHA alternative) |
 
@@ -166,7 +175,7 @@ gracefully - attendance recording survives realtime failure.
 | Sustained concurrent scanning users | ~500 | Ably 1,000 msg/s peak |
 | Peak burst (class-start) | ~500-1,300 | Ably msg/s + Vercel 10s function cap |
 | Monthly active users | ~1,300 | Vercel 100 GB bandwidth/mo |
-| Database storage exhaustion | ~6 weeks at 2,000 users | Supabase 500 MB |
+| Database storage exhaustion | ~6 weeks at 2,000 users | TiDB Serverless free tier |
 
 See [CAPACITY-ASSESSMENT.md](./CAPACITY-ASSESSMENT.md) for the full
 back-of-envelope analysis, bottleneck ranking, and upgrade path.

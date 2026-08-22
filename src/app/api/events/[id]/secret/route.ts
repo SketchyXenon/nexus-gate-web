@@ -11,33 +11,30 @@ type Ctx = { params: Promise<{ id: string }> };
 // locally (Method 1 - HMAC-SHA256, 2 FPS sub-frame rotation).
 //
 // ================================================================
-// STRICT QR DELEGATION RULES (v10 - organization tag enforced)
+// STRICT QR DELEGATION RULES (program-scoped, program-wide only)
 // ================================================================
 //
 //  - ADMIN: can project ANY event (bypasses all delegation checks)
 //  - EVENT OWNER: can always project their own event
 //  - OTHER ORGANIZER: can project ONLY IF ALL of the following are true:
 //
-//       1. The organizer has a non-empty `organizationName` tag set.
-//          → If the admin has NOT set an org tag on the organizer's
-//            account, delegation is COMPLETELY DISABLED. The admin must
-//            add the org tag first.
+//       1. The event is NOT department-wide (open-to-all). Open-to-all
+//          events target the whole department, so delegating their QR is
+//          unnecessary privilege - the owner/admin projects them.
 //
-//       2. The event's `delegationEnabled` flag is true (admin-controlled).
-//          → Default is false. The admin must explicitly enable it.
+//       2. The event is NOT section-specific ("specified"). A single
+//          section is small enough that only the owner/admin projects it.
+//          => Delegation is allowed ONLY for program-wide events
+//             (scope=academic, targetProgram set, targetSection null).
 //
-//       3. The event owner ALSO has a non-empty `organizationName` tag.
-//          → If the event owner has no org tag, delegation is blocked
-//            (even if the requesting organizer has one).
+//       3. The owner has opted in (event.delegatable === true).
 //
-//       4. The organizer's org tag MATCHES the event owner's org tag.
-//          → e.g. both are "College of Technology"
-//          → This applies to BOTH open-to-all AND course-specific events.
-//            There is no exception for open-to-all - the org tag must
-//            always match.
+//       4. The delegate organizer has a program, and it MATCHES the
+//          event's targetProgram (identical program alignment). e.g. both
+//          are BSIT organizers projecting a BSIT program-wide event.
 //
-//   If ANY of these conditions fail, the organizer gets a 403 with a
-//   specific error message explaining which condition failed.
+//   If ANY condition fails, the organizer gets a 403 with a specific
+//   error message (and code) explaining which condition failed.
 //
 // ================================================================
 
@@ -75,21 +72,19 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   const isOwner = event.ownerId === account.id;
   const isAdmin = account.role === "ADMIN";
   let isDelegated = false;
-  let delegationMode = "owner"; // "owner" | "admin" | "same_organization"
-  let delegatedOrgTag = ""; // org tag used for delegated projection audit
+  let delegationMode = "owner"; // "owner" | "admin" | "same_program"
+  let delegateProgram = ""; // program used for delegated projection audit
 
   if (isAdmin) {
     delegationMode = "admin";
   } else if (isOwner) {
     delegationMode = "owner";
   } else {
-    // ---- OTHER ORGANIZER: strict delegation checks ----
+    // ---- OTHER ORGANIZER: program-scoped delegation ----
 
-    // CHECK 0 (POLP): Departmental (open-to-all) events are NEVER
-    // delegatable. A departmental event targets the whole department, so
-    // letting another organizer project its QR is unnecessary privilege -
-    // the owner (or an admin) handles projection. Course/section-scoped
-    // events may still be delegated under the checks below.
+    // CHECK 1: Department-wide (open-to-all) events are NEVER delegatable.
+    // They target the whole department, so letting another organizer project
+    // their QR is unnecessary privilege - the owner/admin handles it.
     if (event.scope === "departmental") {
       return NextResponse.json(
         {
@@ -101,49 +96,51 @@ export async function GET(req: NextRequest, { params }: Ctx) {
       );
     }
 
-    // CHECK 1: Organizer MUST have an organization tag.
-    // If the admin has not set an org tag on this organizer's account,
-    // delegation is COMPLETELY DISABLED - no exceptions, not even for
-    // open-to-all events. The admin must add the org tag first.
-    const organizerOrg = account.organizationName?.trim();
-    if (!organizerOrg) {
-      return forbidden(
-        "QR delegation is disabled for your account because you have no organization tag. An administrator must set your organization tag before you can project another organizer's QR code.",
+    // CHECK 2: Section-specific ("specified") events are NEVER delegatable.
+    // A single section is small enough that only the owner/admin projects it.
+    if (event.targetSection) {
+      return NextResponse.json(
+        {
+          error:
+            "QR delegation is not available for section-specific events. Only program-wide events can be delegated - leave the section blank when creating the event to enable delegation.",
+          code: "DELEGATION_SECTION_DISABLED",
+        },
+        { status: 403 },
       );
     }
 
-    // CHECK 2: The event's delegationEnabled flag must be true.
-    if (!event.delegationEnabled) {
+    // Delegation requires a program-wide event (targetProgram set, no section).
+    if (!event.targetProgram) {
       return forbidden(
-        "QR delegation is not enabled for this event. Only the event creator or an administrator can project this QR code.",
+        "QR delegation is only available for program-wide events.",
       );
     }
 
-    // CHECK 3: The event OWNER must also have an organization tag.
-    const owner = await db.account.findUnique({
-      where: { id: event.ownerId },
-      select: { organizationName: true },
-    });
-    const ownerOrg = owner?.organizationName?.trim();
-    if (!ownerOrg) {
+    // CHECK 3: The owner must have opted in (delegatable flag).
+    if (!event.delegatable) {
       return forbidden(
-        "QR delegation is blocked because the event creator has no organization tag. The administrator must set the event creator's organization tag before delegation can be used.",
+        "The event creator has not enabled QR delegation for this event. Only the event creator or an administrator can project this QR code.",
       );
     }
 
-    // CHECK 4: The organizer's org tag MUST match the event owner's org tag.
-    // This applies to ALL events (both open-to-all and course-specific).
-    // There is NO exception for open-to-all events.
-    if (ownerOrg !== organizerOrg) {
+    // CHECK 4: The delegate organizer must have a program that MATCHES the
+    // event's targetProgram (identical program alignment).
+    const organizerProgram = account.program?.trim();
+    if (!organizerProgram) {
       return forbidden(
-        `You can only delegate QR projection within the same organization. The event creator is tagged "${ownerOrg}" but you are tagged "${organizerOrg}". Contact your administrator if this is incorrect.`,
+        "Your account has no program assigned. An administrator must set your program before you can delegate QR projection.",
+      );
+    }
+    if (organizerProgram !== event.targetProgram) {
+      return forbidden(
+        `You can only delegate QR projection within your own program. This event is for the ${event.targetProgram} program but your program is ${organizerProgram}.`,
       );
     }
 
     // All checks passed - delegation is allowed.
     isDelegated = true;
-    delegationMode = "same_organization";
-    delegatedOrgTag = organizerOrg;
+    delegationMode = "same_program";
+    delegateProgram = organizerProgram;
   }
 
   if (event.status !== "active") {
@@ -206,7 +203,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         eventTitle: event.title,
         ownerId: event.ownerId,
         delegateId: account.id,
-        organizationTag: delegatedOrgTag,
+        delegateProgram,
         delegationMode,
       },
       req,

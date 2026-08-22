@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { parseFile } from "@/lib/file-parser";
+import { validateUpload } from "@/lib/file-security";
 import { requireAuth, checkRateLimitByKey } from "@/lib/api";
 import { audit } from "@/lib/audit";
 
@@ -14,8 +14,18 @@ export const maxDuration = 30;
 // student records. Returns the parsed students for preview before
 // the user confirms the import.
 //
-// The actual import (database write) happens via the existing
-// POST /api/whitelist endpoint with the parsed students.
+// SECURITY CHECKPOINT (file-security.ts validateUpload) runs BEFORE the
+// parser and validates the file's ACTUAL content (magic bytes), not just
+// the client-provided filename/MIME. This blocks:
+//   - renamed executables ("sample.exe" -> "sample.docx")
+//   - masked/double extensions ("malware.exe.docx")
+//   - macro-enabled Office files (.xlsm/.xlsb)
+//   - MIME/extension mismatches
+//   - polyglot files whose content doesn't match their label
+// See 06-security-architecture.md §3 (treat input as hostile), §4 A03/A05.
+//
+// The actual import (database write) happens via POST /api/whitelist with
+// the parsed students.
 //
 // Request: multipart/form-data with "file" field
 // Response: { students, errors, totalRows, skipped }
@@ -26,9 +36,6 @@ export async function POST(req: NextRequest) {
   const { account } = res;
 
   // Tighter rate limit for file upload + heavy parsing (5/min).
-  // Excel/PDF/DOCX parsing is CPU-intensive; without this an admin could
-  // upload 100 10MB files/min, exhausting the serverless CPU budget.
-  // Fails CLOSED on limiter error.
   const importRl = await checkRateLimitByKey(account.id, "whitelistImportFile");
   if (importRl) return importRl;
 
@@ -40,62 +47,42 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
 
-    // File size limit: 10MB
+    // File size limit: 10MB (checked early to avoid reading huge payloads).
     if (file.size > 10 * 1024 * 1024) {
       return NextResponse.json(
-        { error: "File too large (max 10MB)" },
+        { error: "File too large (max 10MB)", code: "TOO_LARGE" },
         { status: 400 },
       );
     }
 
-    // Sanitize filename: extract just the extension, ignore path components.
-    const safeName =
-      (file.name || "").split("/").pop()?.split("\\").pop() || "upload";
-
-    // ---- STRICT file extension validation (server-side, cannot be bypassed) ----
-    // Only allow: .xlsx, .xls, .pdf, .docx, .csv
-    const ALLOWED_EXTENSIONS = new Set(["xlsx", "xls", "pdf", "docx", "csv"]);
-    const ext = safeName.toLowerCase().split(".").pop() || "";
-    if (!ALLOWED_EXTENSIONS.has(ext)) {
-      return NextResponse.json(
-        {
-          error: `File type ".${ext}" is not allowed. Supported types: .xlsx, .xls, .pdf, .docx, .csv`,
-          code: "INVALID_FILE_TYPE",
-        },
-        { status: 400 },
-      );
-    }
-
-    // ---- MIME type validation (defense-in-depth) ----
-    const ALLOWED_MIME_TYPES = new Set([
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
-      "application/vnd.ms-excel", // .xls
-      "application/pdf", // .pdf
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
-      "text/csv", // .csv
-      "application/octet-stream", // fallback (some browsers send this for unknown types)
-      "application/vnd.ms-excel.sheet.macroEnabled.12", // .xlsm (treated as .xls)
-    ]);
-    if (file.type && !ALLOWED_MIME_TYPES.has(file.type)) {
-      return NextResponse.json(
-        {
-          error: `MIME type "${file.type}" is not allowed.`,
-          code: "INVALID_MIME_TYPE",
-        },
-        { status: 400 },
-      );
-    }
-
+    // Read the bytes ONCE - the security checkpoint and the parser share it.
     const buffer = Buffer.from(await file.arrayBuffer());
-    const result = await parseFile(buffer, safeName);
+
+    // ---- SECURITY CHECKPOINT ----
+    // Validates filename hygiene + extension + MIME + magic bytes + content
+    // sanity. The magic-byte sniff is the authoritative identity check: a
+    // renamed .exe will NOT match any signature and is rejected here.
+    const security = validateUpload(file.name, file.type || "", buffer);
+    if (!security.ok || !security.kind) {
+      const err = security.error!;
+      return NextResponse.json(
+        { error: err.reason, code: err.code },
+        { status: 400 },
+      );
+    }
+
+    // Pass the verified kind to the parser so it dispatches on the SNIFFED
+    // type (authoritative) rather than the (untrusted) filename extension.
+    const result = await parseFile(buffer, security.kind);
 
     await audit({
       actorId: account.id,
       action: "whitelist.file_parsed",
       targetType: "Whitelist",
       metadata: {
-        filename: safeName,
+        filename: file.name.split(/[/\\]/).pop() || "upload",
         fileSize: file.size,
+        detectedKind: security.kind,
         totalRows: result.totalRows,
         parsed: result.students.length,
         skipped: result.skipped,
@@ -106,9 +93,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (e) {
-    // Parse errors should return 400 (bad request), not 500 (server error).
-    // This prevents information leakage via stack traces and is the correct
-    // HTTP semantic for "we couldn't process your file."
+    // Parse errors return 400 (bad request), not 500. The message is
+    // generic (no stack trace) to avoid information leakage.
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json(
       { error: `File processing failed: ${msg}`, code: "PARSE_ERROR" },

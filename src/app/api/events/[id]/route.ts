@@ -120,32 +120,29 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     return badRequest("The scheduled time must be in the future");
   }
 
-  // Organizers can only target their own program/section (same as POST)
+  // Organizers are limited to their own program scope (mirrors POST).
   let targetProgram = d.targetProgram;
   let targetSection = d.targetSection;
   if (account.role === "ORGANIZER") {
-    // An organizer without a program cannot set a targetProgram (would allow
-    // cross-program event creation). Previously the guard short-circuited.
-    if (targetProgram !== undefined && targetProgram && !account.program) {
+    if (!account.program) {
       return forbidden(
-        "Your account has no program assigned. Ask an admin to set your program before targeting a specific program.",
+        "Your account has no program assigned. Ask an administrator to set your program before editing events.",
       );
     }
-    if (
-      targetProgram !== undefined &&
-      targetProgram &&
-      account.program &&
-      targetProgram !== account.program
-    ) {
-      return forbidden(`You can only target the ${account.program} program.`);
+    // Organizers cannot switch an event to department-wide scope.
+    if (d.scope === "departmental") {
+      return forbidden(
+        "Organizers can only manage events within their own program scope. Department-wide events can only be created by an administrator.",
+      );
     }
-    if (
-      targetSection !== undefined &&
-      targetSection &&
-      account.section &&
-      targetSection !== account.section
-    ) {
-      return forbidden(`You can only target section ${account.section}.`);
+    // If a program is being (re)set, it must be the organizer's own; we
+    // also forbid clearing it to null (which would make the event open-to-all
+    // and thus outside their scope).
+    if (targetProgram !== undefined) {
+      if (targetProgram && targetProgram !== account.program) {
+        return forbidden(`You can only target the ${account.program} program.`);
+      }
+      targetProgram = account.program;
     }
   }
 

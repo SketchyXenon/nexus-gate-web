@@ -76,6 +76,8 @@ interface FormErrors {
 export function EventsView() {
   const { data: me } = useMe();
   const isAdmin = me?.role === "ADMIN";
+  const isOrganizer = me?.role === "ORGANIZER";
+  const organizerProgram = me?.program ?? null;
 
   // ---- Search / filter / sort state (all server-side) ----
   const [searchInput, setSearchInput] = useState("");
@@ -110,7 +112,7 @@ export function EventsView() {
   const [scope, setScope] = useState<"academic" | "departmental">("academic");
   // Program Select uses "__all__" sentinel (Radix Select rejects empty string)
   const [targetProgram, setTargetProgram] = useState("__all__");
-  // Section field — text input, shown only when a program is selected.
+  // Section field - text input, shown only when a program is selected.
   const [targetSection, setTargetSection] = useState("");
   const [delegatable, setDelegatable] = useState(true);
   // Separate date + time fields for better UX
@@ -133,14 +135,15 @@ export function EventsView() {
 
   const events = data?.events ?? [];
 
-  // Ended events (history) — only shown when the user is NOT actively
+  // Ended events (history) - only shown when the user is NOT actively
   // filtering to "ended" or "all" (otherwise it would duplicate what's
   // already in the main grid).
   const showPastSection = statusFilter === STATUS_ALL;
   const endedEvents = (historyData?.events ?? [])
     .filter(
       (e) =>
-        e.timeStatus === "ended" && !events.some((active) => active.id === e.id)
+        e.timeStatus === "ended" &&
+        !events.some((active) => active.id === e.id),
     )
     // When a search is active, also filter the past-events list by the same
     // query so the user doesn't see unrelated rows.
@@ -152,8 +155,21 @@ export function EventsView() {
 
   // The Section field is shown when a specific program is selected AND the
   // scope is "academic" (departmental events clear program/section anyway).
+  // Organizers are locked to their own program (academic scope only), so
+  // the section field appears whenever they have a program assigned.
+  const effectiveScope: "academic" | "departmental" = isOrganizer
+    ? "academic"
+    : scope;
+  const effectiveProgram = isOrganizer
+    ? (organizerProgram ?? "__all__")
+    : targetProgram;
   const showSectionField =
-    scope === "academic" && targetProgram !== "__all__";
+    effectiveScope === "academic" && effectiveProgram !== "__all__";
+  // Delegation only applies to program-wide events (no section). Once a
+  // section is specified the event is section-specific and cannot be
+  // delegated, so the toggle is disabled.
+  const delegationDisabled =
+    effectiveScope === "departmental" || !!targetSection.trim();
 
   function validate(): boolean {
     const next: FormErrors = {};
@@ -185,6 +201,23 @@ export function EventsView() {
     const timeOutClosesIso = enableTimeOut
       ? combineDateTime(eventDate, timeOutClosesTime)
       : undefined;
+    // Resolve the scope/program/section the server will accept.
+    // Organizers are server-enforced to their own program (academic only);
+    // any mismatch is rejected as defense in depth.
+    const submitScope: "academic" | "departmental" = isOrganizer
+      ? "academic"
+      : scope;
+    const submitProgram = isOrganizer
+      ? (organizerProgram ?? undefined)
+      : scope === "departmental" || targetProgram === "__all__"
+        ? undefined
+        : targetProgram;
+    const submitSection =
+      submitScope === "academic" &&
+      (isOrganizer ? effectiveProgram : targetProgram) !== "__all__" &&
+      targetSection.trim()
+        ? targetSection.trim()
+        : undefined;
     create.mutate(
       {
         title: trimmedTitle,
@@ -196,20 +229,9 @@ export function EventsView() {
         timeOutClosesAt: timeOutClosesIso,
         enableTimeOut,
         description: description.trim() || undefined,
-        scope,
-        targetProgram:
-          scope === "departmental" || targetProgram === "__all__"
-            ? undefined
-            : targetProgram,
-        // Only send targetSection when a program is selected (academic scope)
-        // and the user typed something. Empty string → undefined so the
-        // server treats it as "all sections".
-        targetSection:
-          scope === "academic" &&
-          targetProgram !== "__all__" &&
-          targetSection.trim()
-            ? targetSection.trim()
-            : undefined,
+        scope: submitScope,
+        targetProgram: submitProgram,
+        targetSection: submitSection,
         delegatable,
       },
       {
@@ -245,7 +267,7 @@ export function EventsView() {
   }
 
   // Duplicate an event's details into the create form (user picks a new
-  // date/time — we never copy the scheduled time since it must be future).
+  // date/time - we never copy the scheduled time since it must be future).
   function handleDuplicate(e: EventItem) {
     setTitle(e.title);
     setDescription(e.description ?? "");
@@ -290,7 +312,9 @@ export function EventsView() {
       }
     } catch (e) {
       toast({
-        title: hardDeleteMode ? "Could not delete event" : "Could not cancel event",
+        title: hardDeleteMode
+          ? "Could not delete event"
+          : "Could not cancel event",
         description: e instanceof Error ? e.message : undefined,
         variant: "destructive",
       });
@@ -330,7 +354,7 @@ export function EventsView() {
               <Label htmlFor="title">Title</Label>
               <Input
                 id="title"
-                placeholder="CS 101 — Data Structures"
+                placeholder="CS 101 - Data Structures"
                 value={title}
                 onChange={(e) => {
                   setTitle(e.target.value);
@@ -356,8 +380,9 @@ export function EventsView() {
             <div className="space-y-1.5">
               <Label>Scope</Label>
               <Select
-                value={scope}
+                value={effectiveScope}
                 onValueChange={(v) => setScope(v as typeof scope)}
+                disabled={isOrganizer}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />
@@ -368,41 +393,49 @@ export function EventsView() {
                       <GraduationCap className="h-4 w-4" /> One class or section
                     </span>
                   </SelectItem>
-                  <SelectItem value="departmental">
-                    <span className="flex items-center gap-2">
-                      <Globe className="h-4 w-4" /> Whole department
-                    </span>
-                  </SelectItem>
+                  {!isOrganizer && (
+                    <SelectItem value="departmental">
+                      <span className="flex items-center gap-2">
+                        <Globe className="h-4 w-4" /> Whole department
+                      </span>
+                    </SelectItem>
+                  )}
                 </SelectContent>
               </Select>
+              {isOrganizer && (
+                <p className="text-[10px] text-muted-foreground">
+                  Organizers are limited to their own program
+                  {organizerProgram ? ` (${organizerProgram})` : ""}.
+                  Department-wide events require an administrator.
+                </p>
+              )}
             </div>
 
-            {/* Program + Section — Section only appears when a program is
+            {/* Program + Section - Section only appears when a program is
                 selected AND scope is "academic". Departmental events clear
                 program/section, so the Section field is hidden in that case. */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div className="space-y-1.5">
                 <Label htmlFor="targetProgram">Program</Label>
                 <Select
-                  value={targetProgram}
+                  value={effectiveProgram}
                   onValueChange={(v) => {
                     setTargetProgram(v);
                     // Clear section if user switches back to "all programs"
                     if (v === "__all__") setTargetSection("");
                   }}
-                  disabled={scope === "departmental"}
+                  disabled={isOrganizer || scope === "departmental"}
                 >
-                  <SelectTrigger
-                    className="w-full"
-                    aria-label="Target program"
-                  >
+                  <SelectTrigger className="w-full" aria-label="Target program">
                     <SelectValue placeholder="All programs" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__all__">All programs</SelectItem>
+                    {!isOrganizer && (
+                      <SelectItem value="__all__">All programs</SelectItem>
+                    )}
                     {PROGRAMS.map((p) => (
                       <SelectItem key={p.code} value={p.code}>
-                        {p.code} — {p.label}
+                        {p.code} - {p.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -430,7 +463,7 @@ export function EventsView() {
               )}
             </div>
 
-            {/* Date + Time — separate fields for clarity */}
+            {/* Date + Time - separate fields for clarity */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="eventDate">Date</Label>
@@ -446,7 +479,9 @@ export function EventsView() {
                   aria-invalid={!!errors.scheduledAt}
                 />
                 {errors.scheduledAt && (
-                  <p className="text-xs text-destructive">{errors.scheduledAt}</p>
+                  <p className="text-xs text-destructive">
+                    {errors.scheduledAt}
+                  </p>
                 )}
               </div>
               <div className="space-y-1.5">
@@ -460,12 +495,16 @@ export function EventsView() {
               </div>
             </div>
 
-            {/* Check-in window — time only (uses event date) */}
+            {/* Check-in window - time only (uses event date) */}
             <div className="space-y-2 rounded-lg border border-border/50 p-3 bg-muted/20">
-              <p className="text-xs font-medium text-muted-foreground">Check-in window (optional)</p>
+              <p className="text-xs font-medium text-muted-foreground">
+                Check-in window (optional)
+              </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <Label htmlFor="ciOpens" className="text-[11px]">Opens at</Label>
+                  <Label htmlFor="ciOpens" className="text-[11px]">
+                    Opens at
+                  </Label>
                   <Input
                     id="ciOpens"
                     type="time"
@@ -476,7 +515,9 @@ export function EventsView() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor="ciCloses" className="text-[11px]">Closes at</Label>
+                  <Label htmlFor="ciCloses" className="text-[11px]">
+                    Closes at
+                  </Label>
                   <Input
                     id="ciCloses"
                     type="time"
@@ -487,28 +528,41 @@ export function EventsView() {
                   />
                 </div>
               </div>
-              <p className="text-[10px] text-muted-foreground">Leave blank for defaults.</p>
+              <p className="text-[10px] text-muted-foreground">
+                Leave blank for defaults.
+              </p>
             </div>
 
             {/* Time-out toggle + window */}
             <label className="flex items-center gap-3 p-3 rounded-lg border border-border/50 bg-muted/20 cursor-pointer hover:bg-muted/40 transition-colors">
-              <input type="checkbox" checked={enableTimeOut} onChange={(e) => setEnableTimeOut(e.target.checked)} className="h-4 w-4 rounded accent-primary" />
+              <input
+                type="checkbox"
+                checked={enableTimeOut}
+                onChange={(e) => setEnableTimeOut(e.target.checked)}
+                className="h-4 w-4 rounded accent-primary"
+              />
               <div className="flex-1 flex items-center gap-1.5">
                 <p className="text-sm font-medium">Time-out mode</p>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
                   </TooltipTrigger>
-                  <TooltipContent>Students scan again to check out (e.g. 4:00 PM – 6:00 PM)</TooltipContent>
+                  <TooltipContent>
+                    Students scan again to check out (e.g. 4:00 PM - 6:00 PM)
+                  </TooltipContent>
                 </Tooltip>
               </div>
             </label>
             {enableTimeOut && (
               <div className="space-y-2 rounded-lg border border-border/50 p-3 bg-muted/20">
-                <p className="text-xs font-medium text-muted-foreground">Time-out window</p>
+                <p className="text-xs font-medium text-muted-foreground">
+                  Time-out window
+                </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div className="space-y-1">
-                    <Label htmlFor="toOpens" className="text-[11px]">Opens at</Label>
+                    <Label htmlFor="toOpens" className="text-[11px]">
+                      Opens at
+                    </Label>
                     <Input
                       id="toOpens"
                       type="time"
@@ -519,7 +573,9 @@ export function EventsView() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label htmlFor="toCloses" className="text-[11px]">Closes at</Label>
+                    <Label htmlFor="toCloses" className="text-[11px]">
+                      Closes at
+                    </Label>
                     <Input
                       id="toCloses"
                       type="time"
@@ -533,29 +589,45 @@ export function EventsView() {
               </div>
             )}
 
-            {/* QR delegation toggle — lets other organizers in the same
-                program project this event's QR code. */}
+            {/* QR delegation toggle - lets other organizers in the same
+                program project this event's QR code. Only available for
+                program-wide events (no section); department-wide and
+                section-specific events are never delegatable. */}
             <div
               className={`flex items-start gap-2 rounded-lg border border-border/50 p-3 bg-muted/20 ${
-                scope === "departmental" ? "opacity-50" : ""
+                delegationDisabled ? "opacity-50" : ""
               }`}
             >
               <Checkbox
                 id="delegatable"
-                checked={delegatable}
+                checked={delegatable && !delegationDisabled}
                 onCheckedChange={(v) => setDelegatable(v === true)}
-                disabled={scope === "departmental"}
+                disabled={delegationDisabled}
               />
               <div className="space-y-0.5">
-                <Label htmlFor="delegatable" className="cursor-pointer text-sm flex items-center gap-1.5">
+                <Label
+                  htmlFor="delegatable"
+                  className="cursor-pointer text-sm flex items-center gap-1.5"
+                >
                   Allow QR delegation
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
                     </TooltipTrigger>
-                    <TooltipContent>Other organizers in this program can project this event's QR if you're absent</TooltipContent>
+                    <TooltipContent>
+                      {delegationDisabled
+                        ? "Delegation is only available for program-wide events (no section). Clear the section field to enable it."
+                        : "Other organizers in this program can project this event's QR if you're absent (program-wide events only)"}
+                    </TooltipContent>
                   </Tooltip>
                 </Label>
+                {delegationDisabled && (
+                  <p className="text-[10px] text-muted-foreground">
+                    {effectiveScope === "departmental"
+                      ? "Department-wide events cannot be delegated."
+                      : "Section-specific events cannot be delegated - clear the section to enable."}
+                  </p>
+                )}
               </div>
             </div>
             <Button
@@ -637,7 +709,10 @@ export function EventsView() {
 
               {/* Scope filter */}
               <Select value={scopeFilter} onValueChange={setScopeFilter}>
-                <SelectTrigger className="h-9 w-full" aria-label="Filter by scope">
+                <SelectTrigger
+                  className="h-9 w-full"
+                  aria-label="Filter by scope"
+                >
                   <SelectValue placeholder="All scopes" />
                 </SelectTrigger>
                 <SelectContent>
@@ -649,7 +724,10 @@ export function EventsView() {
 
               {/* Status filter */}
               <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="h-9 w-full" aria-label="Filter by status">
+                <SelectTrigger
+                  className="h-9 w-full"
+                  aria-label="Filter by status"
+                >
                   <SelectValue placeholder="All statuses" />
                 </SelectTrigger>
                 <SelectContent>
@@ -665,10 +743,7 @@ export function EventsView() {
                 value={sortBy}
                 onValueChange={(v) => setSortBy(v as EventSort)}
               >
-                <SelectTrigger
-                  className="h-9 w-full"
-                  aria-label="Sort by date"
-                >
+                <SelectTrigger className="h-9 w-full" aria-label="Sort by date">
                   <SelectValue placeholder="Sort" />
                 </SelectTrigger>
                 <SelectContent>
@@ -680,7 +755,7 @@ export function EventsView() {
           </CardContent>
         </Card>
 
-        {/* Events grid — 1 col mobile, 2 cols sm+ (within the right column) */}
+        {/* Events grid - 1 col mobile, 2 cols sm+ (within the right column) */}
         {isLoading ? (
           <Card>
             <CardContent className="p-8 text-center text-sm text-muted-foreground">
@@ -692,7 +767,9 @@ export function EventsView() {
           <Card>
             <CardContent className="p-10 text-center">
               <CalendarX className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
-              <p className="text-sm font-medium">No events match your filters</p>
+              <p className="text-sm font-medium">
+                No events match your filters
+              </p>
               <p className="text-xs text-muted-foreground mt-1">
                 {hasActiveFilters
                   ? "Try clearing filters or adjusting your search."
@@ -838,7 +915,11 @@ export function EventsView() {
           }
         }}
         destructive={true}
-        title={hardDeleteMode ? "Permanently delete this event?" : "Cancel this event?"}
+        title={
+          hardDeleteMode
+            ? "Permanently delete this event?"
+            : "Cancel this event?"
+        }
         description={
           hardDeleteMode
             ? `This will permanently delete "${deleteTarget?.title ?? ""}" and ALL attendance records for it. This cannot be undone.`
@@ -867,7 +948,7 @@ export function EventsView() {
 }
 
 // =========================================================================
-// EventCard — single event in the responsive grid. Cards are kept a
+// EventCard - single event in the responsive grid. Cards are kept a
 // consistent size by using `h-full` + a fixed-height description area.
 // =========================================================================
 function EventCard({
@@ -961,10 +1042,10 @@ function EventCard({
               <p className="flex items-center gap-1.5 text-emerald-600/80 dark:text-emerald-400/80">
                 <Clock className="h-3 w-3 shrink-0" />
                 <span className="truncate">
-                  Check-in: {format(new Date(event.checkInOpensAt), "h:mm a")} –{" "}
+                  Check-in: {format(new Date(event.checkInOpensAt), "h:mm a")} -{" "}
                   {format(
                     new Date(event.checkInClosesAt || event.scheduledAt),
-                    "h:mm a"
+                    "h:mm a",
                   )}
                 </span>
               </p>
@@ -973,10 +1054,10 @@ function EventCard({
               <p className="flex items-center gap-1.5 text-amber-600/80 dark:text-amber-400/80">
                 <Clock className="h-3 w-3 shrink-0" />
                 <span className="truncate">
-                  Time-out: {format(new Date(event.timeOutOpensAt), "h:mm a")} –{" "}
+                  Time-out: {format(new Date(event.timeOutOpensAt), "h:mm a")} -{" "}
                   {format(
                     new Date(event.timeOutClosesAt || event.scheduledAt),
-                    "h:mm a"
+                    "h:mm a",
                   )}
                 </span>
               </p>
@@ -1041,7 +1122,10 @@ function EventCard({
                         scheduledAt: event.scheduledAt,
                         endsAt: event.endsAt,
                       });
-                      toast({ title: "Calendar file downloaded", description: `Added "${event.title}" to your calendar.` });
+                      toast({
+                        title: "Calendar file downloaded",
+                        description: `Added "${event.title}" to your calendar.`,
+                      });
                     }}
                     aria-label={`Add ${event.title} to calendar`}
                   >

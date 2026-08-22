@@ -1,5 +1,21 @@
 import { PrismaClient } from "@prisma/client";
 
+// ====================================================================
+// DATABASE PROVIDER
+// --------------------------------------------------------------------
+// Production: TiDB Serverless (MySQL-compatible). Local dev: SQLite.
+// Supabase is used for AUTH ONLY (sessions/JWT/email) — app data lives in
+// TiDB. See docs/tidb-data-protection.md for the full data-protection ADR.
+//
+// CRITICAL — TiDB has NO built-in Row-Level Security (unlike Postgres).
+// Row scoping is enforced in the APPLICATION LAYER:
+//   - Read paths use centralized predicates (src/lib/event-visibility.ts).
+//   - Every [id] route re-authorizes against the caller (BOLA defense).
+//   - Organizers are program-scoped in events/route.ts + export route.
+// A single missed `where` clause is a data leak. When adding a query,
+// import the shared predicate instead of hand-rolling the `where`.
+// ====================================================================
+
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };

@@ -1,14 +1,14 @@
 // ====================================================================
-// Nexus Gate — File Parser (Excel, PDF, DOCX → Student Records)
+// Nexus Gate - File Parser (Excel, PDF, DOCX → Student Records)
 // ====================================================================
 // Parses uploaded files containing student roster data.
 // Supports:
-//   • Excel (.xlsx, .xls) — via exceljs library (replaces xlsx which
-//     had a prototype pollution vulnerability — CVSS 7.8)
-//   • PDF (.pdf) — via pdfjs-dist (pure JS, no native deps — works on
+//   • Excel (.xlsx, .xls) - via exceljs library (replaces xlsx which
+//     had a prototype pollution vulnerability - CVSS 7.8)
+//   • PDF (.pdf) - via pdfjs-dist (pure JS, no native deps - works on
 //     Vercel serverless. Replaces pdf-parse which used @napi-rs/canvas)
-//   • DOCX (.docx) — via mammoth (extracts text, then parses rows)
-//   • CSV (.csv) — via papaparse (already supported)
+//   • DOCX (.docx) - via mammoth (extracts text, then parses rows)
+//   • CSV (.csv) - via papaparse (already supported)
 //
 // Expected columns (any order, headers auto-detected):
 //   studentId | student_id | id  → 7-digit number
@@ -85,7 +85,7 @@ function parseRows(data: unknown[][]): ParseResult {
     headers = firstRow.map((c) => HEADER_MAP[normalizeHeader(c)] || c);
     dataStart = 1;
   } else {
-    // No headers — assume order: studentId, email, fullName, program, section
+    // No headers - assume order: studentId, email, fullName, program, section
     headers = ["studentId", "email", "fullName", "program", "section"];
   }
 
@@ -140,7 +140,7 @@ function parseRows(data: unknown[][]): ParseResult {
       continue;
     }
 
-    // Parse program (optional — validate if provided)
+    // Parse program (optional - validate if provided)
     let program = (obj.program || "").trim();
     if (program && !PROGRAM_CODES.has(program)) {
       errors.push(
@@ -307,7 +307,7 @@ export async function parseDocx(buffer: Buffer): Promise<ParseResult> {
     const result = await mammoth.extractRawText({ buffer });
     const text = result.value;
 
-    // Similar to PDF — extract rows from text
+    // Similar to PDF - extract rows from text
     const lines = text.split("\n").filter((l) => l.trim());
     const rows: unknown[][] = [];
     let headers: string[] | null = null;
@@ -373,14 +373,17 @@ export async function parseCsv(buffer: Buffer): Promise<ParseResult> {
   }
 }
 
-// ---- Main entry point: detect file type and parse ----
+// ---- Main entry point: dispatch on the SNIFFED file kind ----
+// `kind` comes from the file-security checkpoint (magic-byte sniff), so the
+// parser never trusts the (untrusted) filename extension to decide which
+// parser to run. This closes the "renamed executable" class entirely: a
+// .exe renamed to .docx never reaches a parser at all, and a genuine .csv
+// mislabeled as .xlsx is routed to the CSV parser by its true content.
 export async function parseFile(
   buffer: Buffer,
-  filename: string,
+  kind: "xlsx" | "xls" | "pdf" | "docx" | "csv",
 ): Promise<ParseResult> {
-  const ext = filename.toLowerCase().split(".").pop();
-
-  switch (ext) {
+  switch (kind) {
     case "xlsx":
     case "xls":
       return await parseExcel(buffer);
@@ -389,15 +392,11 @@ export async function parseFile(
     case "docx":
       return await parseDocx(buffer);
     case "csv":
-      // CSV is handled by the existing papaparse flow on the client side.
-      // Server-side, use papaparse (synchronous parse).
       return await parseCsv(buffer);
     default:
       return {
         students: [],
-        errors: [
-          `Unsupported file type: .${ext}. Supported: .xlsx, .xls, .pdf, .docx, .csv`,
-        ],
+        errors: [`Unsupported file kind: ${kind}.`],
         totalRows: 0,
         skipped: 0,
       };

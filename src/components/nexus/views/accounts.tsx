@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -66,6 +67,7 @@ import {
   useAdminCreateAccount,
   useDeleteAccount,
   useRestoreAccount,
+  useBatchUpdateAccounts,
   type Account,
 } from "@/lib/api-client";
 import { ROLE_LABELS } from "@/lib/rbac";
@@ -124,6 +126,36 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
   const createMut = useAdminCreateAccount();
   const deleteMut = useDeleteAccount();
   const restoreMut = useRestoreAccount();
+  const batchMut = useBatchUpdateAccounts();
+
+  // ---- Batch selection state ----
+  // Selection is keyed by account id. A Set would re-render on every toggle;
+  // a Record gives stable identity for React's diffing.
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [batchConfirm, setBatchConfirm] = useState<{
+    action: "activate" | "suspend" | "setRole";
+    role?: "ADMIN" | "ORGANIZER" | "USER";
+  } | null>(null);
+  const selectedIds = Object.keys(selected).filter((id) => selected[id]);
+  const selectedCount = selectedIds.length;
+  const allVisibleSelected =
+    accounts.length > 0 && accounts.every((a) => selected[a.id]);
+  const someVisibleSelected =
+    accounts.some((a) => selected[a.id]) && !allVisibleSelected;
+
+  function toggleRow(id: string) {
+    setSelected((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
+  function toggleAllVisible() {
+    setSelected((prev) => {
+      const next = { ...prev };
+      for (const a of accounts) next[a.id] = !allVisibleSelected;
+      return next;
+    });
+  }
+  function clearSelection() {
+    setSelected({});
+  }
 
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(
     null,
@@ -197,6 +229,36 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
           }),
       },
     );
+  }
+
+  // ---- Batch execution ----
+  // runBatch performs the confirmed batch action. The confirmation dialog
+  // (batchConfirm) is required because suspend/setRole are bulk state
+  // changes that affect many users at once - a misclick must not silently
+  // suspend 50 accounts.
+  async function runBatch() {
+    if (!batchConfirm || selectedCount === 0) return;
+    try {
+      const res = await batchMut.mutateAsync({
+        ids: selectedIds,
+        action: batchConfirm.action,
+        ...(batchConfirm.action === "setRole"
+          ? { role: batchConfirm.role }
+          : {}),
+      });
+      toast({
+        title: "Batch complete",
+        description: `${res.updated} account${res.updated === 1 ? "" : "s"} updated.`,
+      });
+      clearSelection();
+      setBatchConfirm(null);
+    } catch (e) {
+      toast({
+        title: "Batch action failed",
+        description: e instanceof Error ? e.message : undefined,
+        variant: "destructive",
+      });
+    }
   }
 
   async function confirmDelete() {
@@ -424,10 +486,85 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
               </p>
             </div>
           )}
+          {/* ---- Batch action bar (appears when accounts are selected) ---- */}
+          {selectedCount > 0 && (
+            <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b bg-primary/5 text-sm">
+              <Badge variant="secondary" className="gap-1">
+                {selectedCount} selected
+              </Badge>
+              <div className="flex flex-wrap items-center gap-1.5 ml-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  disabled={batchMut.isPending}
+                  onClick={() => setBatchConfirm({ action: "activate" })}
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Activate
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  disabled={batchMut.isPending}
+                  onClick={() => setBatchConfirm({ action: "suspend" })}
+                >
+                  <Ban className="h-3.5 w-3.5" />
+                  Suspend
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  disabled={batchMut.isPending}
+                  onClick={() =>
+                    setBatchConfirm({ action: "setRole", role: "ORGANIZER" })
+                  }
+                >
+                  Set Organizer
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  disabled={batchMut.isPending}
+                  onClick={() =>
+                    setBatchConfirm({ action: "setRole", role: "USER" })
+                  }
+                >
+                  Set Student
+                </Button>
+              </div>
+              <div className="ml-auto">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8"
+                  onClick={clearSelection}
+                >
+                  Clear
+                </Button>
+              </div>
+            </div>
+          )}
           <div className="max-h-[32rem] overflow-x-auto overflow-y-auto ng-scroll">
             <Table>
               <TableHeader className="sticky top-0 bg-card">
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={
+                        allVisibleSelected
+                          ? true
+                          : someVisibleSelected
+                            ? "indeterminate"
+                            : false
+                      }
+                      onCheckedChange={toggleAllVisible}
+                      aria-label="Select all visible accounts"
+                    />
+                  </TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead className="hidden sm:table-cell">Email</TableHead>
                   <TableHead>Role</TableHead>
@@ -448,7 +585,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                 {isLoading && (
                   <TableRow>
                     <TableCell
-                      colSpan={8}
+                      colSpan={9}
                       className="text-center text-sm text-muted-foreground py-8"
                     >
                       Loading…
@@ -458,7 +595,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                 {!isLoading && accounts.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={8}
+                      colSpan={9}
                       className="text-center text-sm text-muted-foreground py-8"
                     >
                       No accounts found.
@@ -474,8 +611,17 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                       duration: 0.18,
                       delay: Math.min(idx * 0.015, 0.15),
                     }}
-                    className="hover:bg-muted/40"
+                    className={
+                      selected[a.id] ? "bg-primary/5" : "hover:bg-muted/40"
+                    }
                   >
+                    <TableCell className="w-10">
+                      <Checkbox
+                        checked={!!selected[a.id]}
+                        onCheckedChange={() => toggleRow(a.id)}
+                        aria-label={`Select ${a.fullName}`}
+                      />
+                    </TableCell>
                     <TableCell className="max-w-[10rem]">
                       <div className="flex items-center gap-2 min-w-0">
                         <DiceBearAvatar fullName={a.fullName} size={28} />
@@ -924,6 +1070,42 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
         confirmText="DELETE"
         step2Warning="All attendance records will be permanently lost."
         onConfirm={confirmDelete}
+      />
+
+      {/* Batch action confirmation dialog */}
+      <ConfirmDialog
+        open={!!batchConfirm}
+        onOpenChange={(o) => !o && setBatchConfirm(null)}
+        destructive={batchConfirm?.action === "suspend"}
+        title={
+          batchConfirm?.action === "activate"
+            ? `Activate ${selectedCount} account${selectedCount === 1 ? "" : "s"}?`
+            : batchConfirm?.action === "suspend"
+              ? `Suspend ${selectedCount} account${selectedCount === 1 ? "" : "s"}?`
+              : `Set ${selectedCount} account${selectedCount === 1 ? "" : "s"} to ${batchConfirm?.role === "ORGANIZER" ? "Organizer" : "Student"}?`
+        }
+        description={
+          batchConfirm?.action === "suspend"
+            ? "Suspended accounts cannot sign in until reactivated. This affects every selected account at once - review the selection carefully."
+            : batchConfirm?.action === "setRole"
+              ? `This changes the role of every selected account to ${batchConfirm?.role === "ORGANIZER" ? "Organizer" : "Student"}. Their permissions will change immediately.`
+              : "Selected accounts will be able to sign in again."
+        }
+        confirmLabel={
+          batchConfirm?.action === "activate"
+            ? "Activate"
+            : batchConfirm?.action === "suspend"
+              ? "Suspend"
+              : "Change role"
+        }
+        confirmText={
+          batchConfirm?.action === "suspend"
+            ? "SUSPEND"
+            : batchConfirm?.action === "setRole"
+              ? "CHANGE"
+              : undefined
+        }
+        onConfirm={runBatch}
       />
 
       {/* Edit account dialog */}

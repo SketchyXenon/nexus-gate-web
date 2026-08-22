@@ -68,12 +68,19 @@ import { useAttendanceSocket } from "@/hooks/use-attendance-socket";
 export function ProjectQrView() {
   const { data: eventsData } = useEvents();
   const { data: me } = useMe();
-  // POLP: department-wide events are not delegatable, so hide other
-  // organizers' departmental events from the projection picker. Own
-  // events (any scope) and non-departmental events stay selectable.
+  // POLP: only events the organizer can actually project are selectable.
+  //   - Own events (any scope) - the owner always projects their own.
+  //   - Admin sees everything.
+  //   - Other organizers' events: only program-wide (no section) events in
+  //     the delegate's own program where the owner opted into delegation.
+  //     Department-wide and section-specific events are never delegatable.
   const events = (eventsData?.events ?? []).filter((e) => {
-    if (e.scope !== "departmental") return true;
-    return e.ownerId === me?.id;
+    if (me?.role === "ADMIN") return true;
+    if (e.ownerId === me?.id) return true;
+    if (e.scope === "departmental") return false;
+    if (e.targetSection) return false;
+    if (!e.targetProgram || e.targetProgram !== me?.program) return false;
+    return e.delegatable !== false;
   });
 
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
@@ -570,6 +577,31 @@ export function ProjectQrView() {
                             delegation is disabled for them (least privilege).
                             Only the event creator or an administrator can
                             project this code.
+                          </p>
+                        </div>
+                      </motion.div>
+                    );
+                  }
+
+                  if (code === "DELEGATION_SECTION_DISABLED") {
+                    return (
+                      <motion.div
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex flex-col items-center gap-4 py-16 text-center"
+                      >
+                        <div className="grid place-items-center h-16 w-16 rounded-full bg-amber-500/10 text-amber-600">
+                          <ShieldCheck className="h-8 w-8" />
+                        </div>
+                        <div>
+                          <p className="font-heading font-semibold text-lg">
+                            Delegation unavailable
+                          </p>
+                          <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+                            Section-specific events cannot be delegated. Only
+                            the event creator or an administrator can project
+                            this QR code. Delegation is available only for
+                            program-wide events.
                           </p>
                         </div>
                       </motion.div>

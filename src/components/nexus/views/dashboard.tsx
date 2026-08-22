@@ -1149,7 +1149,7 @@ function StudentQuickActions({
       description: "Manage your account",
       icon: UserCircle2,
       view: "profile",
-      accent: "bg-blue-500/10 text-blue-600",
+      accent: "bg-primary/10 text-primary",
     },
   ];
 

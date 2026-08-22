@@ -1,5 +1,5 @@
 // ====================================================================
-// Nexus Gate — Frontend API client + React Query hooks
+// Nexus Gate - Frontend API client + React Query hooks
 // ====================================================================
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -61,7 +61,7 @@ export interface EventItem {
   delegatable?: boolean;
   delegationEnabled?: boolean;
   // Timing-window fields (returned by the server but historically absent
-  // from this interface — declared here so consumers can render check-in /
+  // from this interface - declared here so consumers can render check-in /
   // time-out windows without resorting to `any`).
   checkInOpensAt?: string | null;
   checkInClosesAt?: string | null;
@@ -134,14 +134,14 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
         if (retryRes.status === 204) return undefined as T;
         return retryRes.json() as Promise<T>;
       }
-      // Retry also failed with 401 — the session is truly dead.
+      // Retry also failed with 401 - the session is truly dead.
       // Force redirect to login so the user isn't stuck on a broken page.
       if (retryRes.status === 401 && typeof window !== "undefined") {
         window.location.href = "/";
         throw new Error("Session expired");
       }
     }
-    // Refresh failed — the user will be redirected to login by useMe().
+    // Refresh failed - the user will be redirected to login by useMe().
   }
 
   if (!res.ok) {
@@ -236,7 +236,7 @@ export const useResetPassword = () =>
   });
 
 // Pre-registration availability check for email and/or student ID.
-// Debounced 400ms via enabled flag — only fires when inputs are format-valid.
+// Debounced 400ms via enabled flag - only fires when inputs are format-valid.
 export const useCheckAvailability = (
   email: string | null,
   studentId: string | null,
@@ -404,8 +404,8 @@ export const useEventSecret = (id: number | null) =>
     enabled: id != null,
     staleTime: 5 * 60_000,
     // Poll every 15s when the error is UPCOMING (the check-in window
-    // hasn't opened yet — auto-refresh when it opens). Don't poll for
-    // FORBIDDEN errors (the user doesn't have permission — retrying
+    // hasn't opened yet - auto-refresh when it opens). Don't poll for
+    // FORBIDDEN errors (the user doesn't have permission - retrying
     // just spams the server with 403s).
     refetchInterval: (query) => {
       const err = query.state.error as { code?: string } | undefined;
@@ -414,7 +414,7 @@ export const useEventSecret = (id: number | null) =>
       }
       return false;
     },
-    // Don't retry FORBIDDEN errors — retrying just spams 403s.
+    // Don't retry FORBIDDEN errors - retrying just spams 403s.
     retry: (failureCount, error) => {
       const err = error as { code?: string; status?: number } | undefined;
       if (err?.code === "FORBIDDEN" || err?.status === 403) return false;
@@ -494,9 +494,9 @@ export const useEventAttendance = (
       }>(`/api/events/${eventId}/attendance`),
     enabled: eventId != null,
     // Polling strategy:
-    //   - Override page: poll=false (no polling)
-    //   - Socket connected: no polling (Ably pushes realtime updates)
-    //   - Socket disconnected: poll every 15s as fallback (was 4s, then 10s)
+    //  - Override page: poll=false (no polling)
+    //  - Socket connected: no polling (Ably pushes realtime updates)
+    //  - Socket disconnected: poll every 15s as fallback (was 4s, then 10s)
     refetchInterval:
       eventId != null && options?.poll !== false && !options?.socketConnected
         ? 15_000
@@ -557,14 +557,34 @@ export const useDashboardStats = () =>
 
 // ---------------- CSV Export ----------------
 // Triggers a browser download of the attendance CSV for an event.
-export function exportAttendanceCsv(eventId: number): void {
-  const url = `/api/attendance/export?eventId=${eventId}`;
+// Uses fetch + blob so a 403 (scope rejection) surfaces as an error the
+// caller can toast, instead of silently downloading a JSON error body.
+export async function exportAttendanceCsv(eventId: number): Promise<void> {
+  const res = await fetch(`/api/attendance/export?eventId=${eventId}`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    let message = "Export failed";
+    try {
+      const body = await res.json();
+      message = body?.error || message;
+    } catch {
+      // non-JSON error (rare) - keep the generic message
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  const filename = match?.[1] || "attendance.csv";
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "";
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 export interface EventDetails {
@@ -751,7 +771,7 @@ export const useUpdateAccount = () => {
       year?: number | null;
       organizationName?: string | null;
     }) => {
-      // Only include fields that are explicitly provided — PATCH semantics.
+      // Only include fields that are explicitly provided - PATCH semantics.
       const body: Record<string, unknown> = {};
       if (vars.role !== undefined) body.role = vars.role;
       if (vars.status !== undefined) body.status = vars.status;
@@ -981,6 +1001,31 @@ export const useDeleteAccount = () => {
       api<{ ok: boolean; deleted: boolean }>(`/api/accounts/${id}/delete`, {
         method: "DELETE",
       }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
+  });
+};
+
+// ---------------- Batch account operations (admin) ----------------
+// Applies a single status/role change to many accounts at once. The
+// backend enforces safety guards (self-action block, last-admin guard,
+// hard cap of 200 ids, no bulk hard-delete).
+export type BatchAction = "activate" | "suspend" | "setRole";
+
+export const useBatchUpdateAccounts = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      ids: string[];
+      action: BatchAction;
+      role?: "ADMIN" | "ORGANIZER" | "USER";
+    }) =>
+      api<{ ok: boolean; updated: number; action: BatchAction }>(
+        "/api/accounts/batch",
+        {
+          method: "POST",
+          body: JSON.stringify(vars),
+        },
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
   });
 };

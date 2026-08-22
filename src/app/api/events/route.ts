@@ -63,14 +63,27 @@ export async function GET(req: NextRequest) {
     where.title = { contains: q };
   }
 
-  // ---- Role-aware visibility filtering (v8) ----
-  // USER + ORGANIZER share the same rule: open-to-all, program-wide in
-  // the caller's program, or exact program+section match. This makes an
-  // organizer's program-scoped event visible to every student in that
-  // program (v7 hid program-wide events, silently breaking the flow).
+  // ---- Role-aware visibility filtering (v8 + organizer-owns fix) ----
+  // USER (student): open-to-all, program-wide in their program, or exact
+  //   program+section match.
+  // ORGANIZER: the same v8 rule, PLUS every event they own. The owned
+  //   clause is critical - without it an organizer who creates a
+  //   section-specific event (and has no matching section on their own
+  //   profile) would never see their own event in the list, while admins
+  //   and qualifying students still could. An owner always sees their own
+  //   events regardless of targeting.
   // ADMIN sees all active events (no filtering).
-  if (account.role === "USER" || account.role === "ORGANIZER") {
+  if (account.role === "USER") {
     where.AND = [{ OR: visibleEventWhereOr(account.program, account.section) }];
+  } else if (account.role === "ORGANIZER") {
+    where.AND = [
+      {
+        OR: [
+          ...visibleEventWhereOr(account.program, account.section),
+          { ownerId: account.id },
+        ],
+      },
+    ];
   }
 
   // SECURITY: Never return eventSecret to USER accounts. Only
@@ -206,35 +219,38 @@ export async function POST(req: NextRequest) {
     return badRequest("The scheduled time must be in the future");
   }
 
-  // Organizers can only target their own program/section.
-  // Admins can target any.
-  // Departmental events clear program/section (applies to everyone).
+  // Organizers are strictly limited to their OWN program scope:
+  //   - They must have a program assigned (else they cannot create events).
+  //   - They CANNOT create department-wide (open-to-all) events - those are
+  //     outside their program scope and reserved for administrators.
+  //   - targetProgram is forced to the organizer's own program.
+  //   - targetSection, if any, stays within their program (cross-program
+  //     targeting is impossible because targetProgram is forced).
+  // Admins may target any program/section or create departmental events.
   let targetProgram =
     d.scope === "departmental" ? null : (d.targetProgram ?? null);
   let targetSection =
     d.scope === "departmental" ? null : (d.targetSection ?? null);
-  if (account.role === "ORGANIZER" && d.scope !== "departmental") {
-    // An organizer without a program can ONLY create open-to-all (no
-    // targetProgram) events. Previously the guard short-circuited on null
-    // account.program, allowing cross-program event creation.
-    if (targetProgram && !account.program) {
+  if (account.role === "ORGANIZER") {
+    if (!account.program) {
       return forbidden(
-        "Your account has no program assigned. Ask an admin to set your program before creating program-scoped events, or create a departmental event instead.",
+        "Your account has no program assigned. Ask an administrator to set your program before creating events.",
       );
     }
-    if (targetProgram && account.program && targetProgram !== account.program) {
+    // Department-wide (open-to-all) events are out of an organizer's scope.
+    if (d.scope === "departmental") {
+      return forbidden(
+        "Organizers can only create events within their own program scope. Department-wide events can only be created by an administrator.",
+      );
+    }
+    // Reject any attempt to target a different program.
+    if (targetProgram && targetProgram !== account.program) {
       return forbidden(
         `You can only create events for the ${account.program} program.`,
       );
     }
-    if (targetSection && account.section && targetSection !== account.section) {
-      return forbidden(
-        `You can only create events for section ${account.section}.`,
-      );
-    }
-    // Default to the organizer's own program/section if not specified
-    if (!targetProgram && account.program) targetProgram = account.program;
-    if (!targetSection && account.section) targetSection = account.section;
+    // Force the target program to the organizer's own program.
+    targetProgram = account.program;
   }
 
   const event = await db.event.create({

@@ -19,8 +19,11 @@ type Ctx = { params: Promise<{ id: string }> };
 //
 // Access rules:
 //  - ADMIN: any event
-//  - ORGANIZER: own events (or any, since this is read-only details -
-//     but we still scope to own events to match the rest of the app)
+//  - ORGANIZER: own events, plus other organizers' events that are visible
+//     to them under the v8 rule (open-to-all, program-wide in their
+//     program, or exact program+section match). Delegation projection is
+//     governed separately by /api/events/[id]/secret - this endpoint never
+//     returns the secret, so it only needs the list-style visibility check.
 //  - USER: only events targeted at their program/section (so students
 //     can't browse other classes' events)
 // ====================================================================
@@ -58,35 +61,20 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   if (!event) return notFound("Event not found");
 
   // ---- Access scoping ----
-  // ORGANIZERs can view their own events. They may also view OTHER
-  // organizers' events IF the STRICT delegation rules are met:
-  //   1. Organizer has a non-empty organizationName tag
-  //   2. Event's delegationEnabled is true
-  //   3. Event owner also has a non-empty organizationName tag
-  //   4. Both org tags match
-  // ADMIN sees all events.
+  // ORGANIZERs can always view their OWN events. For OTHER organizers'
+  // events they must satisfy the v8 visibility rule (open-to-all,
+  // program-wide in their program, or exact program+section match). This
+  // mirrors GET /api/events and GET /api/events/[id], and prevents a
+  // same-organization organizer from reading details of events outside
+  // their program/section. ADMIN sees all events.
   if (account.role === "ORGANIZER" && event.ownerId !== account.id) {
-    const organizerOrg = account.organizationName?.trim();
-    if (!organizerOrg) {
-      return forbidden(
-        "You have no organization tag set. An administrator must set your organization tag before you can view other organizers' events.",
-      );
-    }
-    if (!event.delegationEnabled) {
-      return forbidden(
-        "You can only view your own events. QR delegation is not enabled for this event.",
-      );
-    }
-    const owner = await db.account.findUnique({
-      where: { id: event.ownerId },
-      select: { organizationName: true },
+    const visible = isEventVisibleToStudent({
+      targetProgram: event.targetProgram,
+      targetSection: event.targetSection,
+      studentProgram: account.program,
+      studentSection: account.section,
     });
-    const ownerOrg = owner?.organizationName?.trim();
-    if (!ownerOrg || ownerOrg !== organizerOrg) {
-      return forbidden(
-        "You can only view events from the same organization with delegation enabled.",
-      );
-    }
+    if (!visible) return forbidden("This event isn't available to you");
   }
   if (account.role === "USER") {
     // v8 visibility (mirrors GET /api/events list scoping): open-to-all,
