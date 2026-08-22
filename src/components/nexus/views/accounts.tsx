@@ -138,20 +138,9 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
   } | null>(null);
   const selectedIds = Object.keys(selected).filter((id) => selected[id]);
   const selectedCount = selectedIds.length;
-  const allVisibleSelected =
-    accounts.length > 0 && accounts.every((a) => selected[a.id]);
-  const someVisibleSelected =
-    accounts.some((a) => selected[a.id]) && !allVisibleSelected;
 
   function toggleRow(id: string) {
     setSelected((prev) => ({ ...prev, [id]: !prev[id] }));
-  }
-  function toggleAllVisible() {
-    setSelected((prev) => {
-      const next = { ...prev };
-      for (const a of accounts) next[a.id] = !allVisibleSelected;
-      return next;
-    });
   }
   function clearSelection() {
     setSelected({});
@@ -202,6 +191,21 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
       }
     });
   const pagination = data?.pagination;
+
+  // ---- Batch selection derived values (depend on `accounts`) ----
+  // Declared AFTER `accounts` is computed above; block-scoped `const` cannot
+  // be referenced before its declaration (TS2448/TS2454).
+  const allVisibleSelected =
+    accounts.length > 0 && accounts.every((a) => selected[a.id]);
+  const someVisibleSelected =
+    accounts.some((a) => selected[a.id]) && !allVisibleSelected;
+  function toggleAllVisible() {
+    setSelected((prev) => {
+      const next = { ...prev };
+      for (const a of accounts) next[a.id] = !allVisibleSelected;
+      return next;
+    });
+  }
 
   async function confirmAction() {
     if (!pendingAction) return;
