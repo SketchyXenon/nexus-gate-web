@@ -65,37 +65,45 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   const { page, pageSize } = parsed.data;
   const skip = (page - 1) * pageSize;
 
-  const [attendances, totalCount, eligibleCount] = await Promise.all([
-    db.eventAttendance.findMany({
-      where: { eventId },
-      orderBy: { scannedAt: "asc" },
-      skip,
-      take: pageSize,
-      include: {
-        account: {
-          select: {
-            id: true,
-            fullName: true,
-            studentId: true,
-            program: true,
-            section: true,
+  const [attendances, totalCount, timeOutCount, eligibleCount] =
+    await Promise.all([
+      db.eventAttendance.findMany({
+        where: { eventId },
+        orderBy: { scannedAt: "asc" },
+        skip,
+        take: pageSize,
+        include: {
+          account: {
+            select: {
+              id: true,
+              fullName: true,
+              studentId: true,
+              program: true,
+              section: true,
+            },
           },
         },
-      },
-    }),
-    db.eventAttendance.count({ where: { eventId } }),
-    db.authorizedStudent.count({
-      where: {
-        program: event.targetProgram ?? undefined,
-        ...(event.targetSection ? { section: event.targetSection } : {}),
-      },
-    }),
-  ]);
+      }),
+      db.eventAttendance.count({ where: { eventId } }),
+      // Timed-out count: rows where timeOutAt is set. Surfaced to the Project
+      // QR UI so organizers can see how many students have scanned to time out
+      // (parallel to the check-in figure), when the event has time-out enabled.
+      db.eventAttendance.count({
+        where: { eventId, timeOutAt: { not: null } },
+      }),
+      db.authorizedStudent.count({
+        where: {
+          program: event.targetProgram ?? undefined,
+          ...(event.targetSection ? { section: event.targetSection } : {}),
+        },
+      }),
+    ]);
 
   return NextResponse.json(
     {
       event,
       presentCount: totalCount,
+      timeOutCount,
       eligibleCount,
       attendances,
       pagination: {

@@ -16,6 +16,7 @@ import {
   WifiOff,
   Maximize2,
   Minimize2,
+  LogOut,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -238,9 +239,16 @@ export function ProjectQrView() {
   const expiresInMs = Math.max(0, msUntilNextBlock(now));
   const pct = (expiresInMs / TOKEN_WINDOW_MS) * 100;
   const presentCount = presenceQ.data?.presentCount ?? 0;
+  const timeOutCount = presenceQ.data?.timeOutCount ?? 0;
   const eligibleCount = presenceQ.data?.eligibleCount ?? 0;
   const turnoutPct =
     eligibleCount > 0 ? Math.round((presentCount / eligibleCount) * 100) : 0;
+  // Time-out turnout: of the students who checked in, how many have timed
+  // out. Shown only when the event has time-out enabled so the figure isn't
+  // displayed for check-in-only events (where it would always be 0/0).
+  const enableTimeOut = !!secretQ.data?.enableTimeOut;
+  const timeOutTurnoutPct =
+    presentCount > 0 ? Math.round((timeOutCount / presentCount) * 100) : 0;
   const recentCheckIns = (presenceQ.data?.attendances ?? [])
     .slice(-12)
     .reverse();
@@ -387,6 +395,17 @@ export function ProjectQrView() {
               <span className="tabular-nums">{presentCount}</span>
               <span className="text-white/60">/ {eligibleCount}</span>
             </Badge>
+            {enableTimeOut && (
+              <Badge
+                variant="outline"
+                className="gap-1.5 border-amber-400/40 text-amber-200 text-sm sm:text-base px-2.5 py-1"
+                title={`Students who scanned to time out (${timeOutCount} of ${presentCount} checked in)`}
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span className="tabular-nums">{timeOutCount}</span>
+                <span className="text-white/60">/ {presentCount}</span>
+              </Badge>
+            )}
           </div>
           <p className="text-[10px] sm:text-xs text-white/50 text-center max-w-md">
             Hold your camera steady for ~2 seconds to scan. A new code appears
@@ -782,7 +801,9 @@ export function ProjectQrView() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-3">
+                <div
+                  className={`grid gap-3 ${enableTimeOut ? "grid-cols-2 sm:grid-cols-3" : "grid-cols-2"}`}
+                >
                   <div className="rounded-lg bg-emerald-500/10 p-3">
                     <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-medium">
                       <CheckCircle2 className="h-3.5 w-3.5" />
@@ -792,6 +813,20 @@ export function ProjectQrView() {
                       {presentCount}
                     </div>
                   </div>
+                  {enableTimeOut && (
+                    <div className="rounded-lg bg-amber-500/10 p-3">
+                      <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 text-xs font-medium">
+                        <LogOut className="h-3.5 w-3.5" />
+                        Timed out
+                      </div>
+                      <div className="text-2xl font-bold text-amber-700 dark:text-amber-400">
+                        {timeOutCount}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground mt-0.5">
+                        of {presentCount} checked in
+                      </div>
+                    </div>
+                  )}
                   <div className="rounded-lg bg-muted p-3">
                     <div className="flex items-center gap-1.5 text-muted-foreground text-xs font-medium">
                       <Users className="h-3.5 w-3.5" />
@@ -804,7 +839,7 @@ export function ProjectQrView() {
                 {eligibleCount > 0 && (
                   <div>
                     <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                      <span>Turnout</span>
+                      <span>Check-in turnout</span>
                       <span>{turnoutPct}%</span>
                     </div>
                     <div className="h-2 rounded-full bg-muted overflow-hidden">
@@ -812,6 +847,25 @@ export function ProjectQrView() {
                         className="h-full bg-primary rounded-full"
                         initial={{ width: 0 }}
                         animate={{ width: `${Math.min(100, turnoutPct)}%` }}
+                        transition={{ duration: 0.4 }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {enableTimeOut && presentCount > 0 && (
+                  <div>
+                    <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                      <span>Time-out turnout</span>
+                      <span>{timeOutTurnoutPct}%</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-muted overflow-hidden">
+                      <motion.div
+                        className="h-full bg-amber-500 rounded-full"
+                        initial={{ width: 0 }}
+                        animate={{
+                          width: `${Math.min(100, timeOutTurnoutPct)}%`,
+                        }}
                         transition={{ duration: 0.4 }}
                       />
                     </div>

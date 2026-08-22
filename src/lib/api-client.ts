@@ -489,6 +489,7 @@ export const useEventAttendance = (
       api<{
         event: EventItem;
         presentCount: number;
+        timeOutCount: number;
         eligibleCount: number;
         attendances: AttendanceRow[];
       }>(`/api/events/${eventId}/attendance`),

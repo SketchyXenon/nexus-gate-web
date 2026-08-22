@@ -4,7 +4,6 @@ import {
   Users,
   CalendarDays,
   ScanLine,
-  AlertTriangle,
   AlertCircle,
   ArrowRight,
   TrendingUp,
@@ -346,14 +345,6 @@ export function DashboardView({ user, onNavigate }: Props) {
         view: "attendance" as ViewId,
         show: true,
       },
-      {
-        label: "Manual entries",
-        value: stats.totalOverrides ?? 0,
-        icon: AlertTriangle,
-        hint: "Added by hand",
-        view: "overrides" as ViewId,
-        show: true,
-      },
     ] as Array<{
       label: string;
       value: number;
@@ -415,7 +406,7 @@ export function DashboardView({ user, onNavigate }: Props) {
         </Card>
       </motion.div>
 
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
         {cards.map((c, i) => {
           const Icon = c.icon;
           return (

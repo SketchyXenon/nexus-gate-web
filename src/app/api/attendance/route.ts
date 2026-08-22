@@ -33,15 +33,22 @@ export const maxDuration = 30;
 // ====================================================================
 // POST /api/attendance - scan QR token (v8 - signed certificate)
 // --------------------------------------------------------------------
-// ONE-ATTEMPT POLICY (strict):
-//   After the first successful scan (time-in), ALL subsequent scan
-//   attempts by the same student for the same event return:
-//     { ok: true, alreadyPresent: true, action: "already_scanned",
-//       message: "This QR was already scanned. You are already marked present." }
+// SCAN TYPES (determined server-side from whether a record exists):
+//   - TIME-IN: no existing record → create a new attendance row. Enforces
+//     the check-in time window against the certificate's scannedAt.
+//   - TIME-OUT: existing record with scannedAt but no timeOutAt → update
+//     the row's timeOutAt. Requires enableTimeOut=true AND the time-out
+//     window live (checked against BOTH server time AND scannedAt, so a
+//     scan made before the window opens can't be accepted by syncing late).
+//   - ALREADY SCANNED: existing record, time-out not enabled/not live →
+//     returns "already present". No time-out recorded.
+//   - ALREADY COMPLETE: existing record with timeOutAt set → returns
+//     "already complete". No double time-out.
 //
-//   This is enforced ATOMICALLY by the unique constraint on
-//   (eventId, accountId). There is no time-out via QR - if time-out
-//   is needed, organizers use the manual override system.
+// A time-out scan WITHOUT a prior time-in is IMPOSSIBLE: the time-out
+// path is only entered when an existing attendance row exists (the
+// student already checked in). A first-time scan always goes to the
+// time-in flow, which rejects scans made after the check-in window closes.
 //
 // SERVER-SIDE VALIDATIONS (cannot be bypassed by the client):
 //   1. Zod schema validation (scanCertificateSchema)
@@ -51,7 +58,7 @@ export const maxDuration = 30;
 //   5. Multi-frame liveness (at least MIN_SUB_FRAMES consecutive sub-frames)
 //   6. Event match (certificate eventId = token eventId)
 //   7. Event eligibility (program + section strict match)
-//   8. Time window validation (check-in must be open)
+//   8. Time window validation (check-in OR time-out must be open, vs scannedAt)
 //   9. Idempotency (deterministic key from certificate nonce)
 //  10. Unique constraint (eventId, accountId) - atomic one-attempt enforcement
 // ====================================================================
@@ -197,6 +204,31 @@ export async function POST(req: NextRequest) {
         if (timeOutScanAgeMs > MAX_OFFLINE_GRACE_MS) {
           return forbidden(
             "This scan is too old. Offline scans must be synced within 15 minutes.",
+          );
+        }
+
+        // Validate the scan was made WITHIN the time-out window using the
+        // certificate's scannedAt (offline-first), NOT server time. The
+        // `isLive` check above uses Date.now() (for the realtime UX of
+        // "is the window open right now"), which alone is insufficient: a
+        // student could scan BEFORE the time-out window opens, hold the
+        // scan offline, and sync after it opens (within the 15-min grace).
+        // This mirrors the check-in flow's scannedAt-based window validation
+        // and closes that gap. Per 06-security-architecture.md §3 (treat
+        // input as hostile, re-validate on every access).
+        const timeOutScanTime = new Date(
+          signed.certificate.scannedAt,
+        ).getTime();
+        const timeOutOpensAt = timeOutWindows.timeOut!.opensAt.getTime();
+        const timeOutClosesAt = timeOutWindows.timeOut!.closesAt.getTime();
+        if (timeOutScanTime < timeOutOpensAt) {
+          return forbidden(
+            "This event's time-out window hadn't opened when you scanned. Please scan again during the time-out period.",
+          );
+        }
+        if (timeOutScanTime > timeOutClosesAt) {
+          return forbidden(
+            "This event's time-out window had closed when you scanned.",
           );
         }
 

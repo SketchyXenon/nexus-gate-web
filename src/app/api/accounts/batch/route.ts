@@ -93,6 +93,9 @@ export async function POST(req: NextRequest) {
   }
 
   // ---- Build the update payload ----
+  // Note: the zod refine guarantees `role` is set when action === "setRole",
+  // but TypeScript can't narrow the type through a refine. The explicit
+  // check below is defense-in-depth (fail closed if the invariant breaks).
   let data: Record<string, unknown>;
   let actionLabel: string;
   if (action === "activate") {
@@ -102,6 +105,7 @@ export async function POST(req: NextRequest) {
     data = { status: "SUSPENDED" };
     actionLabel = "batch.suspend";
   } else {
+    if (!role) return badRequest("A role is required for the setRole action");
     data = { role };
     actionLabel = "batch.set_role";
   }
