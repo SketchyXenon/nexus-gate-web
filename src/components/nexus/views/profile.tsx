@@ -24,6 +24,7 @@ import {
   XCircle,
   AlertTriangle,
   UserX,
+  LogOut,
 } from "lucide-react";
 import {
   Card,
@@ -61,6 +62,7 @@ import {
   useChangePassword,
   useDeviceKeys,
   useRevokeDeviceKey,
+  useLogout,
 } from "@/lib/api-client";
 import { ROLE_LABELS } from "@/lib/rbac";
 import { DiceBearAvatar } from "@/components/nexus/dicebear-avatar";
@@ -96,6 +98,7 @@ export function ProfileView() {
   const { data: profile, isLoading } = useProfile();
   const updateProfile = useUpdateProfile();
   const changePassword = useChangePassword();
+  const logout = useLogout();
 
   const [fullName, setFullName] = useState("");
   const [program, setProgram] = useState<string>(NO_PROGRAM);
@@ -669,6 +672,39 @@ export function ProfileView() {
 
       {/* Notification preferences */}
       <NotificationPreferences />
+
+      {/* Session - mobile users have no sidebar, so Profile carries sign-out. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <LogOut className="h-4 w-4 text-primary" /> Session
+          </CardTitle>
+          <CardDescription>End your session on this device.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button
+            variant="outline"
+            className="w-full sm:w-auto"
+            disabled={logout.isPending}
+            onClick={() =>
+              logout.mutate(undefined, {
+                onSuccess: () => {
+                  toast({ title: "Signed out" });
+                  // Hard reload to drop all in-memory state before the login screen.
+                  setTimeout(() => window.location.replace("/"), 500);
+                },
+              })
+            }
+          >
+            {logout.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <LogOut className="h-4 w-4" />
+            )}
+            Sign out
+          </Button>
+        </CardContent>
+      </Card>
 
       {/* Danger Zone - account deactivation (soft delete) */}
       <Card className="border-destructive/30">

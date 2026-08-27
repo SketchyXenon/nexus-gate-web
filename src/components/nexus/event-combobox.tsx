@@ -6,10 +6,17 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
 } from "@/components/ui/command";
 import {
-  Popover, PopoverContent, PopoverTrigger,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
 } from "@/components/ui/popover";
 import { format } from "date-fns";
 import type { EventItem } from "@/lib/api-client";
@@ -36,7 +43,7 @@ export interface EventComboboxProps {
 }
 
 /**
- * EventCombobox — a searchable, paginated event picker.
+ * EventCombobox - a searchable, paginated event picker.
  * Falls back gracefully when there are zero events.
  *
  * Use this instead of <Select> when the event list is long (more than ~20).
@@ -64,7 +71,7 @@ export function EventCombobox({
 
   const selected = useMemo(
     () => events.find((e) => e.id === value) ?? null,
-    [events, value]
+    [events, value],
   );
 
   // cmdk filters case-insensitively by default; we also widen it to include
@@ -99,7 +106,7 @@ export function EventCombobox({
           className={cn(
             "h-10 w-full justify-between font-normal",
             !selected && !allowClear && "text-muted-foreground",
-            className
+            className,
           )}
         >
           <span className="flex items-center gap-2 truncate min-w-0">
@@ -107,7 +114,10 @@ export function EventCombobox({
               <>
                 <span className="truncate">{selected.title}</span>
                 {showDate && (
-                  <Badge variant="outline" className="hidden sm:inline-flex shrink-0 text-[10px] font-mono">
+                  <Badge
+                    variant="outline"
+                    className="hidden sm:inline-flex shrink-0 text-[10px] font-mono"
+                  >
                     {format(new Date(selected.scheduledAt), "MMM d")}
                   </Badge>
                 )}
@@ -123,7 +133,11 @@ export function EventCombobox({
           <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-[18rem] p-0" align="start">
+      {/* Viewport-aware min/max width so the list can't overflow phone screens. */}
+      <PopoverContent
+        className="w-[var(--radix-popover-trigger-width)] min-w-[min(18rem,calc(100vw-2rem))] max-w-[calc(100vw-1.5rem)] p-0"
+        align="start"
+      >
         <Command shouldFilter={false}>
           <div className="flex h-9 items-center gap-2 border-b px-3">
             <Search className="size-4 shrink-0 opacity-50" />
@@ -153,7 +167,7 @@ export function EventCombobox({
                   <Check
                     className={cn(
                       "h-4 w-4",
-                      value == null ? "opacity-100" : "opacity-0"
+                      value == null ? "opacity-100" : "opacity-0",
                     )}
                   />
                   <span className="text-sm font-medium">{allLabel}</span>
@@ -174,7 +188,7 @@ export function EventCombobox({
                   <Check
                     className={cn(
                       "h-4 w-4",
-                      value === e.id ? "opacity-100" : "opacity-0"
+                      value === e.id ? "opacity-100" : "opacity-0",
                     )}
                   />
                   <div className="flex flex-col min-w-0 flex-1">
@@ -183,7 +197,10 @@ export function EventCombobox({
                       <CalendarDays className="h-3 w-3" />
                       {format(new Date(e.scheduledAt), "MMM d, yyyy · HH:mm")}
                       {e.targetProgram && (
-                        <Badge variant="outline" className="ml-1 text-[10px] py-0 px-1">
+                        <Badge
+                          variant="outline"
+                          className="ml-1 text-[10px] py-0 px-1"
+                        >
                           {e.targetProgram}
                           {e.targetSection ? ` · ${e.targetSection}` : ""}
                         </Badge>

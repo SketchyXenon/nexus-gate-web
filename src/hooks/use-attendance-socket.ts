@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Ably from "ably";
 
 // ====================================================================
-// useAttendanceSocket — subscribes to a per-event live attendance channel.
+// useAttendanceSocket - subscribes to a per-event live attendance channel.
 // --------------------------------------------------------------------
 // Uses Ably Token Authentication via authCallback (not authUrl). This
 // gives us full control over error handling: if the token endpoint
@@ -22,6 +22,8 @@ export interface LiveAttendance {
   program: string | null;
   section: string | null;
   scannedAt: string;
+  /** Present (ISO) when this message is a time-out update for an existing row. */
+  timeOutAt?: string | null;
   source: string;
 }
 
@@ -35,7 +37,7 @@ export function useAttendanceSocket(eventId: number | null) {
   useEffect(() => {
     // Validate eventId with the SAME rules as the server route
     // (src/app/api/ably/token/route.ts). Catches null, undefined, 0,
-    // NaN, negatives, and non-integers — all of which would produce a
+    // NaN, negatives, and non-integers - all of which would produce a
     // 400 BAD_REQUEST from the token endpoint if we let them through.
     // The `eventId == null` check must come first so TypeScript narrows
     // `number | null` -> `number` for the `<= 0` comparison.
@@ -82,7 +84,7 @@ export function useAttendanceSocket(eventId: number | null) {
       if (client) {
         try {
           const channel = client.channels.get(`event:${eventId}`);
-          // Unsubscribe ONLY our handler — calling unsubscribe() with no
+          // Unsubscribe ONLY our handler - calling unsubscribe() with no
           // args removes ALL listeners on the channel, which is fragile
           // if a future change adds more handlers.
           if (messageHandler) channel.unsubscribe("attendance", messageHandler);

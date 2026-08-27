@@ -6,18 +6,23 @@ const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
 
 // GET /api/attendance/overrides
-// ADMIN-ONLY: override viewing is restricted to administrators to maintain
-// data integrity. Organizers no longer have access to manual overrides.
+// ORGANIZER + ADMIN (v16): organizers see overrides for events they OWN
+// (including admin-made corrections on their events); admins see all.
+// Every row now carries anti-cheat forensics: creator identity, the
+// signed client creation time, sync delay, offline flag, and the
+// organizer's device fingerprint - so fabricated entries are
+// traceable after the fact (06-security-architecture.md: log
+// privileged actions with enough context to investigate).
 //
 // Query params:
-//   page      — 1-indexed page number (default 1)
-//   pageSize  — items per page (default 25, max 100)
-//   eventId   — filter by a specific event id (optional)
-//   q         — search by student name, student ID, or reason (optional)
-//   from      — ISO date; only overrides createdAt >= from (optional)
-//   to        — ISO date; only overrides createdAt <= to (optional)
+//   page     - 1-indexed page number (default 1)
+//   pageSize - items per page (default 25, max 100)
+//   eventId  - filter by a specific event id (optional)
+//   q        - search by student name, student ID, or reason (optional)
+//   from     - ISO date; only overrides createdAt >= from (optional)
+//   to       - ISO date; only overrides createdAt <= to (optional)
 export async function GET(req: NextRequest) {
-  const res = await requireAuth("ADMIN");
+  const res = await requireAuth("ORGANIZER");
   if ("error" in res) return res.error;
   const { account } = res;
 
@@ -40,7 +45,8 @@ export async function GET(req: NextRequest) {
   const to = toParam ? new Date(toParam) : undefined;
 
   // Build the where clause.
-  // - Non-admins can only see overrides for events they own.
+  // - Organizers can only see overrides for events they own (admins
+  //   see everything, including entries created by organizers).
   // - eventId filter narrows to a single event (must still be owned).
   const where: { AND: Array<Record<string, unknown>> } = { AND: [] };
 
@@ -68,7 +74,7 @@ export async function GET(req: NextRequest) {
       { reason: { contains: q } },
       { student: { fullName: { contains: q } } },
       { student: { email: { contains: q } } },
-      { admin: { fullName: { contains: q } } },
+      { creator: { fullName: { contains: q } } },
     ];
     const asNum = Number(q);
     if (!Number.isNaN(asNum)) {
@@ -102,7 +108,7 @@ export async function GET(req: NextRequest) {
             email: true,
           },
         },
-        admin: { select: { id: true, fullName: true, email: true } },
+        creator: { select: { id: true, fullName: true, email: true } },
       },
     }),
     db.attendanceOverride.count({ where }),
@@ -118,6 +124,11 @@ export async function GET(req: NextRequest) {
         studentId: o.studentId,
         reason: o.reason,
         createdAt: o.createdAt.toISOString(),
+        // v16 anti-cheat forensics
+        clientCreatedAt: o.clientCreatedAt?.toISOString() ?? null,
+        offline: o.offline,
+        syncDelayMs: o.syncDelayMs,
+        deviceFingerprint: o.deviceFingerprint,
         event: {
           id: o.event.id,
           title: o.event.title,
@@ -132,8 +143,12 @@ export async function GET(req: NextRequest) {
           section: o.student.section,
           email: o.student.email,
         },
-        admin: o.admin
-          ? { id: o.admin.id, fullName: o.admin.fullName, email: o.admin.email }
+        creator: o.creator
+          ? {
+              id: o.creator.id,
+              fullName: o.creator.fullName,
+              email: o.creator.email,
+            }
           : null,
       })),
       pagination: {

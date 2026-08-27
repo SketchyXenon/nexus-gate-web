@@ -3,21 +3,42 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import {
-  ScrollText, Search, Loader2, ChevronLeft, ChevronRight,
+  ScrollText,
+  Search,
+  Loader2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import {
-  Card, CardContent, CardDescription, CardHeader, CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 import { useAuditLogs } from "@/lib/api-client";
 import { format } from "date-fns";
 
@@ -60,7 +81,7 @@ function actionTone(action: string): string {
 
 // Try to pretty-print a JSON metadata blob; fall back to the raw string.
 function prettyMetadata(raw: string | null): string {
-  if (!raw) return "—";
+  if (!raw) return " - ";
   try {
     return JSON.stringify(JSON.parse(raw), null, 2);
   } catch {
@@ -80,9 +101,18 @@ export function AuditLogsView() {
   const rawLogs = data?.logs ?? [];
   // Client-side actor search + sorting
   const logs = rawLogs
-    .filter((l) => !actorSearch || (l.actor?.fullName || "").toLowerCase().includes(actorSearch.toLowerCase()))
+    .filter(
+      (l) =>
+        !actorSearch ||
+        (l.actor?.fullName || "")
+          .toLowerCase()
+          .includes(actorSearch.toLowerCase()),
+    )
     .sort((a, b) => {
-      if (sortBy === "date-asc") return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      if (sortBy === "date-asc")
+        return (
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
       if (sortBy === "action-asc") return a.action.localeCompare(b.action);
       if (sortBy === "action-desc") return b.action.localeCompare(a.action);
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(); // date-desc
@@ -100,17 +130,21 @@ export function AuditLogsView() {
             </CardTitle>
             <CardDescription>
               {pagination?.total ?? 0}{" "}
-              {pagination?.total === 1 ? "entry" : "entries"} · append-only record of who did what
+              {pagination?.total === 1 ? "entry" : "entries"} · append-only
+              record of who did what
             </CardDescription>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col sm:flex-row flex-wrap gap-2">
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Filter by action…"
                 value={action}
-                onChange={(e) => { setAction(e.target.value); setPage(1); }}
-                className="pl-8 w-44"
+                onChange={(e) => {
+                  setAction(e.target.value);
+                  setPage(1);
+                }}
+                className="pl-8 w-full sm:w-44"
               />
             </div>
             <div className="relative">
@@ -119,11 +153,13 @@ export function AuditLogsView() {
                 placeholder="Filter by person…"
                 value={actorSearch}
                 onChange={(e) => setActorSearch(e.target.value)}
-                className="pl-8 w-44"
+                className="pl-8 w-full sm:w-44"
               />
             </div>
             <Select value={sortBy} onValueChange={setSortBy}>
-              <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-full sm:w-36">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="date-desc">Newest first</SelectItem>
                 <SelectItem value="date-asc">Oldest first</SelectItem>
@@ -142,7 +178,7 @@ export function AuditLogsView() {
             </p>
           </div>
         )}
-        <div className="max-h-[36rem] overflow-y-auto ng-scroll">
+        <div className="hidden md:block max-h-[36rem] overflow-y-auto overflow-x-auto ng-scroll">
           <Table>
             <TableHeader className="sticky top-0 bg-card">
               <TableRow>
@@ -157,7 +193,10 @@ export function AuditLogsView() {
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">
+                  <TableCell
+                    colSpan={6}
+                    className="text-center text-sm text-muted-foreground py-8"
+                  >
                     <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
                     Loading activity…
                   </TableCell>
@@ -165,7 +204,10 @@ export function AuditLogsView() {
               )}
               {!isLoading && logs.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">
+                  <TableCell
+                    colSpan={6}
+                    className="text-center text-sm text-muted-foreground py-8"
+                  >
                     No activity matches your filter.
                   </TableCell>
                 </TableRow>
@@ -175,7 +217,10 @@ export function AuditLogsView() {
                   key={log.id}
                   initial={{ opacity: 0, y: 4 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.18, delay: Math.min(idx * 0.012, 0.12) }}
+                  transition={{
+                    duration: 0.18,
+                    delay: Math.min(idx * 0.012, 0.12),
+                  }}
                   className="hover:bg-muted/40"
                 >
                   <TableCell className="text-xs text-muted-foreground whitespace-nowrap tabular-nums">
@@ -192,18 +237,24 @@ export function AuditLogsView() {
                   <TableCell className="text-xs">
                     {log.actor ? (
                       <div className="flex flex-col">
-                        <span className="font-medium">{log.actor.fullName}</span>
-                        <span className="text-muted-foreground">{log.actor.email}</span>
+                        <span className="font-medium">
+                          {log.actor.fullName}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {log.actor.email}
+                        </span>
                       </div>
                     ) : (
                       <span className="text-muted-foreground">System</span>
                     )}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground font-mono">
-                    {log.targetType ? `${log.targetType} #${log.targetId ?? "?"}` : "—"}
+                    {log.targetType
+                      ? `${log.targetType} #${log.targetId ?? "?"}`
+                      : " - "}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground font-mono">
-                    {log.ipAddress ?? "—"}
+                    {log.ipAddress ?? " - "}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {log.metadata ? (
@@ -220,7 +271,7 @@ export function AuditLogsView() {
                         </TooltipContent>
                       </Tooltip>
                     ) : (
-                      "—"
+                      " - "
                     )}
                   </TableCell>
                 </motion.tr>
@@ -229,10 +280,86 @@ export function AuditLogsView() {
           </Table>
         </div>
 
+        {/* Mobile card list */}
+        <div className="md:hidden space-y-2 px-4 py-3">
+          {isLoading && (
+            <p className="text-center text-sm text-muted-foreground py-8">
+              <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
+              Loading activity…
+            </p>
+          )}
+          {!isLoading && logs.length === 0 && (
+            <p className="text-center text-sm text-muted-foreground py-8">
+              No activity matches your filter.
+            </p>
+          )}
+          {logs.map((log, idx) => (
+            <motion.div
+              key={log.id}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{
+                duration: 0.18,
+                delay: Math.min(idx * 0.012, 0.12),
+              }}
+              className="rounded-lg border p-3 space-y-2"
+            >
+              {/* Action badge + timestamp */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Badge
+                  variant="outline"
+                  className={`text-[11px] font-mono ${actionTone(log.action)}`}
+                >
+                  {log.action}
+                </Badge>
+                <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                  {format(new Date(log.createdAt), "MMM d, HH:mm:ss")}
+                </span>
+              </div>
+              {/* Actor */}
+              {log.actor ? (
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">
+                    {log.actor.fullName}
+                  </p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {log.actor.email}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm font-medium text-muted-foreground">
+                  System
+                </p>
+              )}
+              {/* Target */}
+              {log.targetType && (
+                <p className="text-xs text-muted-foreground font-mono truncate">
+                  {`${log.targetType} #${log.targetId ?? "?"}`}
+                </p>
+              )}
+              {/* IP + details */}
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="font-mono text-muted-foreground truncate">
+                  {log.ipAddress ?? " - "}
+                </span>
+                {log.metadata ? (
+                  <span className="font-mono text-muted-foreground truncate max-w-[220px]">
+                    {log.metadata}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground shrink-0"> - </span>
+                )}
+              </div>
+            </motion.div>
+          ))}
+        </div>
+
         {pagination && (
           <div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-4 py-3 border-t">
             <p className="text-xs text-muted-foreground">
-              Page {pagination.page} of {pagination.totalPages} · {pagination.total} entr{pagination.total === 1 ? "y" : "ies"} total
+              Page {pagination.page} of {pagination.totalPages} ·{" "}
+              {pagination.total} entr{pagination.total === 1 ? "y" : "ies"}{" "}
+              total
             </p>
             <div className="flex items-center gap-2">
               <Button

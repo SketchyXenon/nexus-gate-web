@@ -113,7 +113,10 @@ export async function POST(req: NextRequest) {
     const eventForTimeOut = await db.event.findUnique({
       where: { id: signed.certificate.eventId },
     });
-    if (eventForTimeOut?.enableTimeOut && eventForTimeOut.status === "active") {
+    // Event deleted after the student checked in: the record is orphaned.
+    // Report it instead of masquerading as a successful re-scan.
+    if (!eventForTimeOut) return notFound("Event not found");
+    if (eventForTimeOut.enableTimeOut && eventForTimeOut.status === "active") {
       const timeOutWindows = getEventTimeWindows(eventForTimeOut);
       if (timeOutWindows.timeOut?.isLive) {
         // Time-out window is live - run the FULL anti-cheat pipeline before
@@ -267,6 +270,21 @@ export async function POST(req: NextRequest) {
           req,
         });
 
+        // ---- Realtime notification (fire-and-forget, same as time-in) ----
+        // Without this, organizer rosters and the timed-out count never
+        // update live when a student times out - only via the 15s poll.
+        notifyAttendance(signed.certificate.eventId, {
+          id: existing.id,
+          accountId: account.id,
+          fullName: account.fullName,
+          studentId: account.studentId,
+          program: account.program,
+          section: account.section,
+          scannedAt: existing.scannedAt.toISOString(),
+          timeOutAt: timeOutAt.toISOString(),
+          source: existing.source,
+        }).catch(() => {});
+
         return NextResponse.json({
           ok: true,
           action: "time_out",
@@ -277,7 +295,21 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Time-out not enabled or not live - return "already scanned."
+    // Time-out not enabled, event inactive, or window not live yet.
+    // Distinct action so the scanner UI can tell the student WHEN the
+    // time-out window opens instead of a misleading "already scanned".
+    if (eventForTimeOut.enableTimeOut && eventForTimeOut.status === "active") {
+      const pendingWindows = getEventTimeWindows(eventForTimeOut);
+      return NextResponse.json({
+        ok: true,
+        alreadyPresent: true,
+        action: "timeout_not_open",
+        scannedAt: existing.scannedAt,
+        timeOutOpensAt: pendingWindows.timeOut?.opensAt.toISOString() ?? null,
+        message:
+          "You're checked in. The time-out window isn't open yet - scan again when it opens.",
+      });
+    }
     return NextResponse.json({
       ok: true,
       alreadyPresent: true,

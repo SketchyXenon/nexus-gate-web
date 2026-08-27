@@ -13,7 +13,13 @@ import {
   Download,
   TrendingUp,
 } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -102,19 +108,25 @@ export function MyAttendanceView() {
           escape(evt.targetProgram),
           escape(evt.targetSection),
           escape(format(parseISO(r.scannedAt), "yyyy-MM-dd HH:mm:ss")),
-          r.timeOutAt ? escape(format(parseISO(r.timeOutAt), "yyyy-MM-dd HH:mm:ss")) : "",
+          r.timeOutAt
+            ? escape(format(parseISO(r.timeOutAt), "yyyy-MM-dd HH:mm:ss"))
+            : "",
           escape(sourceLabel(r.source)),
         ].join(",");
       })
       .join("\n");
-    const blob = new Blob([header + body], { type: "text/csv" });
+    // UTF-8 BOM so Excel opens the CSV with correct encoding (matches export route).
+    const blob = new Blob(["\uFEFF" + header + body], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = `my-attendance-${format(new Date(), "yyyy-MM-dd")}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    toast({ title: "CSV downloaded", description: `${records.length} records exported.` });
+    toast({
+      title: "CSV downloaded",
+      description: `${records.length} records exported.`,
+    });
   };
 
   return (
@@ -139,7 +151,9 @@ export function MyAttendanceView() {
         <StatCard
           icon={TrendingUp}
           label="Attendance rate"
-          value={stats && stats.total > 0 ? `${stats.qrCount}/${stats.total}` : "—"}
+          value={
+            stats && stats.total > 0 ? `${stats.qrCount}/${stats.total}` : " - "
+          }
         />
       </div>
 
@@ -153,7 +167,9 @@ export function MyAttendanceView() {
             <Filter className="h-4 w-4 text-primary" />
             Filter your history
           </CardTitle>
-          <CardDescription>Narrow down by date range or event type</CardDescription>
+          <CardDescription>
+            Narrow down by date range or event type
+          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 grid-cols-1 sm:grid-cols-3">
           <div className="space-y-1.5">
@@ -203,7 +219,12 @@ export function MyAttendanceView() {
                 {records.length} record{records.length === 1 ? "" : "s"}
               </CardDescription>
             </div>
-            <Button variant="outline" size="sm" className="h-8" onClick={exportCsv}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={exportCsv}
+            >
               <Download className="h-3.5 w-3.5" />
               Export CSV
             </Button>
@@ -261,13 +282,19 @@ export function MyAttendanceView() {
                           </p>
                           <p className="text-xs text-muted-foreground mt-0.5 truncate">
                             {r.event.targetProgram
-                              ? (getProgramLabel(r.event.targetProgram) ?? r.event.targetProgram)
+                              ? (getProgramLabel(r.event.targetProgram) ??
+                                r.event.targetProgram)
                               : "All programs"}
-                            {r.event.targetSection ? ` · ${r.event.targetSection}` : ""}
+                            {r.event.targetSection
+                              ? ` · ${r.event.targetSection}`
+                              : ""}
                           </p>
                         </div>
                         <div className="flex flex-col items-end gap-1 shrink-0">
-                          <Badge variant="outline" className={`text-[10px] ${sourceBadgeClass(r.source)}`}>
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] ${sourceBadgeClass(r.source)}`}
+                          >
                             {sourceLabel(r.source)}
                           </Badge>
                           <Badge variant="outline" className="text-[10px]">

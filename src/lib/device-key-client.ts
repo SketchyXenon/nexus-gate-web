@@ -1,7 +1,7 @@
 "use client";
 
 // ====================================================================
-// Nexus Gate — Device Key Management (CLIENT-SIDE)
+// Nexus Gate - Device Key Management (CLIENT-SIDE)
 // --------------------------------------------------------------------
 // Each student's device has an Ed25519 keypair. The PRIVATE key lives
 // only on the device (IndexedDB). The PUBLIC key is registered with
@@ -11,18 +11,18 @@
 // by the server against the registered public key.
 //
 // Why Ed25519?
-//   - Fast signing/verification (sub-millisecond)
-//   - Small keys (32 bytes public, 32 bytes private)
-//   - Small signatures (64 bytes)
-//   - Supported by Web Crypto API in modern browsers (Chrome 113+,
+//  - Fast signing/verification (sub-millisecond)
+//  - Small keys (32 bytes public, 32 bytes private)
+//  - Small signatures (64 bytes)
+//  - Supported by Web Crypto API in modern browsers (Chrome 113+,
 //     Safari 17+, Firefox 130+)
-//   - Supported by Node.js crypto module (server-side)
+//  - Supported by Node.js crypto module (server-side)
 //
 // Storage: IndexedDB (not localStorage) because:
-//   - More tamper-resistant (not trivially editable via DevTools)
-//   - Persists across sessions
-//   - Can store larger binary payloads
-//   - Asynchronous API (doesn't block the main thread)
+//  - More tamper-resistant (not trivially editable via DevTools)
+//  - Persists across sessions
+//  - Can store larger binary payloads
+//  - Asynchronous API (doesn't block the main thread)
 // ====================================================================
 
 import {
@@ -30,6 +30,11 @@ import {
   type ScanCertificate,
   type SignedCertificate,
 } from "@/lib/scan-certificate";
+import {
+  canonicalizeOverrideCertificate,
+  type OverrideCertificate,
+  type SignedOverrideCertificate,
+} from "@/lib/override-certificate";
 
 const DB_NAME = "nexus_gate_device_keys";
 const DB_VERSION = 2;
@@ -71,9 +76,9 @@ function openDB(): Promise<IDBDatabase> {
       }
       // v1 → v2: no schema change to the store itself (keys are just strings).
       // Old keys ("device_keypair") are orphaned and will be cleaned up by
-      // the browser's IndexedDB eviction — they're not reused.
+      // the browser's IndexedDB eviction - they're not reused.
       if (event.oldVersion < 1) {
-        // First install — nothing extra to do.
+        // First install - nothing extra to do.
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -147,7 +152,7 @@ function base64UrlToBytes(b64url: string): Uint8Array {
  *   We need the JWK form to (a) store it in IndexedDB for later signing
  *   and (b) send the public key JWK to the server for registration.
  *
- *   The private key JWK never leaves the device — it's only stored in
+ *   The private key JWK never leaves the device - it's only stored in
  *   IndexedDB (same-origin) and re-imported for each signing operation.
  *   It is NEVER sent to the server or exposed to JavaScript from other
  *   origins. This is the standard pattern for client-side key storage
@@ -157,10 +162,12 @@ function base64UrlToBytes(b64url: string): Uint8Array {
  *     "Failed to execute 'exportKey' on 'SubtleCrypto': key is not extractable"
  *   on every scan attempt (the scanner couldn't sign certificates).
  */
-export async function generateDeviceKeyPair(accountId: string): Promise<DeviceKeyPair> {
+export async function generateDeviceKeyPair(
+  accountId: string,
+): Promise<DeviceKeyPair> {
   const keyPair = await crypto.subtle.generateKey(
     "Ed25519",
-    true, // extractable — required to export JWK for IndexedDB storage
+    true, // extractable - required to export JWK for IndexedDB storage
     ["sign", "verify"],
   );
 
@@ -190,20 +197,24 @@ export async function generateDeviceKeyPair(accountId: string): Promise<DeviceKe
  * a previous bug), it's regenerated. This ensures the scanner never
  * gets stuck with an unusable key.
  */
-export async function getOrCreateDeviceKeyPair(accountId: string): Promise<DeviceKeyPair> {
+export async function getOrCreateDeviceKeyPair(
+  accountId: string,
+): Promise<DeviceKeyPair> {
   const existing = await idbGet<DeviceKeyPair>(keyRecordId(accountId));
   // Validate the stored keypair has the required JWK fields.
   if (existing && existing.publicKeyJwk?.x && existing.privateKeyJwk?.d) {
     return existing;
   }
-  // Corrupt or missing — regenerate.
+  // Corrupt or missing - regenerate.
   return generateDeviceKeyPair(accountId);
 }
 
 /**
  * Mark the stored keypair as registered with the server.
  */
-export async function markDeviceKeyRegistered(accountId: string): Promise<void> {
+export async function markDeviceKeyRegistered(
+  accountId: string,
+): Promise<void> {
   const existing = await idbGet<DeviceKeyPair>(keyRecordId(accountId));
   if (existing) {
     existing.registered = true;
@@ -215,7 +226,9 @@ export async function markDeviceKeyRegistered(accountId: string): Promise<void> 
  * Get the device fingerprint (hash of the public key) for a given account.
  * Returns null if no keypair exists.
  */
-export async function getDeviceFingerprint(accountId: string): Promise<string | null> {
+export async function getDeviceFingerprint(
+  accountId: string,
+): Promise<string | null> {
   const keyPair = await idbGet<DeviceKeyPair>(keyRecordId(accountId));
   return keyPair?.fingerprint ?? null;
 }
@@ -251,7 +264,7 @@ export async function signCertificate(
   const encoder = new TextEncoder();
   const data = encoder.encode(canonical);
 
-  // Sign (Ed25519 has no algorithm-specific parameters — pass null)
+  // Sign (Ed25519 has no algorithm-specific parameters - pass null)
   const signatureBuffer = await crypto.subtle.sign("Ed25519", privateKey, data);
   const signature = bytesToBase64(new Uint8Array(signatureBuffer));
 
@@ -264,6 +277,45 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(bytes[i]);
   }
   return btoa(binary);
+}
+
+/**
+ * Sign an OVERRIDE certificate with the device's Ed25519 private key.
+ *
+ * Mirrors signCertificate() but for the OverrideCertificate shape
+ * (v16 offline-first organizer overrides). The signed certificate is
+ * what gets queued offline - any edit to a queued item breaks the
+ * signature and the server rejects it.
+ *
+ * @param cert - the unsigned override certificate
+ * @param accountId - the logged-in organizer/admin account ID (key scoping)
+ * @returns the signed override certificate
+ */
+export async function signOverrideCertificate(
+  cert: OverrideCertificate,
+  accountId: string,
+): Promise<SignedOverrideCertificate> {
+  const keyPair = await getOrCreateDeviceKeyPair(accountId);
+
+  // Import the private key for signing
+  const privateKey = await crypto.subtle.importKey(
+    "jwk",
+    keyPair.privateKeyJwk,
+    "Ed25519",
+    false,
+    ["sign"],
+  );
+
+  // Canonicalize the certificate (deterministic JSON)
+  const canonical = canonicalizeOverrideCertificate(cert);
+  const encoder = new TextEncoder();
+  const data = encoder.encode(canonical);
+
+  // Sign (Ed25519 has no algorithm-specific parameters - pass null)
+  const signatureBuffer = await crypto.subtle.sign("Ed25519", privateKey, data);
+  const signature = bytesToBase64(new Uint8Array(signatureBuffer));
+
+  return { certificate: cert, canonical, signature };
 }
 
 // ====================================================================

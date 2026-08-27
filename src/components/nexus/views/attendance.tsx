@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import {
   ClipboardList,
@@ -8,6 +8,7 @@ import {
   Users,
   CheckCircle2,
   Clock,
+  TimerOff,
   Activity,
   Radio,
   FileDown,
@@ -22,6 +23,7 @@ import {
   Hand,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Card,
   CardContent,
@@ -59,6 +61,7 @@ import {
   useEventAttendance,
   exportAttendanceCsv,
   type AttendanceRow,
+  type EventItem,
 } from "@/lib/api-client";
 import { useAttendanceSocket } from "@/hooks/use-attendance-socket";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -93,6 +96,15 @@ const SORT_LABELS: Record<SortKey, string> = {
 };
 
 const FILTER_ALL = "ALL";
+
+// Payload shape of GET /api/events/[id]/attendance (see useEventAttendance).
+type AttendancePayload = {
+  event: EventItem;
+  presentCount: number;
+  timeOutCount: number;
+  eligibleCount: number;
+  attendances: AttendanceRow[];
+};
 
 export function AttendanceView() {
   // Include ended events so organizers can view attendance for past classes.
@@ -133,9 +145,48 @@ export function AttendanceView() {
   });
   const eventEnableTimeOut = presenceQ.data?.event?.enableTimeOut ?? false;
 
+  // Realtime time-out updates: patch the cached roster row in place.
+  const queryClient = useQueryClient();
+  // Consume each socket message once so stale ones can't leak across event switches.
+  const lastTimeOutMsg = useRef(socket.latest);
+  useEffect(() => {
+    const msg = socket.latest;
+    const newTimeOut = msg?.timeOutAt;
+    // Plain check-in messages (no timeOutAt) keep their existing behavior.
+    if (!msg || !newTimeOut || eventId == null) return;
+    if (msg === lastTimeOutMsg.current) return;
+    lastTimeOutMsg.current = msg;
+    const key = ["attendance", eventId] as const;
+    const cached = queryClient.getQueryData<AttendancePayload>(key);
+    const match = cached?.attendances.find(
+      (r) => r.id === msg.id || r.accountId === msg.accountId,
+    );
+    if (!cached || !match) {
+      // Row not in the loaded list - refetch so counts stay accurate.
+      void queryClient.invalidateQueries({ queryKey: key });
+      return;
+    }
+    if (match.timeOutAt === newTimeOut) return;
+    const wasTimedOut = match.timeOutAt != null;
+    queryClient.setQueryData<AttendancePayload>(key, (prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        attendances: prev.attendances.map((r) =>
+          r.id === msg.id || r.accountId === msg.accountId
+            ? { ...r, timeOutAt: newTimeOut }
+            : r,
+        ),
+        // Only rows transitioning from "still in" to timed out bump the count.
+        timeOutCount: wasTimedOut ? prev.timeOutCount : prev.timeOutCount + 1,
+      };
+    });
+  }, [socket.latest, eventId, queryClient]);
+
   // ---- Derived: programs/sections present in this event's attendance ----
   const allRows: AttendanceRow[] = presenceQ.data?.attendances ?? [];
   const presentCount = presenceQ.data?.presentCount ?? 0;
+  const timeOutCount = presenceQ.data?.timeOutCount ?? 0;
   const eligibleCount = presenceQ.data?.eligibleCount ?? 0;
   const turnout =
     eligibleCount > 0
@@ -405,12 +456,44 @@ export function AttendanceView() {
               })()}
 
               {/* Stat grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2 sm:gap-3">
                 <Stat
                   icon={<CheckCircle2 className="h-4 w-4" />}
                   label="Present"
                   value={presentCount}
                   tone="primary"
+                />
+                <Stat
+                  icon={<TimerOff className="h-4 w-4" />}
+                  label="Timed Out"
+                  value={timeOutCount}
+                  sub={
+                    <div className="mt-1 space-y-0.5 text-[10px] leading-tight">
+                      <span className="flex items-center gap-1.5">
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                            eventEnableTimeOut
+                              ? "bg-emerald-500"
+                              : "bg-muted-foreground"
+                          }`}
+                        />
+                        <span
+                          className={
+                            eventEnableTimeOut
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-muted-foreground"
+                          }
+                        >
+                          {eventEnableTimeOut
+                            ? "Time-out enabled"
+                            : "Time-out disabled"}
+                        </span>
+                      </span>
+                      <span className="block text-muted-foreground">
+                        of {presentCount} checked in
+                      </span>
+                    </div>
+                  }
                 />
                 <Stat
                   icon={<Users className="h-4 w-4" />}
@@ -566,7 +649,7 @@ export function AttendanceView() {
               {!presenceQ.isLoading && sorted.length > 0 && (
                 <>
                   {/* Desktop / tablet table */}
-                  <div className="hidden md:block rounded-md border max-h-[32rem] overflow-y-auto ng-scroll">
+                  <div className="hidden md:block rounded-md border max-h-[32rem] overflow-y-auto overflow-x-auto ng-scroll">
                     <Table>
                       <TableHeader className="sticky top-0 bg-card z-10">
                         <TableRow>
@@ -859,11 +942,13 @@ function Stat({
   label,
   value,
   tone,
+  sub,
 }: {
   icon: React.ReactNode;
   label: string;
   value: React.ReactNode;
   tone?: "primary";
+  sub?: React.ReactNode;
 }) {
   return (
     <div
@@ -886,6 +971,7 @@ function Stat({
       >
         {value}
       </div>
+      {sub}
     </div>
   );
 }

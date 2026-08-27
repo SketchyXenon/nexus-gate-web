@@ -67,7 +67,7 @@ model Account {
 
   eventsOwned        Event[]
   attendances        EventAttendance[]
-  overridesMade      AttendanceOverride[]
+  overridesMade      AttendanceOverride[] @relation("OverrideCreator")
   notifications      Notification[]
   auditLogs          AuditLog[]
   verificationTokens VerificationToken[]
@@ -263,19 +263,41 @@ model AttendanceOverride {
   id        Int               @id @default(autoincrement())
   eventId   Int               @map("event_id")
   event     Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  adminId   String            @map("admin_id")
-  admin     Account           @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  // v16: renamed field (column preserved as admin_id - zero data
+  // migration). ORGANIZERS can now create overrides too, so the field
+  // is semantically the CREATOR (organizer or admin).
+  creatorId String            @map("admin_id")
+  creator   Account           @relation("OverrideCreator", fields: [creatorId], references: [id], onDelete: Cascade)
   studentId Int               @map("student_id")
   student   AuthorizedStudent @relation(fields: [studentId], references: [studentId], onDelete: Cascade)
   reason    String
+  // Server receipt time (when the certificate was synced/accepted)
   createdAt DateTime          @default(now()) @map("created_at")
+
+  // ---- v16 anti-cheat forensics (offline-first signed certificates) ----
+  // The SIGNED client timestamp from the override certificate - the
+  // time anchor all event-window validation is evaluated against.
+  clientCreatedAt  DateTime? @map("client_created_at")
+  // SHA-256 fingerprint of the organizer's Ed25519 device key.
+  deviceFingerprint String?  @map("device_fingerprint")
+  // How long between creation and sync (server receipt minus signed
+  // createdAt). Large values indicate offline queuing.
+  syncDelayMs      Int?      @map("sync_delay_ms")
+  // Client-vs-server clock drift at sync time (for forensic review).
+  clockDriftMs     Int?      @map("clock_drift_ms")
+  // Server-derived heuristic: synced more than 2 minutes after the
+  // signed creation time (likely created offline). NOT client-claimed
+  // - a client can lie about being offline; the signed timestamp can't.
+  offline          Boolean   @default(false) @map("offline")
 
   // IDEMPOTENCY: prevents duplicate override records on retry
   @@unique([eventId, studentId])
   // Composite: list overrides for an event (newest first)
   @@index([eventId, createdAt])
-  // Admin audit: list overrides made by an admin
-  @@index([adminId, createdAt])
+  // Audit: list overrides made by a creator (organizer or admin)
+  @@index([creatorId, createdAt])
+  // Forensics: find all offline-synced overrides for admin review
+  @@index([offline, createdAt])
   @@map("attendance_overrides")
 }
 

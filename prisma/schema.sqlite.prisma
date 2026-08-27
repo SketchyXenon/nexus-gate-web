@@ -72,7 +72,7 @@ model Account {
 
   eventsOwned       Event[]
   attendances       EventAttendance[]
-  overridesMade     AttendanceOverride[]
+  overridesMade     AttendanceOverride[] @relation("OverrideCreator")
   notifications     Notification[]
   auditLogs         AuditLog[]
   verificationTokens VerificationToken[]
@@ -220,15 +220,26 @@ model AttendanceOverride {
   id          Int      @id @default(autoincrement())
   eventId     Int
   event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  adminId     String
-  admin       Account  @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  // v16: renamed admin -> creator (organizers can now create overrides
+  // too). Table was empty in dev - plain rename, no migration needed.
+  creatorId   String
+  creator     Account  @relation("OverrideCreator", fields: [creatorId], references: [id], onDelete: Cascade)
   studentId   Int
   student     AuthorizedStudent @relation(fields: [studentId], references: [studentId], onDelete: Cascade)
   reason      String
+  // Server receipt time (when the certificate was synced/accepted)
   createdAt   DateTime @default(now())
 
+  // ---- v16 anti-cheat forensics (offline-first signed certificates) ----
+  clientCreatedAt   DateTime?
+  deviceFingerprint String?
+  syncDelayMs       Int?
+  clockDriftMs      Int?
+  offline           Boolean  @default(false)
+
   @@index([eventId, createdAt])
-  @@index([adminId, createdAt])
+  @@index([creatorId, createdAt])
+  @@index([offline, createdAt])
   @@unique([eventId, studentId])
 }
 

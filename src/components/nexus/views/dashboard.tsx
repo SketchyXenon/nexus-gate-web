@@ -4,6 +4,7 @@ import {
   Users,
   CalendarDays,
   ScanLine,
+  TimerOff,
   AlertCircle,
   ArrowRight,
   TrendingUp,
@@ -345,6 +346,14 @@ export function DashboardView({ user, onNavigate }: Props) {
         view: "attendance" as ViewId,
         show: true,
       },
+      {
+        label: "Timed Out",
+        value: stats.totalTimedOut ?? 0,
+        icon: TimerOff,
+        hint: "Students who scanned to time out",
+        view: "attendance" as ViewId,
+        show: true,
+      },
     ] as Array<{
       label: string;
       value: number;
@@ -418,8 +427,18 @@ export function DashboardView({ user, onNavigate }: Props) {
               className="h-full min-w-0"
             >
               <Card
-                className="group hover:border-primary/40 transition-colors cursor-pointer h-full min-w-0 overflow-hidden"
+                role="button"
+                tabIndex={0}
+                aria-label={`${c.label}: ${c.value.toLocaleString()}`}
                 onClick={() => onNavigate(c.view)}
+                onKeyDown={(e) => {
+                  // Enter/Space activate the tile for keyboard users.
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onNavigate(c.view);
+                  }
+                }}
+                className="group hover:border-primary/40 transition-colors cursor-pointer h-full min-w-0 overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
                 <CardHeader className="flex flex-row items-center justify-between pb-2 p-4 sm:p-6 sm:pb-2">
                   <CardTitle className="text-xs font-medium text-muted-foreground leading-tight">
@@ -488,16 +507,33 @@ export function DashboardView({ user, onNavigate }: Props) {
                   transition={{ duration: 0.3, delay: i * 0.04 }}
                   className="px-4 sm:px-6 py-3 flex items-center gap-3 hover:bg-muted/40 transition-colors"
                 >
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="grid place-items-center h-9 w-9 rounded-lg bg-primary/10 text-primary text-xs font-semibold shrink-0 cursor-pointer">
-                        {e.presentCount}
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {e.presentCount} students present
-                    </TooltipContent>
-                  </Tooltip>
+                  {/* Present count + timed-out chips; flex-wrap guards narrow screens. */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="grid place-items-center h-9 w-9 rounded-lg bg-primary/10 text-primary text-xs font-semibold shrink-0 cursor-pointer">
+                          {e.presentCount}
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {e.presentCount} students present
+                      </TooltipContent>
+                    </Tooltip>
+                    {/* Timed-out figure + time-out feature state for this event. */}
+                    <Badge
+                      variant="outline"
+                      className={
+                        e.enableTimeOut
+                          ? "border-emerald-500/40 text-emerald-600 text-[10px]"
+                          : "border-muted text-muted-foreground text-[10px]"
+                      }
+                    >
+                      <TimerOff className="size-3" />
+                      {e.enableTimeOut
+                        ? `${e.timedOutCount ?? 0} timed out`
+                        : "Time-out off"}
+                    </Badge>
+                  </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{e.title}</p>
                     <p className="text-xs text-muted-foreground truncate">

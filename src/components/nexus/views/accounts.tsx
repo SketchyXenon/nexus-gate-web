@@ -416,7 +416,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                 {pagination?.total === 1 ? "account" : "accounts"} total
               </CardDescription>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
               <Button size="sm" onClick={() => setCreateOpen(true)}>
                 <Plus className="h-4 w-4" /> New account
               </Button>
@@ -427,7 +427,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                   setPage(1);
                 }}
               >
-                <SelectTrigger className="w-36">
+                <SelectTrigger className="w-full sm:w-36">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -444,7 +444,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                   setPage(1);
                 }}
               >
-                <SelectTrigger className="w-36">
+                <SelectTrigger className="w-full sm:w-36">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -456,7 +456,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                 </SelectContent>
               </Select>
               <Select value={sortBy} onValueChange={setSortBy}>
-                <SelectTrigger className="w-40">
+                <SelectTrigger className="w-full sm:w-40">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -476,7 +476,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                     setQ(e.target.value);
                     setPage(1);
                   }}
-                  className="pl-8 w-48"
+                  className="pl-8 w-full sm:w-48"
                 />
               </div>
             </div>
@@ -500,7 +500,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8"
+                  className="h-9"
                   disabled={batchMut.isPending}
                   onClick={() => setBatchConfirm({ action: "activate" })}
                 >
@@ -510,7 +510,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8"
+                  className="h-9"
                   disabled={batchMut.isPending}
                   onClick={() => setBatchConfirm({ action: "suspend" })}
                 >
@@ -520,7 +520,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8"
+                  className="h-9"
                   disabled={batchMut.isPending}
                   onClick={() =>
                     setBatchConfirm({ action: "setRole", role: "ORGANIZER" })
@@ -531,7 +531,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8"
+                  className="h-9"
                   disabled={batchMut.isPending}
                   onClick={() =>
                     setBatchConfirm({ action: "setRole", role: "USER" })
@@ -544,7 +544,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-8"
+                  className="h-9"
                   onClick={clearSelection}
                 >
                   Clear
@@ -552,7 +552,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
               </div>
             </div>
           )}
-          <div className="max-h-[32rem] overflow-x-auto overflow-y-auto ng-scroll">
+          <div className="hidden md:block max-h-[32rem] overflow-x-auto overflow-y-auto ng-scroll">
             <Table>
               <TableHeader className="sticky top-0 bg-card">
                 <TableRow>
@@ -720,7 +720,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-primary"
+                              className="h-9 w-9 text-muted-foreground hover:text-primary"
                               onClick={() => openEdit(a)}
                               aria-label="Edit"
                             >
@@ -735,7 +735,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7 text-emerald-600 hover:text-emerald-700"
+                                className="h-9 w-9 text-emerald-600 hover:text-emerald-700"
                                 disabled={restoreMut.isPending}
                                 onClick={() =>
                                   restoreMut.mutate(a.id, {
@@ -772,7 +772,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7 text-amber-600 hover:text-amber-700"
+                                className="h-9 w-9 text-amber-600 hover:text-amber-700"
                                 onClick={() =>
                                   setPendingAction({
                                     account: a,
@@ -792,7 +792,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7 text-emerald-600 hover:text-emerald-700"
+                                className="h-9 w-9 text-emerald-600 hover:text-emerald-700"
                                 onClick={() =>
                                   setPendingAction({
                                     account: a,
@@ -813,7 +813,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                className="h-9 w-9 text-muted-foreground hover:text-destructive"
                                 onClick={() =>
                                   setDeleteTarget({ account: a, hard: true })
                                 }
@@ -831,6 +831,162 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                 ))}
               </TableBody>
             </Table>
+          </div>
+
+          {/* Mobile card list - same data/handlers as the table, no checkboxes */}
+          <div className="md:hidden space-y-2 px-4 py-3">
+            {isLoading && (
+              <p className="text-center text-sm text-muted-foreground py-8">
+                Loading…
+              </p>
+            )}
+            {!isLoading && accounts.length === 0 && (
+              <p className="text-center text-sm text-muted-foreground py-8">
+                No accounts found.
+              </p>
+            )}
+            {accounts.map((a, idx) => {
+              // Compact metadata line: student ID + program/section when present
+              const idParts = [
+                a.studentId != null ? `ID ${a.studentId}` : null,
+                a.program,
+                a.section,
+              ].filter(Boolean);
+              return (
+                <motion.div
+                  key={a.id}
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{
+                    duration: 0.18,
+                    delay: Math.min(idx * 0.015, 0.15),
+                  }}
+                  className="rounded-lg border p-3 space-y-2"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-medium truncate">{a.fullName}</p>
+                    <Badge
+                      variant="outline"
+                      className={
+                        a.isDeactivated || a.status === "DEACTIVATED"
+                          ? "border-zinc-500/40 text-zinc-500 line-through shrink-0"
+                          : a.status === "ACTIVE"
+                            ? "border-emerald-500/40 text-emerald-600 shrink-0"
+                            : a.status === "SUSPENDED"
+                              ? "border-red-500/40 text-red-600 shrink-0"
+                              : "border-amber-500/40 text-amber-600 shrink-0"
+                      }
+                    >
+                      {STATUS_LABELS[a.status]}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {a.email}
+                  </p>
+                  {idParts.length > 0 && (
+                    <p className="text-xs text-muted-foreground truncate">
+                      {idParts.join(" · ")}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <Badge
+                      variant="outline"
+                      className={
+                        a.role === "ADMIN"
+                          ? "border-primary/40 text-primary"
+                          : a.role === "ORGANIZER"
+                            ? "border-amber-500/40 text-amber-600"
+                            : "border-muted text-muted-foreground"
+                      }
+                    >
+                      {ROLE_LABELS[a.role]}
+                    </Badge>
+                  </div>
+                  {/* Same handlers/disabled/loading states as the table Actions cell */}
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-9"
+                      onClick={() => openEdit(a)}
+                    >
+                      <Pencil className="h-3.5 w-3.5" /> Edit
+                    </Button>
+                    {a.isDeactivated ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-9 text-emerald-600 hover:text-emerald-700"
+                        disabled={restoreMut.isPending}
+                        onClick={() =>
+                          restoreMut.mutate(a.id, {
+                            onSuccess: () =>
+                              toast({
+                                title: "Account restored",
+                                description: `${a.email} can now sign in again.`,
+                              }),
+                            onError: () =>
+                              toast({
+                                title: "Restore failed",
+                                description: "Please try again.",
+                                variant: "destructive",
+                              }),
+                          })
+                        }
+                      >
+                        {restoreMut.isPending &&
+                        restoreMut.variables === a.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        )}
+                        Restore
+                      </Button>
+                    ) : a.status === "ACTIVE" ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-9 text-amber-600 hover:text-amber-700"
+                        onClick={() =>
+                          setPendingAction({
+                            account: a,
+                            value: "SUSPENDED",
+                          })
+                        }
+                      >
+                        <Ban className="h-3.5 w-3.5" /> Suspend
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-9 text-emerald-600 hover:text-emerald-700"
+                        onClick={() =>
+                          setPendingAction({
+                            account: a,
+                            value: "ACTIVE",
+                          })
+                        }
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" /> Reactivate
+                      </Button>
+                    )}
+                    {currentUser?.role === "ADMIN" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-9 text-muted-foreground hover:text-destructive"
+                        onClick={() =>
+                          setDeleteTarget({ account: a, hard: true })
+                        }
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                      </Button>
+                    )}
+                  </div>
+                </motion.div>
+              );
+            })}
           </div>
 
           {pagination && (

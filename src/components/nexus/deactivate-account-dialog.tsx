@@ -84,7 +84,7 @@ export function DeactivateAccountDialog({
           handleClose(false);
           // Redirect to the root (login screen) after a brief delay.
           setTimeout(() => {
-            window.location.href = "/";
+            window.location.replace("/");
           }, 1500);
         },
         onError: (err: unknown) => {

@@ -34,6 +34,9 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   const { account } = res;
   const { id } = await params;
   const eventId = Number(id);
+  // Malformed id (non-numeric/negative): 404, not a Prisma 500 on NaN.
+  if (!Number.isInteger(eventId) || eventId <= 0)
+    return notFound("Event not found");
 
   const event = await db.event.findUnique({
     where: { id: eventId },

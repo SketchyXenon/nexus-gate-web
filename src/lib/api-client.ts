@@ -116,6 +116,8 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
     credentials: "include",
   });
+  // Response error handling reads from: the retry response when one ran.
+  let finalRes = res;
 
   // ---- Auto-refresh on 401: try to refresh the session, then retry once ----
   if (res.status === 401 && !url.includes("/api/auth/")) {
@@ -137,18 +139,20 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
       // Retry also failed with 401 - the session is truly dead.
       // Force redirect to login so the user isn't stuck on a broken page.
       if (retryRes.status === 401 && typeof window !== "undefined") {
-        window.location.href = "/";
+        window.location.replace("/");
         throw new Error("Session expired");
       }
+      // Retry failed non-ok: surface the retry error, not the original 401.
+      finalRes = retryRes;
     }
     // Refresh failed - the user will be redirected to login by useMe().
   }
 
-  if (!res.ok) {
-    let msg = `Request failed (${res.status})`;
+  if (!finalRes.ok) {
+    let msg = `Request failed (${finalRes.status})`;
     let body: Record<string, unknown> | null = null;
     try {
-      body = await res.json();
+      body = await finalRes.json();
       if (body) {
         msg = (body.error as string) || (body.message as string) || msg;
       }
@@ -160,7 +164,7 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
       code?: string;
       data?: Record<string, unknown> | null;
     };
-    err.status = res.status;
+    err.status = finalRes.status;
     if (body) {
       err.code = body.code as string | undefined;
       err.data = body;
@@ -185,7 +189,11 @@ export const useMe = () =>
 export const useLogin = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { email: string; password: string }) =>
+    mutationFn: (vars: {
+      email: string;
+      password: string;
+      rememberMe?: boolean;
+    }) =>
       api<Account>("/api/auth/login", {
         method: "POST",
         body: JSON.stringify(vars),
@@ -641,36 +649,53 @@ export async function submitScanCertificate(signed: {
 }) {
   return api<{
     ok: boolean;
-    action?: "time_in" | "already_scanned";
+    action?:
+      | "time_in"
+      | "time_out"
+      | "already_scanned"
+      | "already_complete"
+      | "timeout_not_open";
     alreadyPresent?: boolean;
     attendance?: AttendanceRow;
     message?: string;
     scannedAt?: string;
+    timeOutAt?: string;
+    timeOutOpensAt?: string | null;
   }>("/api/attendance", {
     method: "POST",
     body: JSON.stringify(signed),
   });
 }
 
-export const useCreateOverride = () => {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: {
-      eventId: number;
-      studentId: number;
-      reason?: string;
-    }) =>
-      api<{ ok: boolean }>("/api/attendance/override", {
-        method: "POST",
-        body: JSON.stringify(vars),
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["attendance"] });
-      qc.invalidateQueries({ queryKey: ["overrides"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
-    },
+// v16: Submit a SIGNED override certificate (offline-first). The caller
+// builds an OverrideCertificate, signs it with the device Ed25519 key,
+// and submits it either immediately (online) or through the offline
+// queue (use-override-queue). Throws Error with .status/.code on failure
+// so the queue can classify retryable vs terminal errors.
+export async function submitOverrideCertificate(signed: {
+  certificate: {
+    eventId: number;
+    studentId: number;
+    reason: string;
+    createdAt: number;
+    nonce: string;
+    deviceFingerprint: string;
+  };
+  canonical: string;
+  signature: string;
+}) {
+  return api<{
+    ok: boolean;
+    action: string;
+    override?: { id: number };
+    attendance?: { id: number };
+    offline?: boolean;
+    message?: string;
+  }>("/api/attendance/override", {
+    method: "POST",
+    body: JSON.stringify(signed),
   });
-};
+}
 
 // ---------------- Overrides list (cross-event) ----------------
 export interface OverrideRow {
@@ -679,6 +704,11 @@ export interface OverrideRow {
   studentId: number;
   reason: string;
   createdAt: string;
+  // v16 anti-cheat forensics
+  clientCreatedAt: string | null;
+  offline: boolean;
+  syncDelayMs: number | null;
+  deviceFingerprint: string | null;
   event: {
     id: number;
     title: string;
@@ -693,7 +723,7 @@ export interface OverrideRow {
     section: string;
     email: string;
   };
-  admin: { id: string; fullName: string; email: string } | null;
+  creator: { id: string; fullName: string; email: string } | null;
 }
 
 export interface OverrideListParams {
@@ -803,12 +833,20 @@ export const useDashboard = () =>
           totalStudents?: number;
           totalEvents?: number;
           totalScans?: number;
+          totalTimedOut?: number;
           totalOverrides?: number;
           totalAttended?: number;
           eligibleEvents?: number;
         };
         recentEvents?: Array<
-          EventItem & { presentCount: number; owner: string }
+          EventItem & {
+            presentCount: number;
+            owner: string;
+            timedOutCount?: number;
+            enableTimeOut?: boolean;
+            timeOutOpensAt?: string | null;
+            timeOutClosesAt?: string | null;
+          }
         >;
         attendances?: Array<
           AttendanceRow & {

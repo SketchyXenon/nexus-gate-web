@@ -79,51 +79,19 @@ export async function GET(_req: NextRequest) {
     account.role === "ORGANIZER" ? { ownerId: account.id } : {};
   const attendanceWhere =
     account.role === "ORGANIZER" ? { event: { ownerId: account.id } } : {};
+  // v16: overrides on events the organizer OWNS (event-scoped, consistent
+  // with GET /api/attendance/overrides). Was { adminId } - both the field
+  // (renamed to creatorId in v16) and the semantics were wrong: it
+  // counted entries CREATED BY the organizer rather than entries on
+  // their events.
   const overrideWhere =
-    account.role === "ORGANIZER" ? { adminId: account.id } : {};
+    account.role === "ORGANIZER" ? { event: { ownerId: account.id } } : {};
 
-  // Run all counts + recent events in parallel for faster dashboard load.
-  const [totalStudents, totalEvents, totalScans, totalOverrides, recentEvents] =
-    await Promise.all([
-      db.authorizedStudent.count(),
-      db.event.count({ where: { ...eventWhere, status: "active" } }),
-      db.eventAttendance.count({ where: attendanceWhere }),
-      db.attendanceOverride.count({ where: overrideWhere }),
-      db.event.findMany({
-        where: { ...eventWhere, status: "active" },
-        orderBy: { scheduledAt: "desc" },
-        take: 10,
-        select: {
-          id: true,
-          title: true,
-          scheduledAt: true,
-          endsAt: true,
-          checkInOpensAt: true,
-          checkInClosesAt: true,
-          timeOutOpensAt: true,
-          timeOutClosesAt: true,
-          enableTimeOut: true,
-          status: true,
-          targetProgram: true,
-          targetSection: true,
-          scope: true,
-          _count: { select: { attendances: true } },
-          owner: { select: { fullName: true } },
-        },
-      }),
-    ]);
-
-  // Filter recentEvents to only show live + upcoming (not ended).
-  const liveOrUpcomingEvents = recentEvents.filter((e) => {
-    const ts = getTimeStatus(e);
-    return ts === "live" || ts === "upcoming";
-  });
-
-  // L2 fix: scope programCounts/sectionCounts to the caller's own program +
-  // section when they're an ORGANIZER (was leaking the ENTIRE student body's
-  // program/section distribution to every organizer). Admins still see all.
-  // An organizer only manages students in their own program/section, so the
-  // global counts were both irrelevant and an info leak.
+  // L2 fix: scope roster counts to the caller's own program + section when
+  // they're an ORGANIZER (was leaking the ENTIRE student body's counts to
+  // every organizer). Admins still see all. An organizer only manages
+  // students in their own program/section, so the global counts were both
+  // irrelevant and an info leak.
   const isOrganizer = account.role === "ORGANIZER";
   const rosterWhere = isOrganizer
     ? {
@@ -138,6 +106,73 @@ export async function GET(_req: NextRequest) {
         ],
       }
     : {};
+
+  // Run all counts + recent events in parallel for faster dashboard load.
+  // totalTimedOut counts attendance rows where the student also timed out
+  // (timeOutAt set) within the caller's event scope.
+  const [
+    totalStudents,
+    totalEvents,
+    totalScans,
+    totalTimedOut,
+    totalOverrides,
+    recentEvents,
+  ] = await Promise.all([
+    db.authorizedStudent.count({ where: rosterWhere }),
+    db.event.count({ where: { ...eventWhere, status: "active" } }),
+    db.eventAttendance.count({ where: attendanceWhere }),
+    db.eventAttendance.count({
+      where: { ...attendanceWhere, timeOutAt: { not: null } },
+    }),
+    db.attendanceOverride.count({ where: overrideWhere }),
+    db.event.findMany({
+      where: { ...eventWhere, status: "active" },
+      orderBy: { scheduledAt: "desc" },
+      take: 10,
+      select: {
+        id: true,
+        title: true,
+        scheduledAt: true,
+        endsAt: true,
+        checkInOpensAt: true,
+        checkInClosesAt: true,
+        timeOutOpensAt: true,
+        timeOutClosesAt: true,
+        enableTimeOut: true,
+        status: true,
+        targetProgram: true,
+        targetSection: true,
+        scope: true,
+        _count: { select: { attendances: true } },
+        owner: { select: { fullName: true } },
+      },
+    }),
+  ]);
+
+  // Filter recentEvents to only show live + upcoming (not ended).
+  const liveOrUpcomingEvents = recentEvents.filter((e) => {
+    const ts = getTimeStatus(e);
+    return ts === "live" || ts === "upcoming";
+  });
+
+  // Per-event timed-out counts for the recent-events list. Prisma relation
+  // counts support only one filter per relation, so the timeOutAt-filtered
+  // count is fetched via groupBy over the visible events and merged in.
+  const timedOutByEvent = new Map<number, number>();
+  if (liveOrUpcomingEvents.length > 0) {
+    const timedOutGroups = await db.eventAttendance.groupBy({
+      by: ["eventId"],
+      where: {
+        eventId: { in: liveOrUpcomingEvents.map((e) => e.id) },
+        timeOutAt: { not: null },
+      },
+      _count: { _all: true },
+    });
+    for (const g of timedOutGroups) {
+      timedOutByEvent.set(g.eventId, g._count._all);
+    }
+  }
+
   const programGroups = await db.authorizedStudent.groupBy({
     by: ["program"],
     where: rosterWhere,
@@ -160,7 +195,13 @@ export async function GET(_req: NextRequest) {
 
   const adminRes = NextResponse.json({
     user: account,
-    stats: { totalStudents, totalEvents, totalScans, totalOverrides },
+    stats: {
+      totalStudents,
+      totalEvents,
+      totalScans,
+      totalTimedOut,
+      totalOverrides,
+    },
     recentEvents: liveOrUpcomingEvents.map((e) => {
       return {
         id: e.id,
@@ -170,6 +211,10 @@ export async function GET(_req: NextRequest) {
         targetSection: e.targetSection,
         scope: e.scope,
         presentCount: e._count.attendances,
+        timedOutCount: timedOutByEvent.get(e.id) ?? 0,
+        enableTimeOut: e.enableTimeOut,
+        timeOutOpensAt: e.timeOutOpensAt,
+        timeOutClosesAt: e.timeOutClosesAt,
         owner: e.owner?.fullName ?? " - ",
         timeStatus: getTimeStatus(e),
       };

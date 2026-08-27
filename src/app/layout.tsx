@@ -102,8 +102,11 @@ export const viewport: Viewport = {
   // Allow pinch-zoom for accessibility (WCAG 1.4.4)
   maximumScale: 5,
   userScalable: true,
+  // Extend layout into notch/home-indicator area so env(safe-area-inset-*) works on iOS
+  viewportFit: "cover",
 };
 
+// Structured data for SEO
 const structuredData = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",

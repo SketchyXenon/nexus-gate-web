@@ -6,14 +6,14 @@ import { useLogout } from "@/lib/api-client";
 import { toast } from "@/hooks/use-toast";
 
 // ====================================================================
-// useSessionTimeout — auto-logout after inactivity.
+// useSessionTimeout - auto-logout after inactivity.
 // --------------------------------------------------------------------
 // Tracks user activity (mouse, keyboard, touch, scroll). If no activity
 // for INACTIVITY_MS (30 min), triggers logout and redirects to the
 // login screen with a "session expired" message.
 //
 // The Supabase access token has its own expiry (set in Supabase
-// Dashboard → Auth → JWT expiry), but that only expires the TOKEN —
+// Dashboard → Auth → JWT expiry), but that only expires the TOKEN -
 // the user stays on the page until the next API call returns 401.
 // This hook provides a better UX: proactively logs out and shows a
 // clear message BEFORE the user encounters a 401 error.
@@ -58,7 +58,7 @@ export function useSessionTimeout(isAuthenticated: boolean) {
           setTimeout(() => window.location.reload(), 500);
         },
         onError: () => {
-          window.location.href = "/";
+          window.location.replace("/");
         },
       });
     },
@@ -100,7 +100,7 @@ export function useSessionTimeout(isAuthenticated: boolean) {
           forceLogout("Your session is no longer valid. Please sign in again.");
         }
       } catch {
-        // Network error — don't log out (flaky WiFi). The next successful
+        // Network error - don't log out (flaky WiFi). The next successful
         // API call will trigger the 401 refresh flow if the session expired.
       }
     }, SERVER_CHECK_INTERVAL_MS);

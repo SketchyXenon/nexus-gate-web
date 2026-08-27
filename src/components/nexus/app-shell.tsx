@@ -17,8 +17,7 @@ import {
   ScrollText,
   HelpCircle,
   FileText,
-  Menu,
-  X,
+  LayoutGrid,
   Bug,
   UserCircle,
   CalendarRange,
@@ -34,6 +33,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
 import { useLogout, trackVisit, type Account } from "@/lib/api-client";
 import { ROLE_LABELS } from "@/lib/rbac";
 import { toast } from "@/hooks/use-toast";
@@ -181,7 +186,9 @@ const NAV: NavItem[] = [
     id: "overrides",
     label: "Overrides",
     icon: AlertTriangle,
-    roles: ["ADMIN"],
+    // v16: offline-first signed overrides - organizers can now create
+    // them for their own events (server enforces ownership).
+    roles: ["ADMIN", "ORGANIZER"],
     description: "Add manually",
   },
   {
@@ -206,6 +213,13 @@ const NAV: NavItem[] = [
     description: "Your account",
   },
 ];
+
+// Most-used bottom tabs per role (mobile); leftovers live in the More sheet.
+const BOTTOM_TABS: Record<Account["role"], ViewId[]> = {
+  USER: ["dashboard", "scanner", "my-attendance", "profile"],
+  ORGANIZER: ["dashboard", "events", "attendance", "whitelist"],
+  ADMIN: ["dashboard", "events", "attendance", "accounts"],
+};
 
 export function AppShell({
   user,
@@ -242,13 +256,13 @@ export function AppShell({
         // Force a full page reload to clear all in-memory state and ensure
         // the login screen shows. Without this, React Query cache clearing
         // may not fully reset the NextAuth session on Google OAuth users.
-        setTimeout(() => (window.location.href = "/"), 500);
+        setTimeout(() => window.location.replace("/"), 500);
       },
     });
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="h-dvh flex flex-col overflow-hidden">
       <div className="flex flex-1 min-h-0">
         <aside className="hidden md:flex w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border">
           <div className="p-4 flex items-center gap-3">
@@ -327,12 +341,6 @@ export function AppShell({
 
         <div className="flex-1 flex flex-col min-w-0">
           <header className="sticky top-0 z-20 h-14 border-b bg-background/80 backdrop-blur px-4 flex items-center gap-3">
-            <MobileNav
-              allowedNav={allowedNav}
-              activeView={activeView}
-              onSelect={setView}
-              onLogout={handleLogout}
-            />
             <div className="flex-1 min-w-0">
               <h2 className="text-sm font-semibold truncate">
                 {NAV.find((n) => n.id === activeView)?.label}
@@ -422,7 +430,9 @@ export function AppShell({
                 )}
                 {activeView === "my-attendance" && <MyAttendanceView />}
                 {activeView === "attendance" && <AttendanceView />}
-                {activeView === "overrides" && <OverridesView />}
+                {activeView === "overrides" && (
+                  <OverridesView currentUser={user} />
+                )}
                 {activeView === "accounts" && (
                   <AccountsView currentUser={user} />
                 )}
@@ -431,6 +441,13 @@ export function AppShell({
               </CardErrorBoundary>
             </div>
           </main>
+          <BottomTabBar
+            allowedNav={allowedNav}
+            activeView={activeView}
+            onSelect={setView}
+            role={user.role}
+            onLogout={handleLogout}
+          />
         </div>
       </div>
       <CookieConsent />
@@ -440,109 +457,113 @@ export function AppShell({
   );
 }
 
-function MobileNav({
+// Mobile-only bottom tab bar (below md): role tabs plus a vaul More sheet.
+function BottomTabBar({
   allowedNav,
   activeView,
   onSelect,
+  role,
   onLogout,
 }: {
   allowedNav: NavItem[];
   activeView: ViewId;
   onSelect: (v: ViewId) => void;
+  role: Account["role"];
   onLogout: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const tabs = BOTTOM_TABS[role]
+    .map((id) => allowedNav.find((n) => n.id === id))
+    .filter((n): n is NavItem => n !== undefined);
+  const hasMore = tabs.length < allowedNav.length;
+  // More carries the active state when the current view is not a tab.
+  const moreActive = hasMore && !tabs.some((t) => t.id === activeView);
+
   return (
-    <div className="md:hidden">
-      <Button
-        variant="outline"
-        size="icon"
-        className="h-9 w-9"
-        onClick={() => setOpen(true)}
-        aria-label="Open menu"
+    <>
+      <nav
+        aria-label="Primary"
+        className="md:hidden border-t bg-background/95 backdrop-blur flex pb-safe pb-[env(safe-area-inset-bottom)]"
       >
-        <Menu className="h-5 w-5" />
-      </Button>
-      {open && (
-        <div
-          className="fixed inset-0 h-[100dvh] z-50 bg-black/40 backdrop-blur-sm"
-          onClick={() => setOpen(false)}
-        >
-          <div
-            className="absolute left-0 top-0 h-full w-72 max-w-[80vw] bg-sidebar/95 backdrop-blur-xl text-sidebar-foreground border-r border-sidebar-border shadow-2xl flex flex-col"
-            onClick={(e) => e.stopPropagation()}
+        {tabs.map((item) => {
+          const Icon = item.icon;
+          const active = activeView === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => onSelect(item.id)}
+              aria-current={active ? "page" : undefined}
+              className={`flex-1 flex flex-col items-center justify-center gap-1 min-h-[56px] text-muted-foreground transition-colors ${
+                active ? "text-primary" : "hover:text-foreground"
+              }`}
+            >
+              <Icon className="size-5" />
+              <span className="text-[10px] font-medium leading-none max-w-full truncate px-1">
+                {item.label}
+              </span>
+            </button>
+          );
+        })}
+        {hasMore && (
+          <button
+            onClick={() => setMoreOpen(true)}
+            aria-label="More navigation"
+            aria-haspopup="dialog"
+            aria-expanded={moreOpen}
+            aria-current={moreActive ? "page" : undefined}
+            className={`flex-1 flex flex-col items-center justify-center gap-1 min-h-[56px] text-muted-foreground transition-colors ${
+              moreActive ? "text-primary" : "hover:text-foreground"
+            }`}
           >
-            <div className="p-4 flex items-center justify-between border-b border-sidebar-border">
-              <div className="flex items-center gap-2.5">
-                <NexusLogo size={36} />
-                <div>
-                  <p className="font-heading font-semibold text-sm">
-                    Nexus Gate
-                  </p>
-                  <p className="text-[10px] text-sidebar-foreground/60">
-                    Attendance System
-                  </p>
-                </div>
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-sidebar-foreground/60 hover:text-sidebar-foreground"
-                onClick={() => setOpen(false)}
-                aria-label="Close menu"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-            <nav className="flex-1 p-3 space-y-1 overflow-y-auto ng-scroll">
-              {allowedNav.map((item) => {
-                const Icon = item.icon;
-                const active = activeView === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => {
-                      onSelect(item.id);
-                      setOpen(false);
-                    }}
-                    className={`w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"}`}
-                  >
-                    <Icon
-                      className={`h-4 w-4 shrink-0 ${active ? "text-primary" : "text-sidebar-foreground/60"}`}
-                    />
-                    <span className="font-medium">{item.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
-            {/* Logout + bug report - matches desktop sidebar */}
-            <div className="p-3 border-t border-sidebar-border space-y-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  openInfoModal("bug");
-                  setOpen(false);
-                }}
-                className="w-full justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/60"
-              >
-                <Bug className="h-4 w-4" /> Report a bug
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  onLogout();
-                  setOpen(false);
-                }}
-                className="w-full justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/60"
-              >
-                <LogOut className="h-4 w-4" /> Sign out
-              </Button>
-            </div>
+            <LayoutGrid className="size-5" />
+            <span className="text-[10px] font-medium leading-none max-w-full truncate px-1">
+              More
+            </span>
+          </button>
+        )}
+      </nav>
+      <Drawer open={moreOpen} onOpenChange={setMoreOpen}>
+        <DrawerContent className="max-h-[70vh]">
+          <DrawerHeader>
+            <DrawerTitle>More</DrawerTitle>
+          </DrawerHeader>
+          {/* All role nav items; picking one switches view and closes. */}
+          <div className="overflow-y-auto ng-scroll min-h-0 p-3 pt-0 space-y-1">
+            {allowedNav.map((item) => {
+              const Icon = item.icon;
+              const active = activeView === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    onSelect(item.id);
+                    setMoreOpen(false);
+                  }}
+                  className={`flex items-center gap-3 w-full px-4 py-3 min-h-[48px] rounded-lg text-sm font-medium transition-colors ${
+                    active
+                      ? "text-primary bg-primary/10"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  }`}
+                >
+                  <Icon className="size-4 shrink-0" />
+                  <span className="truncate">{item.label}</span>
+                </button>
+              );
+            })}
           </div>
-        </div>
-      )}
-    </div>
+          {/* Sign out lives here on mobile: the sidebar button is desktop-only. */}
+          <div className="p-3 pt-0">
+            <Separator className="mb-2" />
+            <button
+              onClick={onLogout}
+              className="flex items-center gap-3 w-full px-4 py-3 min-h-[48px] rounded-lg text-sm font-medium text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              <LogOut className="size-4 shrink-0" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        </DrawerContent>
+      </Drawer>
+    </>
   );
 }

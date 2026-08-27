@@ -52,6 +52,11 @@ const PRESETS: Record<string, RateLimitConfig> = {
   // Whitelist file upload + heavy parsing (Excel/PDF/DOCX, up to 10MB).
   // Tighter than the JSON import because parsing is CPU-intensive.
   whitelistImportFile: { maxRequests: 5, windowMs: 60_000 },
+  // Manual attendance overrides (v16 offline-first organizer overrides).
+  // Privileged mutation that bypasses QR scanning - throttling here caps
+  // how fast an organizer can bulk-fabricate attendance (30/min = one
+  // entry every 2s, plenty for legitimate dead-phone cases at the door).
+  override: { maxRequests: 30, windowMs: 60_000 },
 };
 
 export type RateLimitPreset = keyof typeof PRESETS;
@@ -70,6 +75,9 @@ const SENSITIVE_PRESETS: ReadonlySet<RateLimitPreset> = new Set([
   "adminMutation",
   "whitelistImport",
   "whitelistImportFile",
+  // Overrides bypass QR anti-cheat entirely - failing open on a Redis
+  // outage would uncap bulk fabrication. Fail closed instead.
+  "override",
 ]);
 
 // ---- In-memory backend (dev fallback) ----

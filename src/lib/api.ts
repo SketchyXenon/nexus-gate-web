@@ -277,7 +277,8 @@ export async function checkRateLimitByKey(
     | "adminMutation"
     | "whitelistImport"
     | "whitelistImportFile"
-    | "passkeyRegister",
+    | "passkeyRegister"
+    | "override",
 ): Promise<NextResponse | null> {
   const result = await rateLimit(`${preset}:acct:${key}`, preset);
   if (!result.allowed) return tooManyRequests(result.retryAfterMs);

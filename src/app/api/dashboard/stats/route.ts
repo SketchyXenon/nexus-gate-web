@@ -8,13 +8,45 @@ import { requireAuth } from "@/lib/api";
 import { hasMinimumRole } from "@/lib/rbac";
 import { getDatabaseProvider } from "@/lib/db-provider";
 
-// Portable hour-of-day expression. SQLite lacks EXTRACT(); Postgres and
-// MySQL/TiDB both support it. Branching here keeps the route working across
-// all three backends (Supabase Postgres, TiDB/MySQL, local SQLite dev).
-const HOUR_EXPR =
-  getDatabaseProvider() === "sqlite"
-    ? Prisma.raw(`strftime('%H', scanned_at)`)
-    : Prisma.raw(`EXTRACT(HOUR FROM scanned_at)`);
+// Dialect switch: the SQLite dev schema (schema.sqlite.prisma) has NO
+// @map/@@map annotations, so its tables/columns keep the Prisma model names
+// (PascalCase/camelCase); the Postgres and TiDB schemas map to snake_case.
+const IS_SQLITE = getDatabaseProvider() === "sqlite";
+
+// Dialect-aware identifiers for the raw SQL below. Values come from this
+// hardcoded mapping only — never from user input — so interpolating them
+// via Prisma.raw introduces no SQL-injection surface.
+const SQL_IDS = IS_SQLITE
+  ? {
+      att: "EventAttendance",
+      evt: "Event",
+      scannedAt: "scannedAt",
+      eventId: "eventId",
+      ownerId: "ownerId",
+    }
+  : {
+      att: "event_attendance",
+      evt: "events",
+      scannedAt: "scanned_at",
+      eventId: "event_id",
+      ownerId: "owner_id",
+    };
+const ATT = Prisma.raw(SQL_IDS.att);
+const EVT = Prisma.raw(SQL_IDS.evt);
+const SCANNED_AT = Prisma.raw(SQL_IDS.scannedAt);
+const EA_EVENT_ID = Prisma.raw(`ea.${SQL_IDS.eventId}`);
+const E_OWNER_ID = Prisma.raw(`e.${SQL_IDS.ownerId}`);
+
+// Portable bucket expressions. SQLite lacks EXTRACT() and stores DateTime as
+// epoch-ms integers (hence /1000 + 'unixepoch'); Postgres and MySQL/TiDB have
+// real timestamp columns. Branching keeps the route working across all three
+// backends (Supabase Postgres, TiDB/MySQL, local SQLite dev).
+const DAY_EXPR = IS_SQLITE
+  ? Prisma.raw(`DATE(${SQL_IDS.scannedAt} / 1000, 'unixepoch')`)
+  : Prisma.raw(`DATE(${SQL_IDS.scannedAt})`);
+const HOUR_EXPR = IS_SQLITE
+  ? Prisma.raw(`strftime('%H', ${SQL_IDS.scannedAt} / 1000, 'unixepoch')`)
+  : Prisma.raw(`EXTRACT(HOUR FROM ${SQL_IDS.scannedAt})`);
 
 // GET /api/dashboard/stats
 // Returns time-series + breakdown data for dashboard charts.
@@ -42,8 +74,8 @@ export async function GET(_req: NextRequest) {
   thirtyDaysAgo.setHours(0, 0, 0, 0);
 
   // For organizers, filter by their owned events. For admins, no filter.
-  // The raw SQL uses a JOIN to event_attendance -> events for the organizer
-  // scope, or a direct scan for admins.
+  // The raw SQL JOINs attendance -> events (dialect-aware names above) for
+  // the organizer scope, or a direct scan for admins.
   if (isAdmin) {
     return NextResponse.json(await buildAdminStats(thirtyDaysAgo), {
       headers: { "Cache-Control": "private, no-cache" },
@@ -63,16 +95,16 @@ async function buildAdminStats(thirtyDaysAgo: Date) {
   const [dayRows, hourRows, sourceRows, topEvents] = await Promise.all([
     // Scans per day (last 30 days) via SQL GROUP BY.
     dbRead.$queryRaw<Array<{ day: string; count: bigint }>>`
-      SELECT DATE(scanned_at) AS day, COUNT(*) AS count
-      FROM event_attendance
-      WHERE scanned_at >= ${thirtyDaysAgo}
-      GROUP BY DATE(scanned_at)
+      SELECT ${DAY_EXPR} AS day, COUNT(*) AS count
+      FROM ${ATT}
+      WHERE ${SCANNED_AT} >= ${thirtyDaysAgo}
+      GROUP BY ${DAY_EXPR}
     `,
-    // Scans per hour-of-day (last 30 days) via SQL EXTRACT.
+    // Scans per hour-of-day (last 30 days) via portable hour expression.
     dbRead.$queryRaw<Array<{ hour: number; count: bigint }>>`
       SELECT ${HOUR_EXPR} AS hour, COUNT(*) AS count
-      FROM event_attendance
-      WHERE scanned_at >= ${thirtyDaysAgo}
+      FROM ${ATT}
+      WHERE ${SCANNED_AT} >= ${thirtyDaysAgo}
       GROUP BY ${HOUR_EXPR}
     `,
     // Source breakdown.
@@ -102,17 +134,17 @@ async function buildAdminStats(thirtyDaysAgo: Date) {
 async function buildOrganizerStats(ownerId: string, thirtyDaysAgo: Date) {
   const [dayRows, hourRows, sourceRows, topEvents] = await Promise.all([
     dbRead.$queryRaw<Array<{ day: string; count: bigint }>>`
-      SELECT DATE(ea.scanned_at) AS day, COUNT(*) AS count
-      FROM event_attendance ea
-      JOIN events e ON e.id = ea.event_id
-      WHERE ea.scanned_at >= ${thirtyDaysAgo} AND e.owner_id = ${ownerId}
-      GROUP BY DATE(ea.scanned_at)
+      SELECT ${DAY_EXPR} AS day, COUNT(*) AS count
+      FROM ${ATT} ea
+      JOIN ${EVT} e ON e.id = ${EA_EVENT_ID}
+      WHERE ${SCANNED_AT} >= ${thirtyDaysAgo} AND ${E_OWNER_ID} = ${ownerId}
+      GROUP BY ${DAY_EXPR}
     `,
     dbRead.$queryRaw<Array<{ hour: number; count: bigint }>>`
       SELECT ${HOUR_EXPR} AS hour, COUNT(*) AS count
-      FROM event_attendance ea
-      JOIN events e ON e.id = ea.event_id
-      WHERE ea.scanned_at >= ${thirtyDaysAgo} AND e.owner_id = ${ownerId}
+      FROM ${ATT} ea
+      JOIN ${EVT} e ON e.id = ${EA_EVENT_ID}
+      WHERE ${SCANNED_AT} >= ${thirtyDaysAgo} AND ${E_OWNER_ID} = ${ownerId}
       GROUP BY ${HOUR_EXPR}
     `,
     dbRead.eventAttendance.groupBy({

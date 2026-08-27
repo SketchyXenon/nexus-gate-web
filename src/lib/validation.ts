@@ -142,6 +142,11 @@ export const registerSchema = z
 export const loginSchema = z.object({
   email: emailSchema,
   password: z.string().min(1, "Enter your password").max(128),
+  // "Remember me" (opt-in, default false). When true the session cookie
+  // persists for 30 days instead of dying with the browser session. The
+  // server FORCE-IGNORES this for ADMIN accounts (privileged sessions stay
+  // browser-scoped) - see supabase-server.ts for the cookie policy.
+  rememberMe: z.boolean().optional().default(false),
 });
 
 export const refreshSchema = z.object({
@@ -400,10 +405,32 @@ export const scanSchema = z.object({
   token: z.string().trim().min(1, "Token is required").max(500),
 });
 
-export const overrideSchema = z.object({
-  eventId: z.number().int().positive(),
-  studentId: studentIdSchema,
-  reason: z.string().trim().min(1).max(500).default("Missing or broken device"),
+// Signed override certificate (v16 - offline-first organizer overrides).
+// Replaces the legacy plain {eventId, studentId, reason} shape: overrides
+// are now created client-side, signed with the organizer's device Ed25519
+// key, and synced through the offline queue.
+//
+// CRITICAL: NO .trim() transform on reason - the canonical string is signed
+// over the exact bytes the client sent. Trimming server-side would break
+// the canonical round-trip (tamper-detection) check. The client trims user
+// input BEFORE signing; whitespace-only reasons are rejected by the refine.
+export const overrideCertificateSchema = z.object({
+  certificate: z.object({
+    eventId: z.number().int().positive(),
+    studentId: studentIdSchema,
+    reason: z
+      .string()
+      .min(1)
+      .max(500)
+      .refine((r) => r.trim().length > 0, {
+        message: "Reason cannot be blank",
+      }),
+    createdAt: z.number().int().positive(),
+    nonce: z.string().min(16).max(64),
+    deviceFingerprint: z.string().length(64),
+  }),
+  canonical: z.string().min(1),
+  signature: z.string().min(1),
 });
 
 // ---- Accounts ----

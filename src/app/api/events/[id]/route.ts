@@ -26,12 +26,18 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   const { account } = res;
   const { id } = await params;
 
+  // Malformed id (non-numeric/negative): treat as nonexistent resource,
+  // not a 500. Guards the Prisma query below against NaN.
+  const eventId = Number(id);
+  if (!Number.isInteger(eventId) || eventId <= 0)
+    return notFound("Event not found");
+
   // Select the secret for any ADMIN or ORGANIZER; it is stripped below for
   // organizers viewing events they do not own.
   const canSeeSecret = account.role === "ADMIN" || account.role === "ORGANIZER";
 
   const event = await db.event.findUnique({
-    where: { id: Number(id) },
+    where: { id: eventId },
     select: {
       id: true,
       title: true,
@@ -102,8 +108,11 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   if ("error" in res) return res.error;
   const { account } = res;
   const { id } = await params;
+  const eventId = Number(id);
+  if (!Number.isInteger(eventId) || eventId <= 0)
+    return notFound("Event not found");
 
-  const event = await db.event.findUnique({ where: { id: Number(id) } });
+  const event = await db.event.findUnique({ where: { id: eventId } });
   if (!event) return notFound("Event not found");
   if (account.role !== "ADMIN" && event.ownerId !== account.id) {
     return forbidden("You can only edit your own events");
@@ -154,7 +163,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   }
 
   const updated = await db.event.update({
-    where: { id: Number(id) },
+    where: { id: eventId },
     data: {
       ...(d.title !== undefined ? { title: d.title } : {}),
       ...(d.description !== undefined ? { description: d.description } : {}),
@@ -226,8 +235,11 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
   const { id } = await params;
   const { searchParams } = new URL(req.url);
   const hardDelete = searchParams.get("hard") === "true";
+  const eventId = Number(id);
+  if (!Number.isInteger(eventId) || eventId <= 0)
+    return notFound("Event not found");
 
-  const event = await db.event.findUnique({ where: { id: Number(id) } });
+  const event = await db.event.findUnique({ where: { id: eventId } });
   if (!event) return notFound("Event not found");
   if (account.role !== "ADMIN" && event.ownerId !== account.id) {
     return forbidden("You can only delete your own events");
@@ -239,12 +251,12 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
     if (account.role !== "ADMIN") {
       return forbidden("Only administrators can permanently delete events.");
     }
-    await db.event.delete({ where: { id: Number(id) } });
+    await db.event.delete({ where: { id: eventId } });
     await audit({
       actorId: account.id,
       action: "event.hard_delete",
       targetType: "Event",
-      targetId: Number(id),
+      targetId: eventId,
       metadata: { title: event.title },
       req,
     });
@@ -253,7 +265,7 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
 
   // Soft delete - marks as cancelled, preserves attendance records
   await db.event.update({
-    where: { id: Number(id) },
+    where: { id: eventId },
     data: { status: "cancelled" },
   });
 
@@ -261,7 +273,7 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
     actorId: account.id,
     action: "event.cancel",
     targetType: "Event",
-    targetId: Number(id),
+    targetId: eventId,
     req,
   });
 

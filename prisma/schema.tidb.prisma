@@ -77,7 +77,7 @@ model Account {
 
   eventsOwned        Event[]
   attendances        EventAttendance[]
-  overridesMade      AttendanceOverride[]
+  overridesMade      AttendanceOverride[] @relation("OverrideCreator")
   notifications      Notification[]
   auditLogs          AuditLog[]
   verificationTokens VerificationToken[]
@@ -238,16 +238,27 @@ model AttendanceOverride {
   id        Int               @id @default(autoincrement())
   eventId   Int               @map("event_id")
   event     Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  adminId   String            @map("admin_id") @db.VarChar(128)
-  admin     Account           @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  // v16: renamed field (column preserved as admin_id). ORGANIZERS can
+  // now create overrides - the field is semantically the CREATOR.
+  creatorId String            @map("admin_id") @db.VarChar(128)
+  creator   Account           @relation("OverrideCreator", fields: [creatorId], references: [id], onDelete: Cascade)
   studentId Int               @map("student_id")
   student   AuthorizedStudent @relation(fields: [studentId], references: [studentId], onDelete: Cascade)
   reason    String            @db.Text
+  // Server receipt time (when the certificate was synced/accepted)
   createdAt DateTime          @default(now()) @map("created_at")
+
+  // ---- v16 anti-cheat forensics (offline-first signed certificates) ----
+  clientCreatedAt   DateTime? @map("client_created_at")
+  deviceFingerprint String?   @map("device_fingerprint") @db.VarChar(64)
+  syncDelayMs       Int?      @map("sync_delay_ms")
+  clockDriftMs      Int?      @map("clock_drift_ms")
+  offline           Boolean   @default(false) @map("offline")
 
   @@unique([eventId, studentId])
   @@index([eventId, createdAt])
-  @@index([adminId, createdAt])
+  @@index([creatorId, createdAt])
+  @@index([offline, createdAt])
   @@map("attendance_overrides")
 }
 

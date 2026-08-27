@@ -20,6 +20,8 @@ export interface AttendanceEvent {
   program: string | null;
   section: string | null;
   scannedAt: string;
+  /** Present (ISO) when this message is a time-out update. */
+  timeOutAt?: string | null;
   source: string;
 }
 

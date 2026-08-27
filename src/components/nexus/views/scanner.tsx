@@ -489,7 +489,7 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                 }
                 onValueChange={(v) => setSelectedEventId(v)}
               >
-                <SelectTrigger className="w-56">
+                <SelectTrigger className="w-full max-w-56">
                   <SelectValue placeholder="Select event…" />
                 </SelectTrigger>
                 <SelectContent>
@@ -797,7 +797,9 @@ export function ScannerView({ user, onNavigate }: ScannerProps) {
                           ? "Time-out recorded"
                           : item.result?.action === "already_complete"
                             ? "Already checked in"
-                            : "Time-in recorded"
+                            : item.result?.action === "timeout_not_open"
+                              ? "Time-out not open yet"
+                              : "Time-in recorded"
                         : item.status === "failed"
                           ? "Failed"
                           : item.status === "syncing"

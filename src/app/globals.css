@@ -45,44 +45,44 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* Light theme — amber/gold on warm white */
+/* Light theme - amber/gold on warm white */
 :root {
   --radius: 0.625rem;
   --background: oklch(0.99 0.008 85);
-  --foreground: oklch(0.20 0.02 60);
+  --foreground: oklch(0.2 0.02 60);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.20 0.02 60);
+  --card-foreground: oklch(0.2 0.02 60);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.20 0.02 60);
+  --popover-foreground: oklch(0.2 0.02 60);
   /* Amber gold primary */
   --primary: oklch(0.68 0.16 75);
   --primary-foreground: oklch(0.15 0.02 60);
   --secondary: oklch(0.96 0.02 85);
   --secondary-foreground: oklch(0.25 0.03 60);
   --muted: oklch(0.96 0.015 85);
-  --muted-foreground: oklch(0.50 0.02 60);
+  --muted-foreground: oklch(0.5 0.02 60);
   --accent: oklch(0.94 0.04 80);
   --accent-foreground: oklch(0.28 0.05 70);
   --destructive: oklch(0.58 0.22 25);
-  --border: oklch(0.90 0.015 80);
+  --border: oklch(0.9 0.015 80);
   --input: oklch(0.92 0.015 80);
   --ring: oklch(0.68 0.16 75);
   --chart-1: oklch(0.68 0.16 75);
-  --chart-2: oklch(0.60 0.12 50);
-  --chart-3: oklch(0.50 0.10 40);
+  --chart-2: oklch(0.6 0.12 50);
+  --chart-3: oklch(0.5 0.1 40);
   --chart-4: oklch(0.75 0.14 90);
-  --chart-5: oklch(0.65 0.10 60);
+  --chart-5: oklch(0.65 0.1 60);
   --sidebar: oklch(0.18 0.02 60);
   --sidebar-foreground: oklch(0.95 0.01 80);
   --sidebar-primary: oklch(0.72 0.16 75);
   --sidebar-primary-foreground: oklch(0.15 0.02 60);
   --sidebar-accent: oklch(0.26 0.03 60);
   --sidebar-accent-foreground: oklch(0.95 0.01 80);
-  --sidebar-border: oklch(0.30 0.02 60);
+  --sidebar-border: oklch(0.3 0.02 60);
   --sidebar-ring: oklch(0.68 0.16 75);
 }
 
-/* Dark theme — deep charcoal with gold */
+/* Dark theme - deep charcoal with gold */
 .dark {
   --background: oklch(0.16 0.01 60);
   --foreground: oklch(0.95 0.01 80);
@@ -95,18 +95,18 @@
   --secondary: oklch(0.27 0.02 60);
   --secondary-foreground: oklch(0.95 0.01 80);
   --muted: oklch(0.27 0.015 60);
-  --muted-foreground: oklch(0.70 0.02 70);
-  --accent: oklch(0.30 0.04 70);
+  --muted-foreground: oklch(0.7 0.02 70);
+  --accent: oklch(0.3 0.04 70);
   --accent-foreground: oklch(0.95 0.01 80);
-  --destructive: oklch(0.70 0.20 25);
+  --destructive: oklch(0.7 0.2 25);
   --border: oklch(1 0 0 / 12%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.78 0.15 80);
   --chart-1: oklch(0.78 0.15 80);
   --chart-2: oklch(0.65 0.12 50);
-  --chart-3: oklch(0.55 0.10 40);
-  --chart-4: oklch(0.80 0.13 90);
-  --chart-5: oklch(0.70 0.10 60);
+  --chart-3: oklch(0.55 0.1 40);
+  --chart-4: oklch(0.8 0.13 90);
+  --chart-5: oklch(0.7 0.1 60);
   --sidebar: oklch(0.13 0.01 60);
   --sidebar-foreground: oklch(0.95 0.01 80);
   --sidebar-primary: oklch(0.78 0.15 80);
@@ -125,7 +125,12 @@
     @apply bg-background text-foreground;
     font-family: var(--font-body), ui-monospace, monospace;
   }
-  h1, h2, h3, h4, h5, h6 {
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
     font-family: var(--font-heading), ui-monospace, monospace;
   }
   /* Apply heading font to elements with font-heading class */
@@ -158,12 +163,36 @@
   }
   .ng-grid-bg {
     background-image:
-      linear-gradient(to right, color-mix(in oklch, var(--foreground) 4%, transparent) 1px, transparent 1px),
-      linear-gradient(to bottom, color-mix(in oklch, var(--foreground) 4%, transparent) 1px, transparent 1px);
+      linear-gradient(
+        to right,
+        color-mix(in oklch, var(--foreground) 4%, transparent) 1px,
+        transparent 1px
+      ),
+      linear-gradient(
+        to bottom,
+        color-mix(in oklch, var(--foreground) 4%, transparent) 1px,
+        transparent 1px
+      );
     background-size: 32px 32px;
   }
   .ng-glow {
-    box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 40%, transparent),
+    box-shadow:
+      0 0 0 1px color-mix(in oklch, var(--primary) 40%, transparent),
       0 8px 40px -8px color-mix(in oklch, var(--primary) 45%, transparent);
   }
+}
+
+/* Native app feel on mobile. */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+body {
+  overscroll-behavior-y: none;
+}
+/* Safe-area helpers for notched devices (mobile bottom tab bar). */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
 }
