@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requireAuth } from "@/lib/api";
+import {
+  dbSchemaDrift,
+  dbUnavailable,
+  isDbUnavailableError,
+  requireAuth,
+} from "@/lib/api";
+import { isSchemaDriftError } from "@/lib/prisma-errors";
 
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
@@ -83,36 +89,49 @@ export async function GET(req: NextRequest) {
     where.AND.push({ OR: orClauses });
   }
 
-  const [overrides, total] = await Promise.all([
-    db.attendanceOverride.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      include: {
-        event: {
-          select: {
-            id: true,
-            title: true,
-            scheduledAt: true,
-            targetProgram: true,
-            targetSection: true,
+  let overrides;
+  let total;
+  try {
+    [overrides, total] = await Promise.all([
+      db.attendanceOverride.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: {
+          event: {
+            select: {
+              id: true,
+              title: true,
+              scheduledAt: true,
+              targetProgram: true,
+              targetSection: true,
+            },
           },
-        },
-        student: {
-          select: {
-            studentId: true,
-            fullName: true,
-            program: true,
-            section: true,
-            email: true,
+          student: {
+            select: {
+              studentId: true,
+              fullName: true,
+              program: true,
+              section: true,
+              email: true,
+            },
           },
+          creator: { select: { id: true, fullName: true, email: true } },
         },
-        creator: { select: { id: true, fullName: true, email: true } },
-      },
-    }),
-    db.attendanceOverride.count({ where }),
-  ]);
+      }),
+      db.attendanceOverride.count({ where }),
+    ]);
+  } catch (e) {
+    // P2021/P2022 = the live DB is missing the attendance_overrides
+    // table or its v16 forensics columns (schema pushed from a stale
+    // checkout). Self-diagnosing 503 instead of an opaque 500 - this is
+    // exactly the production failure mode observed when the TiDB schema
+    // lagged behind the deployed code.
+    if (isSchemaDriftError(e)) return dbSchemaDrift(e);
+    if (isDbUnavailableError(e)) return dbUnavailable(e);
+    throw e;
+  }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 

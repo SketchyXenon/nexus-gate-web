@@ -93,8 +93,9 @@
 ## Anti-Cheating Architecture (QR Attendance)
 
 ### Tier 1: Signed Scan Certificates
-- Each device has an Ed25519 keypair (private in IndexedDB, public registered with server)
+- Each device has an Ed25519 keypair (private in IndexedDB, public registered to the ACCOUNT on the server)
 - Scan certificates bind the QR token to the device + timestamp + nonce
+- **Account↔device binding**: the signing device key must belong to the authenticated account submitting the certificate. A certificate signed by student A's device cannot be replayed under student B's session (proxy-scanning), and an organizer-signed override certificate cannot be laundered through another account's session.
 - Server validates token HMAC against the certificate's `scannedAt` (not sync time)
 - Enables offline sync: a scan made in a WiFi dead zone is still valid if synced within 15 minutes (token HMAC validated against `scannedAt`, not sync time)
 
@@ -118,6 +119,7 @@
 - Brute-force lockout: 5 failed attempts → 15-minute account lock. The lock is set via an atomic compare-and-set update (`where: { lockedUntil: null }`) so two concurrent failures cannot both skip the lock-set.
 - **Enumeration-safe login**: wrong-password, non-existent email, unconfirmed email, and deactivated account all return an identical generic 401. A dummy `bcrypt.compare` runs on the not-found path to equalize timing so response time does not reveal which emails are registered.
 - Cookies: `httpOnly`, `sameSite: lax`, `secure: true` in production
+- **"Remember me" (opt-in session persistence)**: `@supabase/ssr` v0.12 defaults its session cookies to `maxAge = 400 days` + `httpOnly = false`; the server-side cookie adapter (`supabase-server.ts`) replaces that with an explicit policy — checked → 30-day HttpOnly persistent session (sticky via the `ng_sess` marker cookie so token refreshes re-apply the same persistence); unchecked → browser-session cookie (cleared when the browser closes). ADMIN accounts are force session-scoped regardless of the checkbox (privileged sessions never persist on shared machines). The 30-minute inactivity auto-logout applies to every session regardless of persistence. No credentials or tokens are ever stored in localStorage; sign-out revokes the server session AND deletes the marker.
 
 ### 2. Authorization (RBAC)
 - Three roles: `ADMIN`, `ORGANIZER`, `USER`
@@ -125,7 +127,7 @@
 - Account status re-checked from DB (cached 30s) - suspended = instant lockout
 - Cache invalidated on role/status change
 - Maintenance mode blocks non-admins
-- Admin-only overrides (organizers cannot create manual attendance entries)
+- Signed offline-first overrides (v16): organizers may create overrides ONLY for events they own; admins for any event. Every override is an Ed25519-signed certificate (device-bound, tamper-evident) validated against the event window at the SIGNED creation time, with a 24h sync deadline, deterministic idempotency key, 30/min fail-closed rate limit, and full forensic audit (device fingerprint, clock drift, sync delay, offline flag). Eligibility is whitelist-enforced (FK `AttendanceOverride.studentId → AuthorizedStudent.studentId`): non-whitelisted students are rejected with a clean 400, deactivated accounts with 403, and a P2003 catch guards the concurrent-roster-prune race.
 - Admin-only delegation toggle (organizers can toggle on their own events)
 
 ### 3. Input Validation
@@ -263,7 +265,7 @@ bun run test
 4. **RefreshToken** - rotating session tokens (legacy)
 5. **Event** - attendance events with program/section targeting + time-out windows
 6. **EventAttendance** - check-in records with certificate fields
-7. **AttendanceOverride** - manual check-ins (admin-only, idempotent)
+7. **AttendanceOverride** - manual check-ins (organizer-own-event or admin; offline-first signed certificates; idempotent `@@unique([eventId, studentId])`)
 8. **Notification** - user notifications
 9. **AuditLog** - immutable audit trail
 10. **DeviceKey** - Ed25519 public keys per device

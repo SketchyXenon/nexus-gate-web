@@ -1,11 +1,11 @@
-# Nexus Gate — Deployment Guide
+# Nexus Gate - Deployment Guide
 
 ## Prerequisites
 
 - **Node.js** 18+ (or Bun 1.0+)
-- **Supabase** account (free tier — PostgreSQL + Auth)
-- **Ably** account (free tier — realtime)
-- **Vercel** account (free tier — hosting)
+- **Supabase** account (free tier - PostgreSQL + Auth)
+- **Ably** account (free tier - realtime)
+- **Vercel** account (free tier - hosting)
 
 ## Quick Start (Local Development)
 
@@ -37,16 +37,16 @@ The app will be available at `http://localhost:3000`.
 2. Name it `nexus-gate`, choose a region close to your users
 3. Wait for provisioning (~2 min)
 4. Go to **Settings → API**:
-   - Copy `Project URL` → this is your `NEXT_PUBLIC_SUPABASE_URL`
-   - Copy `anon public` key → this is your `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - Copy `service_role` key → this is your `SUPABASE_SERVICE_ROLE_KEY`
+  - Copy `Project URL` → this is your `NEXT_PUBLIC_SUPABASE_URL`
+  - Copy `anon public` key → this is your `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  - Copy `service_role` key → this is your `SUPABASE_SERVICE_ROLE_KEY`
 5. Go to **Settings → Database → Connection string**:
-   - Copy the **Transaction** URL (port 6543) → this is your `DATABASE_URL`
-   - Copy the **Session** URL (port 5432) → this is your `DIRECT_URL`
-6. Go to **SQL Editor** → run the migration files from `supabase/migrations/` in order (0001 through 0018)
+  - Copy the **Transaction** URL (port 6543) → this is your `DATABASE_URL`
+  - Copy the **Session** URL (port 5432) → this is your `DIRECT_URL`
+6. Go to **SQL Editor** → run the migration files from `supabase/migrations/` in order (0001 through 0020). Migration `0019_visit_analytics.sql` creates the privacy-preserving `visits` table (no raw IP stored). Migration `0020_rls_deny_all_server_only_tables.sql` adds explicit deny-all RLS policies on `terms_acceptances` and `visits` (server-only tables accessed via the service role).
 7. Go to **Authentication → URL Configuration**:
-   - Set **Site URL** to your Vercel URL (e.g., `https://nexus-gate-web.vercel.app`)
-   - Add your Vercel URL to **Redirect URLs**
+  - Set **Site URL** to your Vercel URL (e.g., `https://nexus-gate-web.vercel.app`)
+  - Add your Vercel URL to **Redirect URLs**
 
 ### Step 2: Set Up Ably (Free)
 
@@ -54,16 +54,16 @@ The app will be available at `http://localhost:3000`.
 2. Create a new app → name it `nexus-gate`
 3. Go to **Settings → API Keys**
 4. Copy the **root API key** (format: `keyName:keySecret`, e.g. `KyAKwA.hI9kKQ:xxxx`)
-5. Set this as `ABLY_SERVER_KEY` on Vercel. This is the ONLY Ably env var needed —
+5. Set this as `ABLY_SERVER_KEY` on Vercel. This is the ONLY Ably env var needed - 
    the browser uses token authentication via `/api/ably/token` (signed by the
-   server key). Do NOT set `NEXT_PUBLIC_ABLY_KEY` — it is unused and will
+   server key). Do NOT set `NEXT_PUBLIC_ABLY_KEY` - it is unused and will
    cause confusion.
 
 ### Step 3: Deploy to Vercel (Free)
 
 1. Go to [vercel.com](https://vercel.com) → New Project
 2. Import your GitHub repo (`nexus-gate-web`)
-3. Vercel auto-detects Next.js — no build config needed
+3. Vercel auto-detects Next.js - no build config needed
 4. Set **Environment Variables**:
 
 ```
@@ -80,6 +80,30 @@ CRON_SECRET=[generate-with: openssl rand -base64 32]
 
 5. Click **Deploy**
 6. Wait for the build to complete (~2 min)
+7. **Push the TiDB schema from an up-to-date checkout and verify it** (see
+   "Database Schema Sync" below - skipping this causes 500s on every endpoint
+   that queries a newly added column):
+
+```bash
+git pull && bun install      # CRITICAL: push from the LATEST code
+bun run db:push:tidb          # applies the schema (additive changes only)
+bun run db:verify:tidb        # exit 0 = in sync; exit 2 = drift
+```
+
+### Database Schema Sync (TiDB) - read before every deploy
+
+`bun run db:push:tidb` pushes whatever `prisma/schema.tidb.prisma` is in your
+**local checkout**. If the checkout is stale (missing the commit that added new
+columns), the push silently creates an outdated database while the deployed
+code expects the new columns - every query touching them returns a **500**
+(`P2022` column does not exist) in production.
+
+The rule: **schema pushes must come from the same commit you deploy.** After
+any deploy that includes a `prisma/schema.*.prisma` change, run
+`bun run db:verify:tidb` - it exits `0` when the live database matches the
+current schema and `2` (with the exact missing columns printed) when it
+doesn't. Additive column additions are safe (`db push` applies `ALTER TABLE ...
+ADD COLUMN` with defaults/nullability - no data loss).
 
 ### Step 4: Create Admin Account
 
@@ -121,7 +145,7 @@ If you're self-hosting instead of deploying to Vercel, use the included
 
 The Caddyfile includes a production block (port 80) and a dev block (port 81).
 Edit the production block to add your domain for automatic TLS via Let's
-Encrypt. Without a custom domain, Caddy serves HTTP only — use a TLS
+Encrypt. Without a custom domain, Caddy serves HTTP only - use a TLS
 terminator or deploy on Vercel for HTTPS.
 
 ## Environment Variables Reference
@@ -143,8 +167,7 @@ terminator or deploy on Vercel for HTTPS.
 | `SMTP_USER` | No | Email server username |
 | `SMTP_PASS` | No | Email server password |
 | `SMTP_FROM` | No | Sender email address |
-| `UPSTASH_REDIS_REST_URL` | No | Distributed rate limiting (Redis) |
-| `UPSTASH_REDIS_REST_TOKEN` | No | Distributed rate limiting (Redis) |
+| `REDIS_URL` | No | Aiven Redis connection string (rediss://) for distributed rate limiting + cache |
 
 ## Cost Summary
 
@@ -158,11 +181,27 @@ terminator or deploy on Vercel for HTTPS.
 
 ## Troubleshooting
 
+### Overrides (or any endpoint) return 500 with `DB_SCHEMA_DRIFT` / P2022 in the logs
+The live TiDB database is missing a table or column the deployed code expects -
+the schema was pushed from a stale checkout. The routes return a self-diagnosing
+503 (`DB_SCHEMA_DRIFT`) and the server log names the exact missing column. Fix:
+
+```bash
+git pull && bun install
+bun run db:push:tidb      # adds the missing columns (additive, no data loss)
+bun run db:verify:tidb    # confirm: "Schema is IN SYNC"
+```
+
+Queued offline overrides that failed during the drift window stay in the
+organizer's offline queue (localStorage, tamper-evident) and can be retried
+from the Overrides view once the schema is fixed - signed within 24h of
+creation, they remain submittable.
+
 ### Ably returns 40400 "No application found"
-`ABLY_SERVER_KEY` is malformed. The key must be `keyName:keySecret` (colon-separated), where keyName is `appId.keyId` (dot-separated). Copy the FULL key from the Ably dashboard — do not split it manually.
+`ABLY_SERVER_KEY` is malformed. The key must be `keyName:keySecret` (colon-separated), where keyName is `appId.keyId` (dot-separated). Copy the FULL key from the Ably dashboard - do not split it manually.
 
 ### Ably returns 40101 "Request mac does not match"
-The token route now uses the Ably SDK's `createTokenRequest` for signing. If you see this error, ensure you redeployed after the latest code changes — old deployments used hand-rolled HMAC that produced the mac in hex instead of base64.
+The token route now uses the Ably SDK's `createTokenRequest` for signing. If you see this error, ensure you redeployed after the latest code changes - old deployments used hand-rolled HMAC that produced the mac in hex instead of base64.
 
 ### Magic link redirects to localhost:3000
 Set `NEXT_PUBLIC_APP_URL` on Vercel to your production URL. The register route uses this for the `emailRedirectTo` parameter.
@@ -177,17 +216,17 @@ Set `CRON_SECRET` on Vercel. Pass it via `?secret=YOUR_SECRET` in the cron URL, 
 Clear your browser data for the site. The old non-extractable keypair is regenerated on next visit.
 
 ### Deactivated user reports "Incorrect email or password"
-This is by design. Login is enumeration-safe — deactivated accounts return the
+This is by design. Login is enumeration-safe - deactivated accounts return the
 same generic 401 as a wrong password so an attacker cannot probe which emails
 are registered. A legitimately deactivated user will see "Incorrect email or
 password" and should contact an administrator, who can confirm the deactivation
 and restore the account from the admin panel. Do NOT special-case the deactivation
-message — that would re-open the enumeration oracle.
+message - that would re-open the enumeration oracle.
 
 ### Admin operations hit 429 Too Many Requests
 Destructive admin operations have dedicated rate limits (stricter than the default
 100/min `apiAccount`): account create/delete = 20/min, whitelist JSON import = 3/min,
 whitelist file upload = 5/min, passkey registration = 10/min. These fail closed on
 limiter error. If a legitimate admin workflow hits these, stagger the operations or
-wait 60 seconds. Do NOT raise the limits without understanding the DoS surface —
+wait 60 seconds. Do NOT raise the limits without understanding the DoS surface - 
 see CAPACITY-ASSESSMENT.md section 6.

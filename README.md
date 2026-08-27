@@ -8,7 +8,7 @@ Nexus Gate is a production-ready attendance tracking system designed for educati
 
 - **Anti-Cheating QR Attendance**: 2 FPS rotating QR codes with sub-frame HMACs. Students must capture 3+ consecutive frames - a single photo is rejected.
 - **Offline-First (15-min window)**: Scans are saved to `localStorage` and auto-sync when reconnected. A scan made in a WiFi dead zone is still valid if synced within 15 minutes. The token HMAC is validated against the scan's `scannedAt` timestamp, not server sync time. GET endpoints use a client-side stale-while-revalidate cache (`src/lib/api-cache.ts`) so the UI renders instantly from cache when offline, then revalidates in the background.
-- **Signed Scan Certificates**: Each scan is cryptographically bound to the student's device via Ed25519 signatures. Queue tampering breaks the signature and is rejected.
+- **Signed Scan Certificates**: Each scan is cryptographically bound to the student's device via Ed25519 signatures. Queue tampering breaks the signature and is rejected. The signing device key must belong to the submitting account — a certificate signed by one student's device cannot be replayed under another's session (proxy-scanning defense).
 - **One-Attempt Policy**: After the first successful scan, all subsequent attempts return "already scanned." Enforced atomically via a unique constraint on `(eventId, accountId)` with stable Prisma P2002 detection.
 - **Strict Event Visibility**: Students see only events for their exact course + section (or open-to-all events). The same rule is enforced on the Ably token route so a student cannot subscribe to another section's realtime channel. Organizers always see events they own (plus v8-visible events), so an organizer's own section-specific event is never hidden from them.
 - **Program-Scoped Organizers**: Organizers are limited to their own program scope (e.g. a BSIT organizer can only create BSIT-scoped academic events; department-wide events are admin-only). Delegation is program-based: an organizer may project another organizer's QR only for program-wide events in their own program.
@@ -21,8 +21,9 @@ Nexus Gate is a production-ready attendance tracking system designed for educati
 - **Session Timeout**: Auto-logout after 30 minutes of inactivity with a warning at 25 minutes.
 - **Brute-Force Lockout**: Account locks for 15 minutes after 5 failed login attempts. The lock is set via an atomic compare-and-set update so concurrent failures cannot both skip the lock.
 - **Enumeration-Safe Login**: Login returns an identical generic 401 for wrong-password, non-existent email, unconfirmed email, and deactivated account. A dummy bcrypt compare equalizes timing on the not-found path so response time does not reveal which emails are registered.
-- **Admin-Only Overrides**: Manual attendance overrides restricted to administrators for integrity.
+- **Offline-First Signed Overrides (v16)**: Organizers (own events) and admins can mark students present manually — even offline. Each entry is an Ed25519-signed override certificate bound to the organizer's device; the signed creation timestamp must fall within the event's live window, must sync within 24h, and every row records device fingerprint + clock drift + sync delay + an offline flag for forensic review. Tampered queue items break the signature and are rejected. Eligibility is whitelist-enforced, deactivated accounts are rejected, and certificates signed by another account's device are refused.
 - **Role-Based Access**: Admin, Organizer, and Student roles with server-enforced authorization.
+- **Secure "Remember Me"**: Opt-in 30-day session persistence on the sign-in form (default off). Session cookies are always HttpOnly + SameSite=Lax; unchecked means a browser-session cookie that dies when the browser closes. ADMIN accounts are force session-scoped, the 30-minute inactivity logout always applies, and sign-out revokes both the server session and the persistence marker. This replaces `@supabase/ssr`'s 400-day JS-readable default cookies with a bounded, explicit policy.
 - **Hybrid Passkey Auth**: WebAuthn with `userVerification: "required"` end-to-end (possession + biometric). Sync-fabric-enabled (`residentKey: "preferred"`) so a passkey registered on a phone is usable on a PC/tablet via iCloud Keychain / Google Password Manager or the cross-device QR flow. Credential reuse across accounts is rejected. Unsupported browsers get a clear fallback message, not a dead button.
 - **Privacy-Preserving Visit Analytics**: Page views are recorded with the public IP HMAC-hashed (daily-rotating secret) - the raw IP is NEVER stored. The token identifies "same visitor on the same day" only; cross-day correlation is impossible. Admin dashboard shows 7-day unique visitors + total visits + top routes. Admin-only read access (`requireAuth("ADMIN")`); no IDOR surface (no object-id params).
 - **Tiered Rate Limiting**: Per-IP for unauthenticated endpoints, per-account for authenticated, plus dedicated presets for destructive admin mutations (20/min), whitelist imports (3/min), file uploads (5/min), and passkey registration (10/min). Sensitive presets fail closed on limiter error.
@@ -90,7 +91,8 @@ inline. The migration `0001_init.sql` also inserts a seed admin
 | `bun run seed:events` | Seed test events for development |
 | `bun run db:push` | Push Prisma schema (active provider) |
 | `bun run db:push:sqlite` | Push Prisma schema (SQLite dev) |
-| `bun run db:push:tidb` | Push Prisma schema (TiDB prod) |
+| `bun run db:push:tidb` | Push Prisma schema (TiDB prod) — run from an **up-to-date checkout** |
+| `bun run db:verify:tidb` | **Verify** the live TiDB DB matches the current schema (exit 2 on drift) |
 | `bun run db:generate:sqlite` | Regenerate Prisma client (SQLite) |
 | `bun run db:generate:tidb` | Regenerate Prisma client (TiDB) |
 

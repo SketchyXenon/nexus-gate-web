@@ -23,6 +23,7 @@
     "db:generate": "npx --no-install prisma generate",
     "db:generate:sqlite": "npx --no-install prisma generate --schema=prisma/schema.sqlite.prisma",
     "db:generate:tidb": "npx --no-install prisma generate --schema=prisma/schema.tidb.prisma",
+    "db:verify:tidb": "bun run scripts/verify-tidb-schema.ts",
     "db:migrate": "npx --no-install prisma migrate dev",
     "db:reset": "npx --no-install prisma migrate reset"
   },

@@ -265,6 +265,7 @@ function AuthScreen({
   const [program, setProgram] = useState<string>(NO_PROGRAM);
   const [section, setSection] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showRegPassword, setShowRegPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
@@ -547,7 +548,7 @@ function AuthScreen({
     e.preventDefault();
     if (!validateLogin()) return;
     login.mutate(
-      { email, password },
+      { email, password, rememberMe },
       {
         onSuccess: () =>
           toast({
@@ -870,6 +871,61 @@ function AuthScreen({
                             </p>
                           )}
                         </div>
+                        {/* Remember me (opt-in, default OFF - secure default).
+                            Server-side: 30-day HttpOnly session cookie when
+                            checked; browser-session cookie when unchecked.
+                            ADMIN accounts are force session-scoped. */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Checkbox
+                              id="remember-me"
+                              checked={rememberMe}
+                              onCheckedChange={(v) => setRememberMe(v === true)}
+                              aria-describedby="remember-me-hint"
+                            />
+                            <label
+                              htmlFor="remember-me"
+                              className="text-sm cursor-pointer select-none"
+                            >
+                              Remember me
+                            </label>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    type="button"
+                                    className="flex items-center justify-center h-7 w-7 -ml-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                                    aria-label="What does Remember me do?"
+                                  >
+                                    <Info className="h-3.5 w-3.5" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent
+                                  side="right"
+                                  className="max-w-[260px]"
+                                >
+                                  <p id="remember-me-hint">
+                                    Stay signed in on this device for 30 days -
+                                    even after closing your browser. You&apos;ll
+                                    still be signed out after 30 minutes of
+                                    inactivity. Admin accounts always use
+                                    session-only sign-in.
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMode("forgot");
+                              setErrors({});
+                            }}
+                            className="text-sm text-muted-foreground hover:text-primary hover:underline"
+                          >
+                            Forgot password?
+                          </button>
+                        </div>
                         <Button
                           type="submit"
                           className="w-full h-10 transition-all hover:scale-[1.01]"
@@ -883,17 +939,7 @@ function AuthScreen({
                           Sign in
                         </Button>
                       </form>
-                      <div className="flex items-center justify-between text-sm">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setMode("forgot");
-                            setErrors({});
-                          }}
-                          className="text-muted-foreground hover:text-primary hover:underline"
-                        >
-                          Forgot password?
-                        </button>
+                      <div className="flex items-center justify-end text-sm">
                         <button
                           type="button"
                           onClick={() => {

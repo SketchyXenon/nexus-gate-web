@@ -65,7 +65,7 @@ Browser → Caddy Gateway → Next.js App (port 3000) → Prisma → SQLite (dev
 
 ### Session Flow
 
-1. **Login** (`POST /api/auth/login`): Email + password → Supabase `signInWithPassword` → app-layer brute-force lockout (5 fails → 15-min `lockedUntil`, set via atomic compare-and-set). **Enumeration-safe**: wrong-password, non-existent email, unconfirmed email, and deactivated account all return an identical generic 401. A dummy `bcrypt.compare` runs on the not-found path to equalize timing.
+1. **Login** (`POST /api/auth/login`): Email + password (+ optional `rememberMe` boolean, default false) → Supabase `signInWithPassword` → app-layer brute-force lockout (5 fails → 15-min `lockedUntil`, set via atomic compare-and-set). **Enumeration-safe**: wrong-password, non-existent email, unconfirmed email, and deactivated account all return an identical generic 401. A dummy `bcrypt.compare` runs on the not-found path to equalize timing. **Remember me**: checked → 30-day HttpOnly persistent session cookie (sticky via the `ng_sess` marker so refreshes keep the policy); unchecked → browser-session cookie; ADMIN accounts are force session-scoped. The 30-min inactivity logout applies regardless.
 2. **Refresh** (`POST /api/auth/refresh`): Refresh token → HMAC-SHA256 hash → O(1) DB lookup → rotate token (revoke old, issue new)
 3. **Logout** (`POST /api/auth/logout`): Revoke refresh token, clear cookies
 4. **Reuse Detection**: If a revoked token is presented → revoke ALL tokens for that account
@@ -271,8 +271,8 @@ The parser dispatches on the **sniffed** kind (not the untrusted filename), so a
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | POST | `/api/attendance` | USER | Submit signed scan certificate (atomic one-attempt via unique constraint + stable P2002 detection) |
-| POST | `/api/attendance/override` | ADMIN | Manual check-in (no QR). Atomic `$transaction` + P2002 catch for idempotency. |
-| GET | `/api/attendance/overrides` | ORGANIZER+ | List overrides (paginated) |
+| POST | `/api/attendance/override` | ORGANIZER+ | Offline-first manual check-in: Ed25519-signed override certificate (device-bound). Organizer: own events only; Admin: any. Server validates signature + canonical round-trip + clock skew (±120s) + 24h sync deadline + event window at the SIGNED creation time + eligibility; atomic `$transaction` + P2002 idempotency; 30/min fail-closed rate limit; forensic audit (device, drift, sync delay, offline flag). |
+| GET | `/api/attendance/overrides` | ORGANIZER+ | List overrides (organizer: own events; admin: all) with forensic fields |
 
 ### Profile
 

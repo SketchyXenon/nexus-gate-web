@@ -105,6 +105,39 @@ export function dbUnavailable(e?: unknown) {
   );
 }
 
+// ---- Database schema drift (P2021/P2022) ----
+// The deployed Prisma client references a table/column that does not
+// exist in the live database - the code is NEWER than the pushed schema.
+// Almost always caused by pushing the schema from a stale checkout
+// (e.g. running db:push:tidb locally before pulling the latest commit
+// that added new columns). The client gets a 503 with an actionable
+// code; the server log names the exact missing table/column so the
+// operator can fix it without guessing (re-push the CURRENT schema:
+//   git pull && bun install && bun run db:push:tidb
+// then verify with: bun run db:verify:tidb).
+export function dbSchemaDrift(e?: unknown) {
+  const errName = e instanceof Error ? e.name : "Unknown";
+  const errMsg = e instanceof Error ? e.message : "";
+  const errCode =
+    e && typeof e === "object" && "code" in e
+      ? String((e as { code: unknown }).code)
+      : "";
+  console.error(
+    `[db] SCHEMA DRIFT (${errCode || "P202x"}): the live database is missing ` +
+      `a table/column the application expects. Re-push the CURRENT schema ` +
+      `(git pull && bun install && bun run db:push:tidb, then bun run ` +
+      `db:verify:tidb). Prisma says: ${errName} ${errMsg}`,
+  );
+  return NextResponse.json(
+    {
+      error:
+        "The server database needs a schema update. Please contact your administrator.",
+      code: "DB_SCHEMA_DRIFT",
+    },
+    { status: 503 },
+  );
+}
+
 // ---- Maintenance mode check ----
 // Caches the maintenance setting for 10 seconds to avoid hitting the DB
 // on every request. When maintenance is ON, non-admin users are blocked.
