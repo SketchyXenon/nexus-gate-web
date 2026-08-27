@@ -315,6 +315,7 @@ The parser dispatches on the **sniffed** kind (not the untrusted filename), so a
 | GET | `/api/notifications` | Any | List notifications |
 | GET | `/api/audit-logs` | ADMIN | Audit log (paginated) |
 | POST | `/api/admin/maintenance` | ADMIN | Toggle maintenance mode |
+| GET | `/api/admin/db-health` | ADMIN | Database diagnostics: masked datasource identity + live `attendance_overrides` columns vs expected (verdict `OK`/`DRIFT`) |
 | GET | `/api/cron/event-reminders` | Cron secret | Send event reminders |
 | GET | `/api/cron/cleanup` | Cron secret | Clean up expired tokens |
 

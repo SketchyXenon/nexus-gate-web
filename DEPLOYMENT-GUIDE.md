@@ -105,6 +105,16 @@ current schema and `2` (with the exact missing columns printed) when it
 doesn't. Additive column additions are safe (`db push` applies `ALTER TABLE ...
 ADD COLUMN` with defaults/nullability - no data loss).
 
+Two companion tools close the loop:
+
+- `bun run db:diagnose:tidb` - checks **every** MySQL url your machine can
+  resolve (env + `.env`, both `TIDB_DATABASE_URL` and `DATABASE_URL`) against
+  the current schema, printing a masked identity and verdict per url. Use it
+  when verify says IN SYNC but production still drifts (a url mismatch).
+- `GET /api/admin/db-health` (ADMIN only) - the **deployed** app reports its
+  masked datasource and the live columns it actually sees. This is the
+  ground truth for "which database is production really querying?".
+
 ### Step 4: Create Admin Account
 
 After the first deploy, create the admin account:
@@ -196,6 +206,52 @@ Queued offline overrides that failed during the drift window stay in the
 organizer's offline queue (localStorage, tamper-evident) and can be retried
 from the Overrides view once the schema is fixed - signed within 24h of
 creation, they remain submittable.
+
+### `db:verify:tidb` says IN SYNC but production still returns `DB_SCHEMA_DRIFT`
+
+This combination means the database your **local url points at** is NOT the
+database the **deployed app** queries. `db:verify:tidb` only checks the url
+your machine resolves (`TIDB_DATABASE_URL` first, then a `mysql://`
+`DATABASE_URL`). Typical causes:
+
+1. **Stale `TIDB_DATABASE_URL` on Vercel** - the MySQL client resolves
+   `TIDB_DATABASE_URL` at runtime (it wins over `DATABASE_URL`). If it still
+   holds an old cluster/database while you pushed to a new one, the app keeps
+   querying the old database.
+2. **Different database name in the url path** - same cluster, but
+   `.../nexus_gate` vs `.../nexus_gate_prod` are different databases.
+3. **`TIDB_DATABASE_URL` and `DATABASE_URL` disagree** locally, so push and
+   verify quietly targeted different databases.
+
+Diagnose in two steps:
+
+```bash
+# 1. Locally: check EVERY configured MySQL url (env + .env, both vars),
+#    each against the current schema, with masked identities:
+bun run db:diagnose:tidb
+```
+
+2. In production, sign in as an ADMIN and open
+   `GET https://<your-app>/api/admin/db-health`. It reports the deployed
+   app's **masked datasource** (`resolvedFrom` / `user` / `host` / `port` /
+   `database` - never the password) and the **live columns** it actually sees,
+   with a `verdict` of `OK` or `DRIFT` plus the exact `missingColumns`.
+
+Compare the `host` + `database` from db-health against the urls shown by
+`db:diagnose:tidb`. Then fix in either direction:
+
+- **Point Vercel at the database you pushed** - Vercel -> Settings ->
+  Environment Variables -> Production: set BOTH `DATABASE_URL` and
+  `TIDB_DATABASE_URL` to the exact same url you verified locally, then
+  redeploy (env var changes require a redeploy to take effect).
+- **Push to the database Vercel actually uses** - set your local
+  `TIDB_DATABASE_URL` to the url db-health reports, then
+  `bun run db:push:tidb && bun run db:verify:tidb && bun run db:diagnose:tidb`.
+
+No code change is needed either way. Also note the drift log line in Vercel's
+function logs now prints `App datasource: <env var> -> user@host:port/database
+[provider]` for every drift occurrence, and warns when
+`TIDB_DATABASE_URL`/`DATABASE_URL` are both set but differ.
 
 ### Ably returns 40400 "No application found"
 `ABLY_SERVER_KEY` is malformed. The key must be `keyName:keySecret` (colon-separated), where keyName is `appId.keyId` (dot-separated). Copy the FULL key from the Ably dashboard - do not split it manually.

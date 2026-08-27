@@ -11,10 +11,29 @@
 // that queries the new columns returns 500 in production. This script
 // turns that silent failure into a 5-second pre/post-deploy check.
 //
-// HOW: `prisma migrate diff --from-url <live-db> --to-schema-datamodel
-// prisma/schema.tidb.prisma --exit-code` lets Prisma itself compute
-// the difference (far more reliable than hand-rolling information_schema
-// queries). Exit codes: 0 = in sync, 2 = drift, 1 = error.
+// HOW: `prisma migrate diff --from-schema-datasource <schema>
+// --to-schema-datamodel <schema> --exit-code` lets Prisma itself
+// compute the difference (far more reliable than hand-rolling
+// information_schema queries). Exit codes: 0 = in sync, 2 = drift,
+// 1 = error.
+//
+// IMPLEMENTATION NOTES (v2 - cross-platform hardening):
+// - The Prisma CLI is invoked through its LOCAL JS entry
+//   (node_modules/prisma/build/index.js), NOT via `npx`.
+//   `spawnSync("npx")` fails with ENOENT/EINVAL on Windows (npx is a
+//   .cmd shim, not an executable), which previously produced the
+//   cryptic "prisma migrate diff failed (exit undefined): unknown
+//   error" report. Runtime fallback chain: node -> bun
+//   (process.execPath) -> npx -> npx-with-shell.
+// - The DB URL is passed through the ENVIRONMENT (TIDB_DATABASE_URL),
+//   never on the command line: no shell-quoting hazards and no
+//   password visible in the process list. `--from-schema-datasource`
+//   makes Prisma resolve env("TIDB_DATABASE_URL") itself.
+// - Spawn failures (result.error) are ALWAYS printed - the script can
+//   no longer fail with an empty "unknown error" message.
+// - Paths are derived from this file's location via fileURLToPath, so
+//   the script works from any CWD and on Windows (where
+//   url.pathname yields a broken "/C:/..." prefix).
 //
 // Usage:
 //   bun run db:verify:tidb            # reads TIDB_DATABASE_URL (or a
@@ -26,9 +45,14 @@
 // --------------------------------------------------------------------
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ENV_PATH = new URL("../.env", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../", import.meta.url));
+const ENV_PATH = join(ROOT, ".env");
+const PRISMA_CLI = join(ROOT, "node_modules", "prisma", "build", "index.js");
+const TIDB_SCHEMA = join(ROOT, "prisma", "schema.tidb.prisma");
 
 function readEnvFile(key: string): string {
   try {
@@ -50,7 +74,10 @@ function resolveUrl(): string {
     process.env.DATABASE_URL,
     readEnvFile("DATABASE_URL"),
   ];
-  return candidates.find((u) => typeof u === "string" && u.startsWith("mysql://")) ?? "";
+  return (
+    candidates.find((u) => typeof u === "string" && u.startsWith("mysql://")) ??
+    ""
+  );
 }
 
 const url = resolveUrl();
@@ -74,57 +101,212 @@ if (!url.startsWith("mysql://")) {
   process.exit(1);
 }
 
-console.log("[verify-tidb-schema] Comparing live TiDB database against prisma/schema.tidb.prisma ...");
+if (!existsSync(TIDB_SCHEMA)) {
+  console.error(
+    `\n[verify-tidb-schema] ${TIDB_SCHEMA} not found - run this from an ` +
+      "up-to-date checkout of the nexus-gate repo.\n",
+  );
+  process.exit(1);
+}
 
-// Let Prisma itself compute the drift. --exit-code makes it exit 2 when
-// the schemas differ, 0 when identical. Args array avoids shell-quoting
-// issues with passwords in the URL.
-const result = spawnSync(
-  "npx",
-  [
-    "--no-install",
-    "prisma",
-    "migrate",
-    "diff",
-    "--from-url",
-    url,
-    "--to-schema-datamodel",
-    "prisma/schema.tidb.prisma",
-    "--exit-code",
-  ],
-  { encoding: "utf8", env: process.env },
+console.log(
+  "[verify-tidb-schema] Comparing live TiDB database against prisma/schema.tidb.prisma ...",
 );
 
-const stdout = (result.stdout || "").trim();
-const stderr = (result.stderr || "").trim();
+// --------------------------------------------------------------------
+// Spawn the local Prisma CLI with a runtime fallback chain.
+// --------------------------------------------------------------------
 
-if (result.status === 0) {
+interface PrismaRun {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  error?: NodeJS.ErrnoException;
+  stdout: string;
+  stderr: string;
+}
+
+interface Candidate {
+  label: string;
+  cmd: string;
+  args: string[];
+  shell?: boolean;
+}
+
+function quoteForShell(arg: string): string {
+  return arg.includes(" ") ? `"${arg}"` : arg;
+}
+
+function buildCandidates(prismaArgs: string[]): Candidate[] {
+  const candidates: Candidate[] = [];
+  if (existsSync(PRISMA_CLI)) {
+    // Preferred: the official Node runtime (node.exe is directly
+    // spawnable on every platform, unlike the npx.cmd shim).
+    candidates.push({
+      label: "node node_modules/prisma/build/index.js",
+      cmd: "node",
+      args: [PRISMA_CLI, ...prismaArgs],
+    });
+    // When this script runs under `bun run`, process.execPath IS bun -
+    // and bun executes the Prisma CLI bundle just as well.
+    candidates.push({
+      label: "bun node_modules/prisma/build/index.js",
+      cmd: process.execPath,
+      args: [PRISMA_CLI, ...prismaArgs],
+    });
+  }
+  // Last resorts for setups without a local prisma install.
+  candidates.push({
+    label: "npx --no-install prisma",
+    cmd: "npx",
+    args: ["--no-install", "prisma", ...prismaArgs],
+  });
+  // Windows only reachable path for npx (npx is a .cmd shim): through
+  // a shell. Safe here because the DB URL never touches argv.
+  candidates.push({
+    label: "npx --no-install prisma (shell)",
+    cmd: "npx",
+    args: ["--no-install", "prisma", ...prismaArgs].map(quoteForShell),
+    shell: true,
+  });
+  return candidates;
+}
+
+function describeFailure(label: string, r: PrismaRun): string {
+  if (r.error) {
+    const code = r.error.code ? ` [${r.error.code}]` : "";
+    return `${label}: could not start - ${r.error.message}${code}`;
+  }
+  if (r.status === 127 || r.status === 9009) {
+    // sh / cmd.exe "command not found" exit codes.
+    return `${label}: not found (exit ${r.status})`;
+  }
+  const how = r.signal
+    ? `killed by signal ${r.signal}`
+    : `exit ${r.status} with no output`;
+  return `${label}: ${how}`;
+}
+
+function runPrisma(prismaArgs: string[]): {
+  run: PrismaRun | null;
+  failures: string[];
+} {
+  // The URL travels via env, never argv: Prisma resolves it through the
+  // schema's env("TIDB_DATABASE_URL") reference. Both names are set so
+  // the schema file could be swapped without touching this script.
+  const childEnv = {
+    ...process.env,
+    TIDB_DATABASE_URL: url,
+    DATABASE_URL: url,
+  };
+  const failures: string[] = [];
+
+  for (const c of buildCandidates(prismaArgs)) {
+    let r: PrismaRun;
+    try {
+      r = spawnSync(c.cmd, c.args, {
+        encoding: "utf8",
+        env: childEnv,
+        timeout: 120_000, // a hung DB connection must not hang the check
+        ...(c.shell ? { shell: true } : {}),
+      }) as PrismaRun;
+    } catch (err) {
+      failures.push(`${c.label}: threw ${(err as Error).message}`);
+      continue;
+    }
+
+    const stdout = (r.stdout || "").trim();
+    const stderr = (r.stderr || "").trim();
+    const result = { ...r, stdout, stderr };
+
+    // A usable result: the process ran AND produced a verdict (exit
+    // 0/2) or any output at all (Prisma always writes errors). A
+    // completely silent non-zero exit means the RUNTIME itself crashed
+    // (e.g. an incompatible interpreter), and 127/9009 mean "command
+    // not found" (shell candidates) - in both cases try the next one.
+    const commandNotFound = r.status === 127 || r.status === 9009;
+    if (
+      !r.error &&
+      !commandNotFound &&
+      (r.status === 0 || r.status === 2 || stdout || stderr)
+    ) {
+      return { run: result, failures };
+    }
+    failures.push(describeFailure(c.label, result));
+  }
+
+  return { run: null, failures };
+}
+
+const prismaArgs = [
+  "migrate",
+  "diff",
+  "--from-schema-datasource",
+  TIDB_SCHEMA,
+  "--to-schema-datamodel",
+  TIDB_SCHEMA,
+  "--exit-code",
+];
+
+const { run, failures } = runPrisma(prismaArgs);
+
+if (!run) {
+  console.error(
+    "\n[verify-tidb-schema] Could not run the Prisma CLI. Attempted runtimes:\n" +
+      failures.map((f) => `  - ${f}`).join("\n") +
+      "\n\nFIX:\n" +
+      "  1. bun install          (installs the local Prisma CLI the script prefers)\n" +
+      "  2. ensure `node` or `npx` is on your PATH\n",
+  );
+  process.exit(1);
+}
+
+if (run.status === 0) {
   console.log(
     "\n  \u2713 Schema is IN SYNC - the live database matches the current schema.\n",
   );
   process.exit(0);
 }
 
-if (result.status === 2) {
+if (run.status === 2) {
   console.error(
     "\n  \u2717 SCHEMA DRIFT DETECTED - the live database does NOT match the current\n" +
-      "  schema. The deployed code WILL get P2021/P2022 errors (500s) on every\n" +
-      "  query that touches the missing table/column.\n\n" +
+      "  schema. The deployed code WILL get P2021/P2022 errors (500s / 503\n" +
+      "  DB_SCHEMA_DRIFT) on every query that touches the missing table/column.\n\n" +
       "  Prisma would apply these changes to bring the DB in sync:\n" +
       "  ------------------------------------------------------------\n" +
-      `${stdout || "(no detail printed - run the prisma command manually)"}\n` +
+      `${run.stdout || "(no detail printed - run the prisma command manually)"}\n` +
       "  ------------------------------------------------------------\n" +
       "  FIX: from an UP-TO-DATE checkout run:\n" +
       "    git pull && bun install\n" +
       "    bun run db:push:tidb        # applies the ALTER TABLEs (additive,\n" +
       "                                # nullable columns - no data loss)\n" +
-      "    bun run db:verify:tidb      # re-verify (expect: in sync)\n",
+      "    bun run db:verify:tidb      # re-verify (expect: in sync)\n" +
+      "  No Vercel redeploy is required - only the database changes.\n",
   );
   process.exit(2);
 }
 
+// Any other status: a real Prisma error (unreachable host, auth
+// failure, ...). Surface it with a targeted hint where we can.
+const detail = run.stderr || run.stdout || "(no output)";
+let hint = "";
+if (/P1001/.test(detail)) {
+  hint =
+    "  Hint (P1001): the database server is unreachable. Check the host/port\n" +
+    "  in TIDB_DATABASE_URL, that the TiDB cluster is running, and that your\n" +
+    "  IP is allowed (TiDB Cloud: cluster Settings -> IP Access List).\n";
+} else if (/P1000/.test(detail)) {
+  hint =
+    "  Hint (P1000): authentication failed - check the username/password in\n" +
+    "  TIDB_DATABASE_URL.\n";
+} else if (/P1003/.test(detail)) {
+  hint =
+    "  Hint (P1003): the database named in the URL does not exist on the\n" +
+    "  server - check the database name in TIDB_DATABASE_URL.\n";
+}
+
 console.error(
-  "\n[verify-tidb-schema] prisma migrate diff failed (exit " +
-    `${result.status}):\n${stderr || stdout || "unknown error"}\n`,
+  `\n[verify-tidb-schema] prisma migrate diff failed (exit ${run.status}${run.signal ? `, signal ${run.signal}` : ""}):\n` +
+    `${detail}\n${hint}`,
 );
 process.exit(1);

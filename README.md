@@ -93,6 +93,7 @@ inline. The migration `0001_init.sql` also inserts a seed admin
 | `bun run db:push:sqlite` | Push Prisma schema (SQLite dev) |
 | `bun run db:push:tidb` | Push Prisma schema (TiDB prod) — run from an **up-to-date checkout** |
 | `bun run db:verify:tidb` | **Verify** the live TiDB DB matches the current schema (exit 2 on drift) |
+| `bun run db:diagnose:tidb` | Check **every** configured MySQL url (env + .env) for drift — use when verify says IN SYNC but production still returns `DB_SCHEMA_DRIFT` |
 | `bun run db:generate:sqlite` | Regenerate Prisma client (SQLite) |
 | `bun run db:generate:tidb` | Regenerate Prisma client (TiDB) |
 

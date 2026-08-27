@@ -7,6 +7,11 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentAccount } from "@/lib/session";
 import { hasMinimumRole, type Role } from "@/lib/rbac";
 import { rateLimit } from "@/lib/rate-limit";
+import {
+  datasourceEnvMismatch,
+  describeMaskedTarget,
+  getMaskedDatabaseTarget,
+} from "@/lib/db-provider";
 
 export interface ApiAccount {
   id: string;
@@ -122,11 +127,23 @@ export function dbSchemaDrift(e?: unknown) {
     e && typeof e === "object" && "code" in e
       ? String((e as { code: unknown }).code)
       : "";
+  // Name the database this instance is ACTUALLY querying. When
+  // db:verify:tidb says IN SYNC but production still drifts, the local
+  // url and this target differ (wrong cluster / database / stale env
+  // var) - this line makes the mismatch visible in the Vercel log.
+  const target = describeMaskedTarget(getMaskedDatabaseTarget());
+  const mismatch = datasourceEnvMismatch()
+    ? " WARNING: TIDB_DATABASE_URL and DATABASE_URL are both set but DIFFER - " +
+      "the MySQL client uses TIDB_DATABASE_URL at runtime. Align them " +
+      "(Vercel -> Settings -> Environment Variables)."
+    : "";
   console.error(
     `[db] SCHEMA DRIFT (${errCode || "P202x"}): the live database is missing ` +
       `a table/column the application expects. Re-push the CURRENT schema ` +
       `(git pull && bun install && bun run db:push:tidb, then bun run ` +
-      `db:verify:tidb). Prisma says: ${errName} ${errMsg}`,
+      `db:verify:tidb). Prisma says: ${errName} ${errMsg}` +
+      ` | App datasource: ${target}${mismatch}` +
+      ` | Live column check: GET /api/admin/db-health (ADMIN).`,
   );
   return NextResponse.json(
     {
