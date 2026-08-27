@@ -4,7 +4,10 @@ import {
   badRequest,
   checkRateLimitByKey,
   conflict,
+  dbSchemaDrift,
+  dbUnavailable,
   forbidden,
+  isDbUnavailableError,
   notFound,
   parseBody,
   requireAuth,
@@ -13,7 +16,10 @@ import { overrideCertificateSchema } from "@/lib/validation";
 import { audit } from "@/lib/audit";
 import { notifyAttendance } from "@/lib/realtime";
 import { getEventTimeWindows } from "@/lib/event-time";
-import { isUniqueConstraintError } from "@/lib/prisma-errors";
+import {
+  isSchemaDriftError,
+  isUniqueConstraintError,
+} from "@/lib/prisma-errors";
 import { verifySignedOverrideCertificate } from "@/lib/device-key-server";
 import {
   validateOverrideTimestamp,
@@ -319,6 +325,13 @@ export async function POST(req: NextRequest) {
         "NOT_WHITELISTED",
       );
     }
+    // P2021/P2022 = the live DB is missing the attendance_overrides
+    // table or its v16 forensics columns (schema pushed from a stale
+    // checkout). Return a self-diagnosing 503 so the organizer sees an
+    // actionable message (and the offline queue surfaces it) instead of
+    // an opaque 500 loop.
+    if (isSchemaDriftError(e)) return dbSchemaDrift(e);
+    if (isDbUnavailableError(e)) return dbUnavailable(e);
     throw e;
   }
 
