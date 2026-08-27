@@ -103,12 +103,112 @@ const TABLES = [
 
 type ModelName = (typeof TABLES)[number];
 
-async function copyTable(
+// ---- Schema-drift detection (fail fast with the exact fix) ----
+// Both the source (Supabase Postgres) and the destination (TiDB) must
+// match THIS checkout's schemas, or a findMany/createMany on a drifted
+// table throws a scary P2021/P2022 stack mid-migration. These helpers
+// turn that into a targeted one-line instruction BEFORE anything is
+// copied (pre-flight) and, as defense in depth, at each table copy.
+
+interface DriftLikeError {
+  code?: string;
+  message?: string;
+  meta?: { column?: string; table?: string };
+}
+
+/** P2021 (table missing) / P2022 (column missing) classifier. */
+export function asDriftError(
+  e: unknown,
+): { kind: "P2021" | "P2022"; what: string } | null {
+  if (typeof e !== "object" || e === null) return null;
+  const err = e as DriftLikeError;
+  if (err.code === "P2021" || err.code === "P2022") {
+    const what =
+      err.meta?.column ??
+      err.meta?.table ??
+      (err.message ?? "").split("\n")[0] ??
+      "unknown";
+    return { kind: err.code, what };
+  }
+  return null;
+}
+
+function sourceDriftFix(): string {
+  return (
+    "Push the CURRENT Postgres schema to the SOURCE database first " +
+    "(runbook Phase 1 - docs/tidb-migration-runbook.md):\n" +
+    "  PowerShell:\n" +
+    '    $env:DATABASE_URL="<Supabase Postgres URL (session mode, port 5432, preferred)>"\n' +
+    "    npx --no-install prisma db push --schema=prisma/schema.prisma\n" +
+    "    Remove-Item Env:DATABASE_URL\n" +
+    "  bash:\n" +
+    '    DATABASE_URL="<Supabase Postgres URL>" \\\n' +
+    "      npx --no-install prisma db push --schema=prisma/schema.prisma"
+  );
+}
+
+function destDriftFix(): string {
+  return (
+    "Push the CURRENT TiDB schema to the DEST database first:\n" +
+    "  bun run db:push:tidb && bun run db:verify:tidb"
+  );
+}
+
+/**
+ * Verifies every table in TABLES can be read (findMany take:1 selects
+ * every scalar column, so any missing table/column throws). Exits with
+ * a targeted fix message on drift - BEFORE any data is copied.
+ */
+export async function preflightSchemaDrift(
+  client: { [k: string]: any },
+  label: "SOURCE" | "DEST",
+): Promise<void> {
+  console.log(
+    `Pre-flight: verifying the ${label} database matches the current schema ...`,
+  );
+  for (const name of TABLES) {
+    try {
+      await client[name].findMany({ take: 1 });
+    } catch (e) {
+      const drift = asDriftError(e);
+      if (!drift) throw e;
+      const fix = label === "SOURCE" ? sourceDriftFix() : destDriftFix();
+      console.error(
+        `\n[migrate] ${label} database is BEHIND the current schema: ` +
+          `${name} is missing ${drift.what} (${drift.kind}).\n\n${fix}\n\n` +
+          "Nothing has been copied yet. After the push, re-run: " +
+          "bun run migrate:tidb (the copy is idempotent).\n" +
+          "See docs/tidb-migration-runbook.md for the full procedure.\n",
+      );
+      process.exit(1);
+    }
+  }
+  console.log(
+    `  ${label}: schema OK (${TABLES.length} tables introspected cleanly)`,
+  );
+}
+
+export async function copyTable(
   source: { [k: string]: any },
   dest: { [k: string]: any },
   name: ModelName,
 ) {
-  const rows = await source[name].findMany();
+  let rows: any[];
+  try {
+    rows = await source[name].findMany();
+  } catch (e) {
+    const drift = asDriftError(e);
+    if (drift) {
+      console.error(
+        `\n[migrate] SOURCE drift on ${name} (missing ${drift.what}):\n\n` +
+          `${sourceDriftFix()}\n\n` +
+          "Tables copied before this one are safe - the copy is idempotent " +
+          "(skipDuplicates). Re-run after the push.\n",
+      );
+      process.exit(1);
+    }
+    throw e;
+  }
   if (rows.length === 0) {
     console.log(`  ${name}: 0 rows (skipped)`);
     return;
@@ -116,7 +216,21 @@ async function copyTable(
   // createMany with skipDuplicates makes the copy idempotent. Prisma's MySQL
   // adapter supports this; the composite @id/@unique constraints resolve
   // conflicts. BigInt/Decimal/DateTime values are serialized by Prisma.
-  await dest[name].createMany({ data: rows as never, skipDuplicates: true });
+  try {
+    await dest[name].createMany({ data: rows as never, skipDuplicates: true });
+  } catch (e) {
+    const drift = asDriftError(e);
+    if (drift) {
+      console.error(
+        `\n[migrate] DEST drift on ${name} (missing ${drift.what}):\n\n` +
+          `${destDriftFix()}\n\n` +
+          "Tables copied before this one are safe - the copy is idempotent " +
+          "(skipDuplicates). Re-run after the push.\n",
+      );
+      process.exit(1);
+    }
+    throw e;
+  }
   console.log(`  ${name}: ${rows.length} rows copied`);
 }
 
@@ -186,6 +300,15 @@ async function main() {
   console.log(
     `Dest:   TiDB/MySQL      (${tidbUrl.replace(/:[^:@]+@/, ":****@")})`,
   );
+
+  // Fail fast: verify BOTH databases match the current schemas BEFORE
+  // copying anything. A drifted SOURCE (Supabase behind the checkout - the
+  // classic "forgot Phase 1" case) or a drifted DEST (TiDB not pushed from
+  // this checkout) exits here with the exact fix command, instead of a
+  // P2022 stack dump halfway through the copy.
+  await preflightSchemaDrift(source, "SOURCE");
+  await preflightSchemaDrift(dest as unknown as { [k: string]: any }, "DEST");
+
   console.log("Copying tables in dependency order:");
 
   try {
@@ -199,7 +322,12 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error("Migration failed:", e);
-  process.exit(1);
-});
+// Run only when executed directly (`bun run scripts/migrate-to-tidb.ts`),
+// not when imported (tests import the exported helpers).
+const importMeta = import.meta as ImportMeta & { main?: boolean };
+if (importMeta.main ?? false) {
+  main().catch((e) => {
+    console.error("Migration failed:", e);
+    process.exit(1);
+  });
+}
