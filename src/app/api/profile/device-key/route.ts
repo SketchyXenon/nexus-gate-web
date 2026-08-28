@@ -1,21 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { registerDeviceKey, revokeDeviceKey } from "@/lib/device-key-server";
-import { badRequest, forbidden, notFound, parseBody, requireAuth } from "@/lib/api";
+import {
+  badRequest,
+  forbidden,
+  notFound,
+  parseBody,
+  requireAuth,
+} from "@/lib/api";
 import { audit } from "@/lib/audit";
 import { z } from "zod";
 
 // ====================================================================
-// POST /api/profile/device-key — register a device public key
+// POST /api/profile/device-key - register a device public key
 // --------------------------------------------------------------------
 // Called by the client after login (or on first scan) to register the
 // device's Ed25519 public key. The key is used to verify scan
 // certificate signatures.
 //
 // SECURITY (v8 hardening):
-//   - Validates the JWK shape (kty=OKP, crv=Ed25519, x=43-char base64url)
-//   - Computes the fingerprint SERVER-SIDE (client can't fake it)
-//   - Caps at 5 active devices per account (DoS defense)
+//  - Validates the JWK shape (kty=OKP, crv=Ed25519, x=43-char base64url)
+//  - Computes the fingerprint SERVER-SIDE (client can't fake it)
+//  - Caps at 5 active devices per account (DoS defense)
 // ====================================================================
 
 const MAX_DEVICES_PER_ACCOUNT = 5;
@@ -50,7 +56,10 @@ export async function POST(req: NextRequest) {
   const { computeFingerprint } = await import("@/lib/device-key-server");
   const expectedFingerprint = await computeFingerprint(publicKeyJwk);
   if (expectedFingerprint !== fingerprint) {
-    return badRequest("Fingerprint does not match the public key.", "FINGERPRINT_MISMATCH");
+    return badRequest(
+      "Fingerprint does not match the public key.",
+      "FINGERPRINT_MISMATCH",
+    );
   }
 
   // ---- DoS defense: cap active devices per account ----
@@ -60,7 +69,7 @@ export async function POST(req: NextRequest) {
   if (existingCount >= MAX_DEVICES_PER_ACCOUNT) {
     return forbidden(
       `Maximum ${MAX_DEVICES_PER_ACCOUNT} active devices per account. Revoke an old device first.`,
-      "DEVICE_LIMIT"
+      "DEVICE_LIMIT",
     );
   }
 
@@ -71,6 +80,29 @@ export async function POST(req: NextRequest) {
       fingerprint,
       label,
     });
+
+    // ---- TOCTOU-safe device cap (compensating action) ----
+    // The pre-check above (count >= 5) is a fast-path reject only. Two
+    // concurrent POSTs from the same account can both see count=4 and both
+    // create a key -> 6 active keys. A fresh re-count AFTER the create (this
+    // read sees all committed writes, including the concurrent one) catches
+    // the over-cap; we revoke the key we just created and return 403. Worst
+    // case: 1 transient excess key that is immediately revoked.
+    const activeCount = await db.deviceKey.count({
+      where: { accountId: account.id, revokedAt: null },
+    });
+    if (activeCount > MAX_DEVICES_PER_ACCOUNT) {
+      await db.deviceKey
+        .update({
+          where: { id: deviceKey.id },
+          data: { revokedAt: new Date() },
+        })
+        .catch(() => {});
+      return forbidden(
+        `Maximum ${MAX_DEVICES_PER_ACCOUNT} active devices per account. Revoke an old device first.`,
+        "DEVICE_LIMIT",
+      );
+    }
 
     await audit({
       actorId: account.id,
@@ -92,7 +124,7 @@ export async function POST(req: NextRequest) {
 }
 
 // ====================================================================
-// GET /api/profile/device-key — list this account's registered devices
+// GET /api/profile/device-key - list this account's registered devices
 // ====================================================================
 export async function GET(_req: NextRequest) {
   const res = await requireAuth();
@@ -119,7 +151,7 @@ export async function GET(_req: NextRequest) {
 }
 
 // ====================================================================
-// DELETE /api/profile/device-key?keyId=X — revoke a device key
+// DELETE /api/profile/device-key?keyId=X - revoke a device key
 // --------------------------------------------------------------------
 // Allows students to self-manage their 5-device cap by revoking old
 // devices they no longer use. Revoked keys can't sign new certificates.

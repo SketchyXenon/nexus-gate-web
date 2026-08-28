@@ -101,8 +101,38 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
       }
     }
 
-    // Delete the accounts row (cascades to attendance, overrides, tokens).
-    await db.account.delete({ where: { id } });
+    // ---- Last-admin guard (TOCTOU-safe) + DB delete ----
+    // Wrap the re-check + delete in a transaction. The pre-check above is
+    // a fast-path reject; this re-verifies inside the txn so that if the
+    // target was the last admin (snapshot drift or a concurrent demotion
+    // racing the pre-check), we roll back and return 403 instead of
+    // orphaning the system with zero admins.
+    //
+    // We deliberately run the Supabase Auth user-delete ABOVE (outside the
+    // txn) so the DB transaction isn't held open over a network call. If
+    // the DB delete below rolls back, the auth user is already gone — but
+    // the row survives and the admin can re-link via a fresh Supabase
+    // user. This matches the existing "log and continue" posture.
+    if (target.role === "ADMIN") {
+      try {
+        await db.$transaction(async (tx) => {
+          const remaining = await tx.account.count({
+            where: { role: "ADMIN", status: "ACTIVE" },
+          });
+          if (remaining <= 1) {
+            throw new Error("NG_LAST_ADMIN_VIOLATION");
+          }
+          await tx.account.delete({ where: { id } });
+        });
+      } catch (e) {
+        if (e instanceof Error && e.message === "NG_LAST_ADMIN_VIOLATION") {
+          return forbidden("Cannot delete the last administrator account.");
+        }
+        throw e;
+      }
+    } else {
+      await db.account.delete({ where: { id } });
+    }
 
     // Invalidate the session cache so the deleted user loses access
     // immediately instead of retaining it for up to the 30s cache TTL.

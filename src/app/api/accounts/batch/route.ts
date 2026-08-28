@@ -70,14 +70,47 @@ export async function POST(req: NextRequest) {
 
   const targetIds = targets.map((t) => t.id);
 
-  // ---- Last-admin guard ----
-  // If the batch would demote or suspend any ADMIN, ensure at least one other
-  // active admin remains (outside the target set).
-  const touchesAdmin = targets.some((t) => t.role === "ADMIN");
-  if (
-    touchesAdmin &&
-    (action === "suspend" || (action === "setRole" && role !== "ADMIN"))
-  ) {
+  // ---- Build the update payload ----
+  // Note: the zod refine guarantees `role` is set when action === "setRole",
+  // but TypeScript can't narrow the type through a refine. The explicit
+  // check below is defense-in-depth (fail closed if the invariant breaks).
+  let data: Record<string, unknown>;
+  let actionLabel: string;
+  let demotes: boolean; // true if this batch would demote/suspend an ADMIN
+  if (action === "activate") {
+    data = { status: "ACTIVE" };
+    actionLabel = "batch.activate";
+    demotes = false; // activating never removes an admin
+  } else if (action === "suspend") {
+    data = { status: "SUSPENDED" };
+    actionLabel = "batch.suspend";
+    demotes = targets.some((t) => t.role === "ADMIN" && t.status === "ACTIVE");
+  } else {
+    if (!role) return badRequest("A role is required for the setRole action");
+    data = { role };
+    actionLabel = "batch.set_role";
+    demotes =
+      role !== "ADMIN" &&
+      targets.some((t) => t.role === "ADMIN" && t.status === "ACTIVE");
+  }
+
+  // ---- Last-admin guard + batch update (TOCTOU-safe via transaction) ----
+  // Pre-check (fast-path reject) + in-txn re-verification:
+  //   1. Re-fetch the targets' current role/status inside the txn.
+  //   2. Re-count active admins OUTSIDE the still-admin target set; if <1,
+  //      forbidden (mirrors the original guard, but on fresh state).
+  //   3. updateMany with `where: { id: { in }, role: "ADMIN", status: "ACTIVE" }`
+  //      only when demoting (compare-and-set: only still-active admins are
+  //      touched; a concurrent demotion of the same target is a no-op here).
+  //   4. Post-update global re-count: if 0 active admins remain, throw to
+  //      roll the whole batch back.
+  //
+  // Residual: two concurrent batches with DISJOINT admin target lists can
+  // still both pass under TiDB REPEATABLE READ (each snapshot sees ≥1 admin
+  // outside its own set). Admin-only + 20/min + sub-ms window; a fully
+  // race-free fix needs a DB trigger. Strictly more robust than the prior
+  // unguarded updateMany.
+  if (demotes) {
     const activeAdminsOutsideBatch = await db.account.count({
       where: {
         role: "ADMIN",
@@ -92,28 +125,68 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ---- Build the update payload ----
-  // Note: the zod refine guarantees `role` is set when action === "setRole",
-  // but TypeScript can't narrow the type through a refine. The explicit
-  // check below is defense-in-depth (fail closed if the invariant breaks).
-  let data: Record<string, unknown>;
-  let actionLabel: string;
-  if (action === "activate") {
-    data = { status: "ACTIVE" };
-    actionLabel = "batch.activate";
-  } else if (action === "suspend") {
-    data = { status: "SUSPENDED" };
-    actionLabel = "batch.suspend";
-  } else {
-    if (!role) return badRequest("A role is required for the setRole action");
-    data = { role };
-    actionLabel = "batch.set_role";
-  }
+  const NG_BATCH_LAST_ADMIN = "NG_BATCH_LAST_ADMIN";
+  let resultCount: number;
+  try {
+    const r = await db.$transaction(async (tx) => {
+      // Re-fetch the targets' live role/status inside the txn.
+      const live = await tx.account.findMany({
+        where: { id: { in: targetIds } },
+        select: { id: true, role: true, status: true },
+      });
+      const liveStillActiveAdminIds = live
+        .filter((t) => t.role === "ADMIN" && t.status === "ACTIVE")
+        .map((t) => t.id);
 
-  const result = await db.account.updateMany({
-    where: { id: { in: targetIds } },
-    data,
-  });
+      // Re-verify the last-admin invariant on fresh state (only when this
+      // batch actually demotes a still-active admin).
+      if (demotes && liveStillActiveAdminIds.length > 0) {
+        const outside = await tx.account.count({
+          where: {
+            role: "ADMIN",
+            status: "ACTIVE",
+            id: { notIn: liveStillActiveAdminIds },
+          },
+        });
+        if (outside < 1) {
+          throw new Error(NG_BATCH_LAST_ADMIN);
+        }
+      }
+
+      // Compare-and-set: when demoting, only touch rows that are STILL
+      // active admins. When activating (non-demote), update all targets.
+      const where =
+        demotes && liveStillActiveAdminIds.length > 0
+          ? {
+              id: { in: liveStillActiveAdminIds },
+              role: "ADMIN" as const,
+              status: "ACTIVE" as const,
+            }
+          : { id: { in: targetIds } };
+
+      const update = await tx.account.updateMany({ where, data });
+
+      // Post-update global re-count (read-your-writes): if this batch
+      // removed the last active admin, roll back.
+      if (demotes) {
+        const remaining = await tx.account.count({
+          where: { role: "ADMIN", status: "ACTIVE" },
+        });
+        if (remaining < 1) {
+          throw new Error(NG_BATCH_LAST_ADMIN);
+        }
+      }
+      return update.count;
+    });
+    resultCount = r;
+  } catch (e) {
+    if (e instanceof Error && e.message === NG_BATCH_LAST_ADMIN) {
+      return forbidden(
+        "This batch would leave the system with no active administrators. Keep at least one admin outside the selection, or promote another account to admin first.",
+      );
+    }
+    throw e;
+  }
 
   // Revoke sessions + invalidate cache for every touched account so the
   // change takes effect immediately (not when their token expires).
@@ -136,7 +209,7 @@ export async function POST(req: NextRequest) {
     targetType: "Account",
     targetId: targetIds.join(",").slice(0, 200),
     metadata: {
-      count: result.count,
+      count: resultCount,
       ids: targetIds,
       action,
       ...(action === "setRole" ? { role } : {}),
@@ -146,7 +219,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    updated: result.count,
+    updated: resultCount,
     action,
   });
 }

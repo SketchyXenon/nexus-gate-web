@@ -17,6 +17,29 @@ import {
 
 type Ctx = { params: Promise<{ id: string }> };
 
+// Select shape used by every branch (demotion + plain update).
+const ACCOUNT_SELECT = {
+  id: true,
+  email: true,
+  fullName: true,
+  role: true,
+  status: true,
+  studentId: true,
+  program: true,
+  section: true,
+  year: true,
+  organizationName: true,
+  lastLoginAt: true,
+  createdAt: true,
+  supabaseAuthUid: true,
+} as const;
+
+// Sentinel thrown inside the demotion transaction when the in-txn re-count
+// detects the update would leave zero active admins. Caught at the boundary
+// to convert into a clean 403 + rollback (compare-and-set on the global
+// invariant; per 06-security-architecture.md §2 TOCTOU defense).
+const LAST_ADMIN_VIOLATION = "NG_LAST_ADMIN_VIOLATION";
+
 // PATCH /api/accounts/[id] (ADMIN)
 export async function PATCH(req: NextRequest, { params }: Ctx) {
   const res = await requireAuth("ADMIN");
@@ -31,7 +54,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 
   const target = await db.account.findUnique({
     where: { id },
-    select: { id: true, email: true, role: true },
+    select: { id: true, email: true, role: true, status: true },
   });
   if (!target) return notFound("Account not found");
 
@@ -44,67 +67,148 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     }
   }
 
-  // ---- Last-admin guard: prevent demoting/suspending the last ADMIN ----
-  if (
+  // Build the update payload once (shared by both branches).
+  const data: Record<string, unknown> = {
+    ...(parsed.data.role ? { role: parsed.data.role } : {}),
+    ...(parsed.data.status ? { status: parsed.data.status } : {}),
+    ...(parsed.data.fullName ? { fullName: parsed.data.fullName } : {}),
+    ...(parsed.data.email ? { email: parsed.data.email } : {}),
+    ...(parsed.data.program !== undefined
+      ? { program: parsed.data.program }
+      : {}),
+    ...(parsed.data.section !== undefined
+      ? { section: parsed.data.section }
+      : {}),
+    ...(parsed.data.year !== undefined ? { year: parsed.data.year } : {}),
+    ...(parsed.data.organizationName !== undefined
+      ? { organizationName: parsed.data.organizationName }
+      : {}),
+  };
+
+  // ---- Last-admin guard (TOCTOU-safe) ----
+  // The demotion branch (ADMIN -> non-ADMIN, or ACTIVE -> non-ACTIVE) is
+  // wrapped in a transaction. Inside the txn we:
+  //   1. Re-check email conflict (atomic with the demotion).
+  //   2. updateMany with `where: { id, role: "ADMIN", status: "ACTIVE" }`
+  //      (compare-and-set on the target row -> closes the same-target race:
+  //      if another request already demoted this account, count=0 and we
+  //      surface a clean 409 instead of a stale overwrite).
+  //   3. Re-count active admins INSIDE the txn (read-your-writes): if THIS
+  //      update leaves 0, throw LAST_ADMIN_VIOLATION -> the txn rolls back.
+  //
+  // Residual: two concurrent demotions of the last TWO DIFFERENT admins can
+  // still both pass under TiDB REPEATABLE READ (each snapshot sees 2). This
+  // is an admin-only, rate-limited (20/min), sub-ms window; a fully race-free
+  // fix needs a DB trigger (noted in the worklog). This is strictly more
+  // robust than the prior unguarded `update`.
+  const demotingAdmin =
     target.role === "ADMIN" &&
     ((parsed.data.role && parsed.data.role !== "ADMIN") ||
-      (parsed.data.status && parsed.data.status !== "ACTIVE"))
-  ) {
-    const adminCount = await db.account.count({
-      where: { role: "ADMIN", status: "ACTIVE" },
-    });
-    if (adminCount <= 1) {
+      (parsed.data.status && parsed.data.status !== "ACTIVE"));
+
+  let updated: {
+    id: string;
+    email: string;
+    fullName: string;
+    role: string;
+    status: string;
+    studentId: number | null;
+    program: string | null;
+    section: string | null;
+    year: number | null;
+    organizationName: string | null;
+    lastLoginAt: Date | null;
+    createdAt: Date;
+    supabaseAuthUid: string | null;
+  };
+
+  if (demotingAdmin) {
+    type TxRes =
+      | { kind: "ok"; updated: typeof updated }
+      | { kind: "already_changed" }
+      | { kind: "email_taken" }
+      | { kind: "forbidden" };
+
+    const txRes = await db
+      .$transaction(async (tx) => {
+        // 1. Email conflict re-check inside the txn (if email is changing).
+        if (parsed.data.email && parsed.data.email !== target.email) {
+          const conflict = await tx.account.findUnique({
+            where: { email: parsed.data.email },
+            select: { id: true },
+          });
+          if (conflict) return { kind: "email_taken" as const } satisfies TxRes;
+        }
+        // 2. Compare-and-set: only update if the target is STILL an active
+        //    admin. count=0 means another request already changed it.
+        const result = await tx.account.updateMany({
+          where: { id, role: "ADMIN", status: "ACTIVE" },
+          data,
+        });
+        if (result.count === 0) {
+          return { kind: "already_changed" as const } satisfies TxRes;
+        }
+        // 3. In-txn re-count (read-your-writes): rollback if we just broke
+        //    the invariant. Catches the case where the pre-check saw 2 but
+        //    the target was the only admin (snapshot drift) — same-target
+        //    race is already closed by the compare-and-set above.
+        const remaining = await tx.account.count({
+          where: { role: "ADMIN", status: "ACTIVE" },
+        });
+        if (remaining < 1) {
+          throw new Error(LAST_ADMIN_VIOLATION);
+        }
+        const upd = (await tx.account.findUnique({
+          where: { id },
+          select: ACCOUNT_SELECT,
+        })) as typeof updated | null;
+        if (!upd) return { kind: "already_changed" as const } satisfies TxRes;
+        return { kind: "ok" as const, updated: upd } satisfies TxRes;
+      })
+      .catch((e: unknown): TxRes => {
+        if (e instanceof Error && e.message === LAST_ADMIN_VIOLATION) {
+          return { kind: "forbidden" };
+        }
+        throw e;
+      });
+
+    if (txRes.kind === "forbidden") {
       return forbidden(
         "Cannot demote or suspend the last administrator account.",
       );
     }
-  }
-
-  // Check for email conflict if email is being changed
-  if (parsed.data.email && parsed.data.email !== target.email) {
-    const emailExists = await db.account.findUnique({
-      where: { email: parsed.data.email },
-      select: { id: true },
-    });
-    if (emailExists) {
+    if (txRes.kind === "already_changed") {
+      return NextResponse.json(
+        {
+          error:
+            "This account's role or status just changed. Please refresh and try again.",
+          code: "ACCOUNT_STATE_CHANGED",
+        },
+        { status: 409 },
+      );
+    }
+    if (txRes.kind === "email_taken") {
       return badRequest("This email is already in use.", "EMAIL_TAKEN");
     }
+    updated = txRes.updated;
+  } else {
+    // Non-demotion branch: no invariant to protect; keep the simple update
+    // + the existing email-conflict pre-check.
+    if (parsed.data.email && parsed.data.email !== target.email) {
+      const emailExists = await db.account.findUnique({
+        where: { email: parsed.data.email },
+        select: { id: true },
+      });
+      if (emailExists) {
+        return badRequest("This email is already in use.", "EMAIL_TAKEN");
+      }
+    }
+    updated = (await db.account.update({
+      where: { id },
+      data,
+      select: ACCOUNT_SELECT,
+    })) as typeof updated;
   }
-
-  const updated = await db.account.update({
-    where: { id },
-    data: {
-      ...(parsed.data.role ? { role: parsed.data.role } : {}),
-      ...(parsed.data.status ? { status: parsed.data.status } : {}),
-      ...(parsed.data.fullName ? { fullName: parsed.data.fullName } : {}),
-      ...(parsed.data.email ? { email: parsed.data.email } : {}),
-      ...(parsed.data.program !== undefined
-        ? { program: parsed.data.program }
-        : {}),
-      ...(parsed.data.section !== undefined
-        ? { section: parsed.data.section }
-        : {}),
-      ...(parsed.data.year !== undefined ? { year: parsed.data.year } : {}),
-      ...(parsed.data.organizationName !== undefined
-        ? { organizationName: parsed.data.organizationName }
-        : {}),
-    },
-    select: {
-      id: true,
-      email: true,
-      fullName: true,
-      role: true,
-      status: true,
-      studentId: true,
-      program: true,
-      section: true,
-      year: true,
-      organizationName: true,
-      lastLoginAt: true,
-      createdAt: true,
-      supabaseAuthUid: true,
-    },
-  });
 
   // If role or status changed, revoke all sessions for that account
   if (parsed.data.role || parsed.data.status) {
@@ -119,14 +223,11 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   }
 
   // Strip the internal Supabase Auth UID from the response (H4 leak).
-  // It's an internal architecture detail not needed by the admin UI.
   const { supabaseAuthUid: _omit, ...safeResponse } = updated as {
     supabaseAuthUid?: string;
   };
 
   // If email changed, sync to Supabase Auth so login uses the new email.
-  // Without this, the DB and auth layer diverge (user must log in with the
-  // OLD email, and re-registration with the new email fails).
   if (
     parsed.data.email &&
     parsed.data.email !== target.email &&
@@ -146,8 +247,6 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
           "uid:",
           updated.supabaseAuthUid,
         );
-        // Don't fail the whole request - the DB row is updated. The admin
-        // can re-sync via the Supabase dashboard if needed.
       }
     } catch (e) {
       console.error(

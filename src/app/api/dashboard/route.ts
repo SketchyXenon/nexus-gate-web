@@ -173,16 +173,22 @@ export async function GET(_req: NextRequest) {
     }
   }
 
-  const programGroups = await db.authorizedStudent.groupBy({
-    by: ["program"],
-    where: rosterWhere,
-    _count: true,
-  });
-  const sectionGroups = await db.authorizedStudent.groupBy({
-    by: ["program", "section"],
-    where: rosterWhere,
-    _count: true,
-  });
+  // Per 02-system-design.md §5 "Scalability": parallelize independent
+  // queries. The program + section groupBys are independent of each other
+  // (both read the same roster) — running them concurrently saves 1 DB
+  // round-trip per dashboard load.
+  const [programGroups, sectionGroups] = await Promise.all([
+    db.authorizedStudent.groupBy({
+      by: ["program"],
+      where: rosterWhere,
+      _count: true,
+    }),
+    db.authorizedStudent.groupBy({
+      by: ["program", "section"],
+      where: rosterWhere,
+      _count: true,
+    }),
+  ]);
   const programCounts: Record<string, number> = {};
   for (const g of programGroups) {
     programCounts[g.program] = g._count;

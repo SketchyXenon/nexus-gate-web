@@ -595,6 +595,15 @@ function AuthScreen({
             title: "Welcome back!",
             description: "Loading your dashboard...",
           });
+          // Hard reload so page.tsx re-runs useMe() with the new
+          // session cookies (Supabase session + ng_sess marker) in
+          // place, rendering AppShell. Mirrors the MFA-verify path
+          // (below) and the passkey sign-in path. The reload is the
+          // robust guarantee: the useLogin mutation's global onSuccess
+          // also invalidates the "me" query, but a hard reload
+          // supersedes any React Query refetch-timing fragility and
+          // guarantees the dashboard renders with fresh cookies.
+          window.location.reload();
         },
         onError: (err) => {
           toast({

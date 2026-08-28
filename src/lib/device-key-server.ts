@@ -7,6 +7,7 @@
 
 import { db } from "@/lib/db";
 import { createPublicKey, createHash } from "crypto";
+import { isUniqueConstraintError } from "@/lib/prisma-errors";
 import type {
   ScanCertificate,
   SignedCertificate,
@@ -98,7 +99,9 @@ export async function registerDeviceKey(params: {
     });
   } catch (e) {
     // P2002 = unique constraint violation. Re-fetch the existing key.
-    if (e instanceof Error && e.message.includes("Unique constraint")) {
+    // Uses the stable isUniqueConstraintError helper (S6 pattern) instead of
+    // the fragile `e.message.includes("Unique constraint")` string match.
+    if (isUniqueConstraintError(e)) {
       const rechecked = await db.deviceKey.findUnique({
         where: { fingerprint: params.fingerprint },
       });

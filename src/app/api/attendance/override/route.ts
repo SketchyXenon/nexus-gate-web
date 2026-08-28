@@ -200,9 +200,17 @@ export async function POST(req: NextRequest) {
   // and then die with an unhandled P2003 FK violation -> 500. Require the
   // whitelist row up front (clean 400) and keep the account lookup for the
   // attendance upsert (attendance is keyed by accountId, not studentId).
-  const student = await db.authorizedStudent.findUnique({
-    where: { studentId: cert.studentId },
-  });
+  //
+  // Per 02-system-design.md §5: both lookups are keyed by studentId and are
+  // independent — fetch them concurrently to save 1 round-trip per override.
+  const [student, studentAccount] = await Promise.all([
+    db.authorizedStudent.findUnique({
+      where: { studentId: cert.studentId },
+    }),
+    db.account.findUnique({
+      where: { studentId: cert.studentId },
+    }),
+  ]);
   if (!student) {
     return badRequest(
       "This student is not on the approved list for this event.",
@@ -211,10 +219,6 @@ export async function POST(req: NextRequest) {
   }
   const studentProgram: string | null = student.program;
   const studentSection: string | null = student.section;
-
-  const studentAccount = await db.account.findUnique({
-    where: { studentId: cert.studentId },
-  });
 
   // Strict program/section match against the event's targeting.
   if (event.targetProgram && studentProgram !== event.targetProgram) {

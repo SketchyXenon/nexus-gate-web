@@ -110,21 +110,40 @@ export async function POST(req: NextRequest) {
 
   // Generate the one-time backup codes. Hashes are persisted; plaintext
   // is returned exactly once.
+  //
+  // TOCTOU-safe (compare-and-set): `updateMany` with `where: { mfaEnabled:
+  // false }` ensures only the FIRST of two concurrent verifies actually
+  // flips the flag + persists backup codes. The second sees count=0 and we
+  // return the same 409 "already enabled" as the early-return above — its
+  // freshly-generated plaintext codes are discarded (never persisted, never
+  // returned), so no orphaned backup-code set exists for the user to save.
   const { plaintext, hashes } = generateBackupCodes();
   const now = new Date();
   try {
-    const updated = await db.account.update({
-      where: { id: account.id },
+    const result = await db.account.updateMany({
+      where: { id: account.id, mfaEnabled: false },
       data: {
         mfaEnabled: true,
         mfaEnabledAt: now,
         mfaBackupCodesHash: JSON.stringify(hashes),
       },
-      select: { supabaseAuthUid: true },
     });
-    if (updated.supabaseAuthUid) {
-      invalidateAccountCache(updated.supabaseAuthUid);
+    if (result.count === 0) {
+      // Another concurrent verify already enabled MFA between our
+      // findUnique and this update. Surface the same 409 (the early
+      // return above covers the common path; this covers the race).
+      return NextResponse.json(
+        {
+          error: "MFA is already enabled for this account.",
+          code: "MFA_ALREADY_ENABLED",
+        },
+        { status: 409 },
+      );
     }
+    // Cache invalidation: the account cache was populated with
+    // mfaEnabled=false; flip it now so the MFA gate applies on the next
+    // request without waiting for the 30s TTL.
+    invalidateAccountCache(account.id);
   } catch (e) {
     if (
       typeof e === "object" &&

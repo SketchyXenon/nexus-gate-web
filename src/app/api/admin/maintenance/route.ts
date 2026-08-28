@@ -42,30 +42,33 @@ export async function POST(req: NextRequest) {
   }
   const { enabled, message } = parsed.data;
 
-  // Upsert the maintenance_mode flag. SQLite doesn't have a native
-  // upsert helper for the String-id Setting table, so we use the
-  // Prisma upsert primitive on the key.
-  await db.setting.upsert({
-    where: { key: "maintenance_mode" },
-    create: { key: "maintenance_mode", value: enabled ? "true" : "false" },
-    update: { value: enabled ? "true" : "false" },
-  });
-
-  // Only persist a message if one was provided. We don't clear an
-  // existing message when disabling - the admin may toggle back on
-  // and want the same notice reused.
-  let finalMessage: string | null = null;
+  // Per 02-system-design.md §5 "Scalability": the two Setting rows
+  // (maintenance_mode + maintenance_message) are independent (different
+  // keys) — run them in parallel to save 1 DB round-trip per toggle.
+  let finalMessage: string | null;
   if (message !== undefined) {
-    await db.setting.upsert({
-      where: { key: "maintenance_message" },
-      create: { key: "maintenance_message", value: message },
-      update: { value: message },
-    });
+    await Promise.all([
+      db.setting.upsert({
+        where: { key: "maintenance_mode" },
+        create: { key: "maintenance_mode", value: enabled ? "true" : "false" },
+        update: { value: enabled ? "true" : "false" },
+      }),
+      db.setting.upsert({
+        where: { key: "maintenance_message" },
+        create: { key: "maintenance_message", value: message },
+        update: { value: message },
+      }),
+    ]);
     finalMessage = message;
   } else {
-    const existing = await db.setting.findUnique({
-      where: { key: "maintenance_message" },
-    });
+    const [, existing] = await Promise.all([
+      db.setting.upsert({
+        where: { key: "maintenance_mode" },
+        create: { key: "maintenance_mode", value: enabled ? "true" : "false" },
+        update: { value: enabled ? "true" : "false" },
+      }),
+      db.setting.findUnique({ where: { key: "maintenance_message" } }),
+    ]);
     finalMessage = existing?.value ?? null;
   }
 

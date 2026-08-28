@@ -212,7 +212,23 @@ export const useLogin = () => {
     onSuccess: (data) => {
       // Don't invalidate "me" when MFA is pending - the user isn't
       // authed yet. The login-verify route's onSuccess will do it.
-      if (data && typeof data === "object" && "status" in data) return;
+      //
+      // IMPORTANT: check the SPECIFIC value `data.status === "mfa_required"`,
+      // NOT just `"status" in data`. The successful login payload is a full
+      // Account, which ALSO carries a `status` field (account.status, e.g.
+      // "ACTIVE"). The old `"status" in data` guard matched BOTH responses,
+      // so it skipped this invalidation on every non-MFA login - leaving the
+      // UI on the login screen after a correct password (no refetch of
+      // /api/auth/me, no transition to AppShell). Account.status is one of
+      // PENDING_VERIFICATION|ACTIVE|SUSPENDED|DEACTIVATED, never
+      // "mfa_required", so the value check is a safe discriminator.
+      if (
+        data &&
+        typeof data === "object" &&
+        "status" in data &&
+        data.status === "mfa_required"
+      )
+        return;
       qc.invalidateQueries({ queryKey: ["me"] });
     },
   });
