@@ -336,480 +336,495 @@ export function EventsView() {
     sortBy !== SORT_NEWEST;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-3">
-      {/* ----------------------------- Create form ----------------------------- */}
-      <Card className="lg:col-span-1 h-fit lg:sticky lg:top-6">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Plus className="h-5 w-5 text-primary" />
-            Add a new event
-          </CardTitle>
-          <CardDescription>
-            Schedule a class, exam, or assembly.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={submit} className="space-y-3" noValidate>
-            <div className="space-y-1.5">
-              <Label htmlFor="title">Title</Label>
-              <Input
-                id="title"
-                placeholder="CS 101 - Data Structures"
-                value={title}
-                onChange={(e) => {
-                  setTitle(e.target.value);
-                  if (errors.title)
-                    setErrors((p) => ({ ...p, title: undefined }));
-                }}
-                aria-invalid={!!errors.title}
-              />
-              {errors.title && (
-                <p className="text-xs text-destructive">{errors.title}</p>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="description">Description</Label>
-              <Textarea
-                id="description"
-                placeholder="Optional"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={2}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Scope</Label>
-              <Select
-                value={effectiveScope}
-                onValueChange={(v) => setScope(v as typeof scope)}
-                disabled={isOrganizer}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="academic">
-                    <span className="flex items-center gap-2">
-                      <GraduationCap className="h-4 w-4" /> One class or section
-                    </span>
-                  </SelectItem>
-                  {!isOrganizer && (
-                    <SelectItem value="departmental">
-                      <span className="flex items-center gap-2">
-                        <Globe className="h-4 w-4" /> Whole department
-                      </span>
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-              {isOrganizer && (
-                <p className="text-[10px] text-muted-foreground">
-                  Organizers are limited to their own program
-                  {organizerProgram ? ` (${organizerProgram})` : ""}.
-                  Department-wide events require an administrator.
-                </p>
-              )}
-            </div>
-
-            {/* Program + Section - Section only appears when a program is
-                selected AND scope is "academic". Departmental events clear
-                program/section, so the Section field is hidden in that case. */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+    <div className="space-y-6">
+      {/* Top row: sticky create form + events list. The Past events section
+          is intentionally rendered OUTSIDE this grid so the sticky Create
+          form is constrained to this row only - otherwise it would stick
+          down and overlap the Past events card when scrolling. */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* ----------------------------- Create form ----------------------------- */}
+        <Card className="lg:col-span-1 h-fit lg:sticky lg:top-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Plus className="h-5 w-5 text-primary" />
+              Add a new event
+            </CardTitle>
+            <CardDescription>
+              Schedule a class, exam, or assembly.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={submit} className="space-y-3" noValidate>
               <div className="space-y-1.5">
-                <Label htmlFor="targetProgram">Program</Label>
-                <Select
-                  value={effectiveProgram}
-                  onValueChange={(v) => {
-                    setTargetProgram(v);
-                    // Clear section if user switches back to "all programs"
-                    if (v === "__all__") setTargetSection("");
-                  }}
-                  disabled={isOrganizer || scope === "departmental"}
-                >
-                  <SelectTrigger className="w-full" aria-label="Target program">
-                    <SelectValue placeholder="All programs" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {!isOrganizer && (
-                      <SelectItem value="__all__">All programs</SelectItem>
-                    )}
-                    {PROGRAMS.map((p) => (
-                      <SelectItem key={p.code} value={p.code}>
-                        {p.code} - {p.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {showSectionField && (
-                <div className="space-y-1.5">
-                  <Label htmlFor="targetSection">
-                    Section
-                    <span className="text-xs font-normal text-muted-foreground ml-1">
-                      (optional)
-                    </span>
-                  </Label>
-                  <Input
-                    id="targetSection"
-                    placeholder="e.g. 1-A"
-                    value={targetSection}
-                    onChange={(e) => setTargetSection(e.target.value)}
-                    maxLength={10}
-                  />
-                  <p className="text-[10px] text-muted-foreground">
-                    Leave blank to target all sections in this program.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Date + Time - separate fields for clarity */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="eventDate">Date</Label>
+                <Label htmlFor="title">Title</Label>
                 <Input
-                  id="eventDate"
-                  type="date"
-                  value={eventDate}
+                  id="title"
+                  placeholder="CS 101 - Data Structures"
+                  value={title}
                   onChange={(e) => {
-                    setEventDate(e.target.value);
-                    if (errors.scheduledAt)
-                      setErrors((p) => ({ ...p, scheduledAt: undefined }));
+                    setTitle(e.target.value);
+                    if (errors.title)
+                      setErrors((p) => ({ ...p, title: undefined }));
                   }}
-                  aria-invalid={!!errors.scheduledAt}
+                  aria-invalid={!!errors.title}
                 />
-                {errors.scheduledAt && (
-                  <p className="text-xs text-destructive">
-                    {errors.scheduledAt}
-                  </p>
+                {errors.title && (
+                  <p className="text-xs text-destructive">{errors.title}</p>
                 )}
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="eventTime">Start time</Label>
-                <Input
-                  id="eventTime"
-                  type="time"
-                  value={eventTime}
-                  onChange={(e) => setEventTime(e.target.value)}
+                <Label htmlFor="description">Description</Label>
+                <Textarea
+                  id="description"
+                  placeholder="Optional"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={2}
                 />
               </div>
-            </div>
+              <div className="space-y-1.5">
+                <Label>Scope</Label>
+                <Select
+                  value={effectiveScope}
+                  onValueChange={(v) => setScope(v as typeof scope)}
+                  disabled={isOrganizer}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="academic">
+                      <span className="flex items-center gap-2">
+                        <GraduationCap className="h-4 w-4" /> One class or
+                        section
+                      </span>
+                    </SelectItem>
+                    {!isOrganizer && (
+                      <SelectItem value="departmental">
+                        <span className="flex items-center gap-2">
+                          <Globe className="h-4 w-4" /> Whole department
+                        </span>
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                {isOrganizer && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Organizers are limited to their own program
+                    {organizerProgram ? ` (${organizerProgram})` : ""}.
+                    Department-wide events require an administrator.
+                  </p>
+                )}
+              </div>
 
-            {/* Check-in window - time only (uses event date) */}
-            <div className="space-y-2 rounded-lg border border-border/50 p-3 bg-muted/20">
-              <p className="text-xs font-medium text-muted-foreground">
-                Check-in window (optional)
-              </p>
+              {/* Program + Section - Section only appears when a program is
+                selected AND scope is "academic". Departmental events clear
+                program/section, so the Section field is hidden in that case. */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label htmlFor="ciOpens" className="text-[11px]">
-                    Opens at
-                  </Label>
-                  <Input
-                    id="ciOpens"
-                    type="time"
-                    value={checkInOpensTime}
-                    onChange={(e) => setCheckInOpensTime(e.target.value)}
-                    className="text-xs"
-                    placeholder="e.g. 08:00"
-                  />
+                <div className="space-y-1.5">
+                  <Label htmlFor="targetProgram">Program</Label>
+                  <Select
+                    value={effectiveProgram}
+                    onValueChange={(v) => {
+                      setTargetProgram(v);
+                      // Clear section if user switches back to "all programs"
+                      if (v === "__all__") setTargetSection("");
+                    }}
+                    disabled={isOrganizer || scope === "departmental"}
+                  >
+                    <SelectTrigger
+                      className="w-full"
+                      aria-label="Target program"
+                    >
+                      <SelectValue placeholder="All programs" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {!isOrganizer && (
+                        <SelectItem value="__all__">All programs</SelectItem>
+                      )}
+                      {PROGRAMS.map((p) => (
+                        <SelectItem key={p.code} value={p.code}>
+                          {p.code} - {p.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div className="space-y-1">
-                  <Label htmlFor="ciCloses" className="text-[11px]">
-                    Closes at
-                  </Label>
-                  <Input
-                    id="ciCloses"
-                    type="time"
-                    value={checkInClosesTime}
-                    onChange={(e) => setCheckInClosesTime(e.target.value)}
-                    className="text-xs"
-                    placeholder="e.g. 12:00"
-                  />
-                </div>
+                {showSectionField && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="targetSection">
+                      Section
+                      <span className="text-xs font-normal text-muted-foreground ml-1">
+                        (optional)
+                      </span>
+                    </Label>
+                    <Input
+                      id="targetSection"
+                      placeholder="e.g. 1-A"
+                      value={targetSection}
+                      onChange={(e) => setTargetSection(e.target.value)}
+                      maxLength={10}
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      Leave blank to target all sections in this program.
+                    </p>
+                  </div>
+                )}
               </div>
-              <p className="text-[10px] text-muted-foreground">
-                Leave blank for defaults.
-              </p>
-            </div>
 
-            {/* Time-out toggle + window */}
-            <label className="flex items-center gap-3 p-3 rounded-lg border border-border/50 bg-muted/20 cursor-pointer hover:bg-muted/40 transition-colors">
-              <input
-                type="checkbox"
-                checked={enableTimeOut}
-                onChange={(e) => setEnableTimeOut(e.target.checked)}
-                className="h-4 w-4 rounded accent-primary"
-              />
-              <div className="flex-1 flex items-center gap-1.5">
-                <p className="text-sm font-medium">Time-out mode</p>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    Students scan again to check out (e.g. 4:00 PM - 6:00 PM)
-                  </TooltipContent>
-                </Tooltip>
+              {/* Date + Time - separate fields for clarity */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="eventDate">Date</Label>
+                  <Input
+                    id="eventDate"
+                    type="date"
+                    value={eventDate}
+                    onChange={(e) => {
+                      setEventDate(e.target.value);
+                      if (errors.scheduledAt)
+                        setErrors((p) => ({ ...p, scheduledAt: undefined }));
+                    }}
+                    aria-invalid={!!errors.scheduledAt}
+                  />
+                  {errors.scheduledAt && (
+                    <p className="text-xs text-destructive">
+                      {errors.scheduledAt}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="eventTime">Start time</Label>
+                  <Input
+                    id="eventTime"
+                    type="time"
+                    value={eventTime}
+                    onChange={(e) => setEventTime(e.target.value)}
+                  />
+                </div>
               </div>
-            </label>
-            {enableTimeOut && (
+
+              {/* Check-in window - time only (uses event date) */}
               <div className="space-y-2 rounded-lg border border-border/50 p-3 bg-muted/20">
                 <p className="text-xs font-medium text-muted-foreground">
-                  Time-out window
+                  Check-in window (optional)
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div className="space-y-1">
-                    <Label htmlFor="toOpens" className="text-[11px]">
+                    <Label htmlFor="ciOpens" className="text-[11px]">
                       Opens at
                     </Label>
                     <Input
-                      id="toOpens"
+                      id="ciOpens"
                       type="time"
-                      value={timeOutOpensTime}
-                      onChange={(e) => setTimeOutOpensTime(e.target.value)}
+                      value={checkInOpensTime}
+                      onChange={(e) => setCheckInOpensTime(e.target.value)}
                       className="text-xs"
-                      placeholder="e.g. 16:00"
+                      placeholder="e.g. 08:00"
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label htmlFor="toCloses" className="text-[11px]">
+                    <Label htmlFor="ciCloses" className="text-[11px]">
                       Closes at
                     </Label>
                     <Input
-                      id="toCloses"
+                      id="ciCloses"
                       type="time"
-                      value={timeOutClosesTime}
-                      onChange={(e) => setTimeOutClosesTime(e.target.value)}
+                      value={checkInClosesTime}
+                      onChange={(e) => setCheckInClosesTime(e.target.value)}
                       className="text-xs"
-                      placeholder="e.g. 18:00"
+                      placeholder="e.g. 12:00"
                     />
                   </div>
                 </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Leave blank for defaults.
+                </p>
               </div>
-            )}
 
-            {/* QR delegation toggle - lets other organizers in the same
-                program project this event's QR code. Only available for
-                program-wide events (no section); department-wide and
-                section-specific events are never delegatable. */}
-            <div
-              className={`flex items-start gap-2 rounded-lg border border-border/50 p-3 bg-muted/20 ${
-                delegationDisabled ? "opacity-50" : ""
-              }`}
-            >
-              <Checkbox
-                id="delegatable"
-                checked={delegatable && !delegationDisabled}
-                onCheckedChange={(v) => setDelegatable(v === true)}
-                disabled={delegationDisabled}
-              />
-              <div className="space-y-0.5">
-                <Label
-                  htmlFor="delegatable"
-                  className="cursor-pointer text-sm flex items-center gap-1.5"
-                >
-                  Allow QR delegation
+              {/* Time-out toggle + window */}
+              <label className="flex items-center gap-3 p-3 rounded-lg border border-border/50 bg-muted/20 cursor-pointer hover:bg-muted/40 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={enableTimeOut}
+                  onChange={(e) => setEnableTimeOut(e.target.checked)}
+                  className="h-4 w-4 rounded accent-primary"
+                />
+                <div className="flex-1 flex items-center gap-1.5">
+                  <p className="text-sm font-medium">Time-out mode</p>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
                     </TooltipTrigger>
                     <TooltipContent>
-                      {delegationDisabled
-                        ? "Delegation is only available for program-wide events (no section). Clear the section field to enable it."
-                        : "Other organizers in this program can project this event's QR if you're absent (program-wide events only)"}
+                      Students scan again to check out (e.g. 4:00 PM - 6:00 PM)
                     </TooltipContent>
                   </Tooltip>
-                </Label>
-                {delegationDisabled && (
-                  <p className="text-[10px] text-muted-foreground">
-                    {effectiveScope === "departmental"
-                      ? "Department-wide events cannot be delegated."
-                      : "Section-specific events cannot be delegated - clear the section to enable."}
+                </div>
+              </label>
+              {enableTimeOut && (
+                <div className="space-y-2 rounded-lg border border-border/50 p-3 bg-muted/20">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Time-out window
                   </p>
-                )}
-              </div>
-            </div>
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={create.isPending}
-            >
-              {create.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Plus className="h-4 w-4" />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label htmlFor="toOpens" className="text-[11px]">
+                        Opens at
+                      </Label>
+                      <Input
+                        id="toOpens"
+                        type="time"
+                        value={timeOutOpensTime}
+                        onChange={(e) => setTimeOutOpensTime(e.target.value)}
+                        className="text-xs"
+                        placeholder="e.g. 16:00"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="toCloses" className="text-[11px]">
+                        Closes at
+                      </Label>
+                      <Input
+                        id="toCloses"
+                        type="time"
+                        value={timeOutClosesTime}
+                        onChange={(e) => setTimeOutClosesTime(e.target.value)}
+                        className="text-xs"
+                        placeholder="e.g. 18:00"
+                      />
+                    </div>
+                  </div>
+                </div>
               )}
-              Create event
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
 
-      {/* ---------------------- Events list + toolbar ---------------------- */}
-      <div className="lg:col-span-2 space-y-4">
-        {/* Toolbar: search + filters + sort */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-              <CalendarDays className="h-5 w-5 text-primary" />
-              All events
-              <Badge variant="secondary" className="ml-1 tabular-nums">
-                {events.length}
-              </Badge>
-              {isFetching && !isLoading && (
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-              )}
-            </CardTitle>
-            <CardDescription className="hidden sm:block">
-              Search by title, then narrow by scope, status, or sort order.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {/* Unified toolbar: search + filters + sort in one consistent grid */}
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                <SlidersHorizontal className="h-3.5 w-3.5" />
-                Search & filter
-              </div>
-              {hasActiveFilters && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={clearFilters}
-                  className="h-7 text-xs shrink-0"
-                >
-                  <X className="h-3 w-3" />
-                  Clear
-                </Button>
-              )}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-              {/* Search */}
-              <div className="relative sm:col-span-2 lg:col-span-1">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-                <Input
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                  placeholder="Search events by title…"
-                  className="pl-8 h-9"
-                  aria-label="Search events"
-                />
-                {searchInput && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchInput("")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 grid place-items-center h-5 w-5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
-                    aria-label="Clear search"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-
-              {/* Scope filter */}
-              <Select value={scopeFilter} onValueChange={setScopeFilter}>
-                <SelectTrigger
-                  className="h-9 w-full"
-                  aria-label="Filter by scope"
-                >
-                  <SelectValue placeholder="All scopes" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={SCOPE_ALL}>All scopes</SelectItem>
-                  <SelectItem value="academic">Academic</SelectItem>
-                  <SelectItem value="departmental">Departmental</SelectItem>
-                </SelectContent>
-              </Select>
-
-              {/* Status filter */}
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger
-                  className="h-9 w-full"
-                  aria-label="Filter by status"
-                >
-                  <SelectValue placeholder="All statuses" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={STATUS_ALL}>All statuses</SelectItem>
-                  <SelectItem value="active">Active (live now)</SelectItem>
-                  <SelectItem value="upcoming">Upcoming</SelectItem>
-                  <SelectItem value="ended">Ended</SelectItem>
-                </SelectContent>
-              </Select>
-
-              {/* Sort */}
-              <Select
-                value={sortBy}
-                onValueChange={(v) => setSortBy(v as EventSort)}
+              {/* QR delegation toggle - lets other organizers in the same
+                program project this event's QR code. Only available for
+                program-wide events (no section); department-wide and
+                section-specific events are never delegatable. */}
+              <div
+                className={`flex items-start gap-2 rounded-lg border border-border/50 p-3 bg-muted/20 ${
+                  delegationDisabled ? "opacity-50" : ""
+                }`}
               >
-                <SelectTrigger className="h-9 w-full" aria-label="Sort by date">
-                  <SelectValue placeholder="Sort" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={SORT_NEWEST}>Newest first</SelectItem>
-                  <SelectItem value="oldest">Oldest first</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+                <Checkbox
+                  id="delegatable"
+                  checked={delegatable && !delegationDisabled}
+                  onCheckedChange={(v) => setDelegatable(v === true)}
+                  disabled={delegationDisabled}
+                />
+                <div className="space-y-0.5">
+                  <Label
+                    htmlFor="delegatable"
+                    className="cursor-pointer text-sm flex items-center gap-1.5"
+                  >
+                    Allow QR delegation
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {delegationDisabled
+                          ? "Delegation is only available for program-wide events (no section). Clear the section field to enable it."
+                          : "Other organizers in this program can project this event's QR if you're absent (program-wide events only)"}
+                      </TooltipContent>
+                    </Tooltip>
+                  </Label>
+                  {delegationDisabled && (
+                    <p className="text-[10px] text-muted-foreground">
+                      {effectiveScope === "departmental"
+                        ? "Department-wide events cannot be delegated."
+                        : "Section-specific events cannot be delegated - clear the section to enable."}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={create.isPending}
+              >
+                {create.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
+                Create event
+              </Button>
+            </form>
           </CardContent>
         </Card>
 
-        {/* Events grid - 1 col mobile, 2 cols sm+ (within the right column) */}
-        {isLoading ? (
+        {/* ---------------------- Events list + toolbar ---------------------- */}
+        <div className="lg:col-span-2 space-y-4">
+          {/* Toolbar: search + filters + sort */}
           <Card>
-            <CardContent className="p-8 text-center text-sm text-muted-foreground">
-              <Loader2 className="h-5 w-5 mx-auto mb-2 animate-spin text-primary" />
-              Loading events…
-            </CardContent>
-          </Card>
-        ) : events.length === 0 ? (
-          <Card>
-            <CardContent className="p-10 text-center">
-              <CalendarX className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
-              <p className="text-sm font-medium">
-                No events match your filters
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {hasActiveFilters
-                  ? "Try clearing filters or adjusting your search."
-                  : "Create one on the left to get started."}
-              </p>
-              {hasActiveFilters && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={clearFilters}
-                  className="mt-3"
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                <CalendarDays className="h-5 w-5 text-primary" />
+                All events
+                <Badge variant="secondary" className="ml-1 tabular-nums">
+                  {events.length}
+                </Badge>
+                {isFetching && !isLoading && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                )}
+              </CardTitle>
+              <CardDescription className="hidden sm:block">
+                Search by title, then narrow by scope, status, or sort order.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {/* Unified toolbar: search + filters + sort in one consistent grid */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  Search & filter
+                </div>
+                {hasActiveFilters && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearFilters}
+                    className="h-7 text-xs shrink-0"
+                  >
+                    <X className="h-3 w-3" />
+                    Clear
+                  </Button>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                {/* Search */}
+                <div className="relative sm:col-span-2 lg:col-span-1">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                  <Input
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    placeholder="Search events by title…"
+                    className="pl-8 h-9"
+                    aria-label="Search events"
+                  />
+                  {searchInput && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchInput("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 grid place-items-center h-5 w-5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
+                      aria-label="Clear search"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Scope filter */}
+                <Select value={scopeFilter} onValueChange={setScopeFilter}>
+                  <SelectTrigger
+                    className="h-9 w-full"
+                    aria-label="Filter by scope"
+                  >
+                    <SelectValue placeholder="All scopes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={SCOPE_ALL}>All scopes</SelectItem>
+                    <SelectItem value="academic">Academic</SelectItem>
+                    <SelectItem value="departmental">Departmental</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Status filter */}
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger
+                    className="h-9 w-full"
+                    aria-label="Filter by status"
+                  >
+                    <SelectValue placeholder="All statuses" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={STATUS_ALL}>All statuses</SelectItem>
+                    <SelectItem value="active">Active (live now)</SelectItem>
+                    <SelectItem value="upcoming">Upcoming</SelectItem>
+                    <SelectItem value="ended">Ended</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Sort */}
+                <Select
+                  value={sortBy}
+                  onValueChange={(v) => setSortBy(v as EventSort)}
                 >
-                  Clear filters
-                </Button>
-              )}
+                  <SelectTrigger
+                    className="h-9 w-full"
+                    aria-label="Sort by date"
+                  >
+                    <SelectValue placeholder="Sort" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={SORT_NEWEST}>Newest first</SelectItem>
+                    <SelectItem value="oldest">Oldest first</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </CardContent>
           </Card>
-        ) : (
-          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
-            <AnimatePresence mode="popLayout">
-              {events.map((e) => (
-                <EventCard
-                  key={e.id}
-                  event={e}
-                  onView={() => setDetailsEventId(e.id)}
-                  onDuplicate={() => handleDuplicate(e)}
-                  onDelete={() => {
-                    setDeleteTarget(e);
-                    setHardDeleteMode(false);
-                  }}
-                />
-              ))}
-            </AnimatePresence>
-          </div>
-        )}
+
+          {/* Events grid - 1 col mobile, 2 cols sm+ (within the right column) */}
+          {isLoading ? (
+            <Card>
+              <CardContent className="p-8 text-center text-sm text-muted-foreground">
+                <Loader2 className="h-5 w-5 mx-auto mb-2 animate-spin text-primary" />
+                Loading events…
+              </CardContent>
+            </Card>
+          ) : events.length === 0 ? (
+            <Card>
+              <CardContent className="p-10 text-center">
+                <CalendarX className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
+                <p className="text-sm font-medium">
+                  No events match your filters
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {hasActiveFilters
+                    ? "Try clearing filters or adjusting your search."
+                    : "Create one on the left to get started."}
+                </p>
+                {hasActiveFilters && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={clearFilters}
+                    className="mt-3"
+                  >
+                    Clear filters
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
+              <AnimatePresence mode="popLayout">
+                {events.map((e) => (
+                  <EventCard
+                    key={e.id}
+                    event={e}
+                    onView={() => setDetailsEventId(e.id)}
+                    onDuplicate={() => handleDuplicate(e)}
+                    onDelete={() => {
+                      setDeleteTarget(e);
+                      setHardDeleteMode(false);
+                    }}
+                  />
+                ))}
+              </AnimatePresence>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* ----------------------- Past events section ----------------------- */}
+      {/* ----------------------- Past events section -----------------------
+          Rendered OUTSIDE the form+list grid so the sticky Create form
+          above cannot overlap it when the user scrolls down. */}
       {showPastSection && endedEvents.length > 0 && (
-        <Card className="lg:col-span-3">
+        <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <CalendarX className="h-4 w-4 text-muted-foreground" />
