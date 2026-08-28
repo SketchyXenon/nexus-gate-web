@@ -14,7 +14,7 @@ import {
 import { audit } from "@/lib/audit";
 import {
   createSupabaseAdminClient,
-  isSupabaseConfigured,
+  isSupabaseAdminConfigured,
 } from "@/lib/supabase-server";
 import { invalidateAccountCache } from "@/lib/supabase-session";
 
@@ -75,29 +75,60 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
 
     // Delete the Supabase Auth user (if linked). This prevents the
     // "already registered" error when someone re-registers the same email.
-    // If the auth delete fails, we STILL delete the accounts row (so the
-    // admin can proceed) but log the error for manual cleanup.
-    if (target.supabaseAuthUid && isSupabaseConfigured()) {
-      try {
-        const adminClient = createSupabaseAdminClient();
-        const { error: authDeleteError } =
-          await adminClient.auth.admin.deleteUser(target.supabaseAuthUid);
-        if (authDeleteError) {
-          // Log prominently so the admin knows to manually clean up auth.users.
+    //
+    // HONESTY CONTRACT (per 06-security-architecture.md §2 "defense in depth"
+    // + ARCHITECTURE-SECURITY.md §9 "no catastrophic hard-deletes"):
+    // The previous version of this block SWALLOWED every auth-delete failure
+    // (wrong key, network error, missing SUPABASE_SERVICE_ROLE_KEY, mock not
+    // implementing deleteUser) into a console.error, deleted the DB row, and
+    // returned `{ deleted: true }` — misleading the admin into believing the
+    // account was fully removed while the auth.users entry survived as an
+    // orphan. We now track the outcome and surface it in the response
+    // (`authUserDeleted`, `orphanUid`, `warning`) so the admin is never
+    // misled, and audit it as `account.delete.auth_orphan` for traceability.
+    // We still proceed with the DB delete (the admin's intent) — blocking it
+    // would just trap the account in a half-state. The admin can now act on
+    // the warning (manual cleanup in Supabase Authentication → Users).
+    let authUserDeleted = false;
+    let authSkipReason: string | null = null;
+    let orphanUid: string | null = null;
+
+    if (target.supabaseAuthUid) {
+      if (!isSupabaseAdminConfigured()) {
+        // No service-role key — admin.deleteUser is impossible. Don't
+        // construct a broken client (it would throw inside the SDK and
+        // produce the same swallowed error as before). Record the precise
+        // reason so the admin knows exactly what to fix.
+        authSkipReason =
+          "SUPABASE_SERVICE_ROLE_KEY not configured on the server";
+        orphanUid = target.supabaseAuthUid;
+      } else {
+        try {
+          const adminClient = createSupabaseAdminClient();
+          const { error: authDeleteError } =
+            await adminClient.auth.admin.deleteUser(target.supabaseAuthUid);
+          if (authDeleteError) {
+            authSkipReason = authDeleteError.message;
+            orphanUid = target.supabaseAuthUid;
+            console.error(
+              "[account.delete] WARNING: Supabase auth user could not be deleted. Manual cleanup needed:",
+              authDeleteError.message,
+              "uid:",
+              target.supabaseAuthUid,
+            );
+          } else {
+            authUserDeleted = true;
+          }
+        } catch (e) {
+          authSkipReason = e instanceof Error ? e.message : String(e);
+          orphanUid = target.supabaseAuthUid;
           console.error(
-            "[account.delete] WARNING: Supabase auth user could not be deleted. Manual cleanup needed:",
-            authDeleteError.message,
+            "[account.delete] WARNING: Supabase admin client error. Manual cleanup needed:",
+            e,
             "uid:",
             target.supabaseAuthUid,
           );
         }
-      } catch (e) {
-        console.error(
-          "[account.delete] WARNING: Supabase admin client error. Manual cleanup needed:",
-          e,
-          "uid:",
-          target.supabaseAuthUid,
-        );
       }
     }
 
@@ -145,11 +176,54 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
       action: "account.delete",
       targetType: "Account",
       targetId: id,
-      metadata: { email: target.email, role: target.role },
+      metadata: {
+        email: target.email,
+        role: target.role,
+        authUserDeleted,
+        ...(authUserDeleted ? {} : { orphanUid: orphanUid ?? undefined }),
+      },
       req,
     });
 
-    return NextResponse.json({ ok: true, deleted: true });
+    // If the Supabase auth user survived (no service key, or the delete
+    // call failed), audit a SEPARATE orphan event so breach/audit log
+    // queries can find every half-deleted account without parsing the
+    // metadata blob above. Mirrors the login route's reverse-direction
+    // orphan reconciliation (which cleans DB rows when the auth user is
+    // gone) — this is the forward direction: the auth user survived.
+    if (!authUserDeleted && orphanUid) {
+      await audit({
+        actorId: admin.id,
+        action: "account.delete.auth_orphan",
+        targetType: "Account",
+        targetId: id,
+        metadata: {
+          email: target.email,
+          supabaseAuthUid: orphanUid,
+          reason: authSkipReason ?? "unknown",
+        },
+        req,
+      }).catch(() => {
+        // Non-fatal: the primary audit + the DB delete already succeeded.
+        // The admin still sees the warning in the HTTP response.
+      });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      deleted: true,
+      authUserDeleted,
+      // Only attach the warning fields when the auth user survived —
+      // keeps the success response clean for the happy path.
+      ...(authUserDeleted
+        ? {}
+        : {
+            orphanUid,
+            warning: `Supabase auth user was NOT deleted${
+              authSkipReason ? `: ${authSkipReason}` : ""
+            }. Manual cleanup required: remove uid ${orphanUid} from Supabase Authentication → Users, otherwise re-registering ${target.email} will fail with "already registered".`,
+          }),
+    });
   } catch (e) {
     if (isDbUnavailableError(e)) return dbUnavailable(e);
     throw e;

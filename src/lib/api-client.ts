@@ -1132,11 +1132,26 @@ export const useAdminCreateAccount = () => {
 };
 
 // ---------------- Admin: Delete Account ----------------
+// Response shape mirrors the delete route's honesty contract: when the
+// Supabase auth user could NOT be deleted (missing SUPABASE_SERVICE_ROLE_KEY,
+// network error, mock not implementing deleteUser), the route still deletes
+// the DB row (admin's intent) but returns `authUserDeleted: false` + the
+// surviving `orphanUid` + a human-readable `warning`. The UI MUST surface
+// this so the admin is never misled into thinking the account was fully
+// removed while auth.users still holds the entry.
+export type DeleteAccountResponse = {
+  ok: boolean;
+  deleted: boolean;
+  authUserDeleted?: boolean;
+  orphanUid?: string | null;
+  warning?: string;
+};
+
 export const useDeleteAccount = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<{ ok: boolean; deleted: boolean }>(`/api/accounts/${id}/delete`, {
+      api<DeleteAccountResponse>(`/api/accounts/${id}/delete`, {
         method: "DELETE",
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),

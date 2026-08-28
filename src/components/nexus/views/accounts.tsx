@@ -267,11 +267,32 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
 
   async function confirmDelete() {
     if (!deleteTarget) return;
+    const target = deleteTarget.account;
     try {
-      await deleteMut.mutateAsync(deleteTarget.account.id);
+      const res = await deleteMut.mutateAsync(target.id);
+      // Honesty contract: the delete route returns `authUserDeleted: false`
+      // when the Supabase auth user could not be removed (missing service
+      // key, network error, etc.). The DB row IS gone (admin's intent), but
+      // the auth.users entry survived as an orphan — re-registering the same
+      // email would fail with "already registered". Surface this loudly so
+      // the admin is never misled into thinking the account was fully removed
+      // (per ARCHITECTURE-SECURITY.md §9 + 06-security-architecture.md §2).
+      if (res && res.authUserDeleted === false) {
+        toast({
+          title: "Account deleted, but Supabase auth user remains",
+          description:
+            res.warning ??
+            `DB row removed, but the Supabase auth user${
+              res.orphanUid ? ` (uid ${res.orphanUid})` : ""
+            } could not be deleted. Remove it manually in Supabase Authentication → Users, or re-registering ${target.email} will fail.`,
+          variant: "destructive",
+          duration: 12000,
+        });
+        return;
+      }
       toast({
         title: "Account deleted",
-        description: `${deleteTarget.account.fullName} and all related data have been removed.`,
+        description: `${target.fullName} and all related data have been removed.`,
       });
     } catch (e) {
       toast({
@@ -427,7 +448,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                   setPage(1);
                 }}
               >
-                <SelectTrigger className="w-full sm:w-36">
+                <SelectTrigger className="w-full sm:w-36 min-w-0 sm:flex-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -444,7 +465,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                   setPage(1);
                 }}
               >
-                <SelectTrigger className="w-full sm:w-36">
+                <SelectTrigger className="w-full sm:w-36 min-w-0 sm:flex-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -456,7 +477,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                 </SelectContent>
               </Select>
               <Select value={sortBy} onValueChange={setSortBy}>
-                <SelectTrigger className="w-full sm:w-40">
+                <SelectTrigger className="w-full sm:w-40 min-w-0 sm:flex-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -476,7 +497,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                     setQ(e.target.value);
                     setPage(1);
                   }}
-                  className="pl-8 w-full sm:w-48"
+                  className="pl-8 w-full sm:w-48 min-w-0 sm:flex-1"
                 />
               </div>
             </div>
@@ -493,7 +514,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
           {/* ---- Batch action bar (appears when accounts are selected) ---- */}
           {selectedCount > 0 && (
             <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b bg-primary/5 text-sm">
-              <Badge variant="secondary" className="gap-1">
+              <Badge variant="secondary" className="gap-1 min-w-0 shrink-0">
                 {selectedCount} selected
               </Badge>
               <div className="flex flex-wrap items-center gap-1.5 ml-1">

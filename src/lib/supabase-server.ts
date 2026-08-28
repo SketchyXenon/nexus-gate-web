@@ -50,6 +50,20 @@ export function isSupabaseConfigured(): boolean {
   );
 }
 
+// Check that the Supabase ADMIN (service-role) credentials are configured.
+// The service-role key is REQUIRED for admin operations
+// (admin.deleteUser, admin.updateUserById, admin.listUsers) that bypass RLS.
+// isSupabaseConfigured() alone is NOT sufficient for these operations —
+// without SUPABASE_SERVICE_ROLE_KEY, createSupabaseAdminClient() constructs a
+// client with an undefined key and every admin call fails (caught + swallowed
+// by the caller, historically producing silent orphans in auth.users).
+// Routes that perform admin mutations MUST gate on THIS check, not just
+// isSupabaseConfigured(), so they can either fail closed or surface a clear
+// "service key not configured" reason instead of a silent failure.
+export function isSupabaseAdminConfigured(): boolean {
+  return isSupabaseConfigured() && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
+}
+
 export async function createSupabaseServerClient(opts?: {
   /**
    * Explicit persistence override. The login route passes the user's
