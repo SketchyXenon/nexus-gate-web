@@ -91,7 +91,7 @@ export function MfaCard() {
             <Loader2 className="h-4 w-4 animate-spin" /> Loading MFA status…
           </div>
         ) : enabled ? (
-          <EnrolledView enabledAt={enabledAt} />
+          <EnrolledView enabledAt={enabledAt ?? null} />
         ) : (
           <NotEnrolledView />
         )}
@@ -171,7 +171,8 @@ function EnrollDialog({
           setBackupCodes(data.backupCodes);
           toast({
             title: "MFA enabled",
-            description: "Save your backup codes - you'll need them if you lose your device.",
+            description:
+              "Save your backup codes - you'll need them if you lose your device.",
           });
         },
         onError: (err) =>
@@ -206,11 +207,19 @@ function EnrollDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); else onOpenChange(v); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) handleClose();
+        else onOpenChange(v);
+      }}
+    >
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {backupCodes ? "Save your backup codes" : "Set up two-factor authentication"}
+            {backupCodes
+              ? "Save your backup codes"
+              : "Set up two-factor authentication"}
           </DialogTitle>
           <DialogDescription>
             {backupCodes
@@ -234,10 +243,15 @@ function EnrollDialog({
             <div className="flex items-start gap-2 text-xs text-amber-600 dark:text-amber-400">
               <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
               <span>
-                Store these safely. Each works once. We won&apos;t show them again.
+                Store these safely. Each works once. We won&apos;t show them
+                again.
               </span>
             </div>
-            <Button onClick={handleCopyAll} variant="outline" className="w-full">
+            <Button
+              onClick={handleCopyAll}
+              variant="outline"
+              className="w-full"
+            >
               <Copy className="h-4 w-4" /> Copy all codes
             </Button>
             <Button onClick={handleClose} className="w-full">
@@ -351,10 +365,7 @@ function EnrolledView({ enabledAt }: { enabledAt: string | null }) {
         <KeyRound className="h-4 w-4" />
         Disable MFA
       </Button>
-      <DisableDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-      />
+      <DisableDialog open={confirmOpen} onOpenChange={setConfirmOpen} />
     </div>
   );
 }
@@ -412,7 +423,9 @@ function DisableDialog({
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Disable two-factor authentication?</AlertDialogTitle>
+          <AlertDialogTitle>
+            Disable two-factor authentication?
+          </AlertDialogTitle>
           <AlertDialogDescription>
             Enter your current 6-digit TOTP code (or a backup code) to confirm.
             Your account will only need a password at sign-in after this.
@@ -479,4 +492,3 @@ function DisableDialog({
     </AlertDialog>
   );
 }
-
