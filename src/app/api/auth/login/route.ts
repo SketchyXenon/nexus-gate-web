@@ -178,15 +178,19 @@ export async function POST(req: NextRequest) {
       }
 
       // Orphan-reconciliation: clean up silently if the auth user was deleted.
+      // getUserById returns { data: { user: null }, error } on ANY failure
+      // (429/5xx/network/404) - it never throws. Only treat the account as
+      // orphaned when the call SUCCEEDED and explicitly returned no user;
+      // otherwise a transient Supabase outage (or a mock/dev backend without
+      // the admin endpoint) would hard-delete a perfectly valid accounts row.
       if (preCheck?.supabaseAuthUid) {
         try {
           const admin = createSupabaseAdminClient();
-          const { data: userData } = await admin.auth.admin.getUserById(
-            preCheck.supabaseAuthUid,
-          );
-          if (!userData?.user) {
+          const { data: userData, error: adminError } =
+            await admin.auth.admin.getUserById(preCheck.supabaseAuthUid);
+          if (!adminError && !userData?.user) {
             console.log(
-              `[login] cleaning orphaned accounts row for ${email} (auth user deleted)`,
+              "[login] cleaning orphaned accounts row (auth user deleted)",
             );
             await db.account.delete({ where: { id: preCheck.id } });
           }

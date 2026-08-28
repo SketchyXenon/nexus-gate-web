@@ -42,11 +42,16 @@ export async function POST(req: NextRequest) {
   let row: {
     mfaSecretEnc: string | null;
     mfaEnabled: boolean | null;
+    supabaseAuthUid: string | null;
   } | null = null;
   try {
     row = await db.account.findUnique({
       where: { id: account.id },
-      select: { mfaSecretEnc: true, mfaEnabled: true },
+      select: {
+        mfaSecretEnc: true,
+        mfaEnabled: true,
+        supabaseAuthUid: true,
+      },
     });
   } catch (e) {
     if (
@@ -140,10 +145,15 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
-    // Cache invalidation: the account cache was populated with
-    // mfaEnabled=false; flip it now so the MFA gate applies on the next
-    // request without waiting for the 30s TTL.
-    invalidateAccountCache(account.id);
+    // Cache invalidation: the account cache is keyed by supabaseAuthUid
+    // (NOT account.id). It was populated with mfaEnabled=false; evict it
+    // now so the MFA gate applies on the next request without waiting
+    // for the 30s TTL. Without this, enabling MFA took up to 30s to
+    // become effective - the sign-out enforcement comment below assumed
+    // immediacy that the wrong cache key silently broke.
+    if (row.supabaseAuthUid) {
+      invalidateAccountCache(row.supabaseAuthUid);
+    }
   } catch (e) {
     if (
       typeof e === "object" &&

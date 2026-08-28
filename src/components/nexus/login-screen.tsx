@@ -145,13 +145,28 @@ export function LoginScreen({
     const refreshToken = hashParams.get("refresh_token");
     if (!code && !accessToken) return;
 
+    // Strip the auth params from the URL SYNCHRONOUSLY, before the async
+    // exchange. PKCE codes are single-use: with reactStrictMode: true the
+    // effect mounts twice in dev, and the second mount would otherwise
+    // re-exchange the (now consumed) code and surface a spurious
+    // "Link expired" error toast over an otherwise successful flow.
+    window.history.replaceState({}, "", window.location.pathname);
+
     const finalizeAuth = async (
       resolvedType?: string,
       wasSignupConfirmation?: boolean,
+      mfaRequired?: boolean,
     ) => {
-      window.history.replaceState({}, "", window.location.pathname);
       const effectiveType = resolvedType || type;
-      if (effectiveType === "recovery") {
+      if (mfaRequired) {
+        // Magic-link sign-in for an MFA-protected account: the callback
+        // established the Supabase session and set the ng_mfa_challenge
+        // cookie, but the MFA gate stays closed until the TOTP/backup code
+        // is verified. Show the OTP step (same UI as the password flow)
+        // instead of reloading into a 401 loop. AuthScreen resets its MFA
+        // input state on entering "mfa" mode.
+        setMode("mfa");
+      } else if (effectiveType === "recovery") {
         // Password reset flow: show the new-password form.
         sessionStorage.setItem(RECOVERY_PENDING_KEY, "1");
         setResetToken("supabase-recovery");
@@ -196,6 +211,7 @@ export function LoginScreen({
             ok: boolean;
             type: string;
             wasSignupConfirmation?: boolean;
+            mfaRequired?: boolean;
           }>;
         })
       : accessToken && refreshToken
@@ -210,7 +226,11 @@ export function LoginScreen({
 
     codeExchangePromise
       .then(async (result) => {
-        await finalizeAuth(result?.type, result?.wasSignupConfirmation);
+        await finalizeAuth(
+          result?.type,
+          result?.wasSignupConfirmation,
+          result?.mfaRequired === true,
+        );
       })
       .catch((e) => {
         // Code exchange failed (expired, already used, cross-device PKCE mismatch).
@@ -320,6 +340,19 @@ function AuthScreen({
     if (mode !== "register") {
       setRegStep(1);
       setAgreeTerms(false);
+    }
+    if (mode === "mfa") {
+      // Entering the MFA step (password login, magic link, or passkey):
+      // reset the input + failure state so a fresh challenge starts clean.
+      // Covers every path that sets mode to "mfa", including the outer
+      // component's magic-link finalizeAuth (which can't reach these
+      // setters directly).
+      setMfaCode("");
+      setMfaBackupInput("");
+      setMfaUseBackup(false);
+      setMfaFailures(0);
+      setMfaLockedOut(false);
+      setMfaError(null);
     }
   }
 
@@ -461,6 +494,21 @@ function AuthScreen({
       if (!verifyRes.ok) {
         const data = await verifyRes.json().catch(() => ({}));
         throw new Error(data.error || "Passkey verification failed");
+      }
+      const verifyData = await verifyRes.json().catch(() => ({}));
+      if (
+        verifyData &&
+        typeof verifyData === "object" &&
+        "status" in verifyData &&
+        verifyData.status === "mfa_required"
+      ) {
+        // MFA-protected account: the route minted the Supabase session and
+        // set the ng_mfa_challenge cookie. Show the OTP step (same UI as
+        // the password + magic-link flows) instead of reloading into the
+        // closed MFA gate. AuthScreen resets its MFA input state on
+        // entering "mfa" mode.
+        setMode("mfa");
+        return;
       }
       // Session cookie was set server-side by the login-verify route.
       // No need to call setSession() client-side (tokens are httpOnly).

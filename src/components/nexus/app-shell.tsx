@@ -483,7 +483,7 @@ function BottomTabBar({
     <>
       <nav
         aria-label="Primary"
-        className="md:hidden border-t bg-background/95 backdrop-blur flex px-1 pb-safe pb-[env(safe-area-inset-bottom)]"
+        className="md:hidden border-t bg-background/95 backdrop-blur flex px-1 pb-safe"
       >
         {tabs.map((item) => {
           const Icon = item.icon;

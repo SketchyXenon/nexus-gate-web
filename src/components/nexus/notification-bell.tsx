@@ -2,7 +2,13 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bell, BellOff, Loader2, CalendarClock, AlarmClock } from "lucide-react";
+import {
+  Bell,
+  BellOff,
+  Loader2,
+  CalendarClock,
+  AlarmClock,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -115,7 +121,9 @@ export function NotificationBell() {
     })
     .sort((a, b) => {
       try {
-        return parseISO(a.scheduledAt).getTime() - parseISO(b.scheduledAt).getTime();
+        return (
+          parseISO(a.scheduledAt).getTime() - parseISO(b.scheduledAt).getTime()
+        );
       } catch {
         return 0;
       }
@@ -146,11 +154,11 @@ export function NotificationBell() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.15 }}
-            className="fixed inset-x-2 top-16 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80 sm:max-w-[22rem] z-50"
+            className="fixed inset-x-2 top-14 max-h-[calc(100dvh_-_6.75rem_-_env(safe-area-inset-bottom))] flex flex-col sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80 sm:max-w-[22rem] sm:max-h-[calc(100dvh_-_8rem)] z-50"
           >
-            <div className="rounded-xl border bg-card shadow-2xl overflow-hidden">
+            <div className="rounded-xl border bg-card shadow-2xl overflow-hidden flex flex-col min-h-0">
               {/* Header */}
-              <div className="p-3 border-b flex items-center justify-between">
+              <div className="p-3 border-b flex items-center justify-between shrink-0">
                 <span className="font-heading font-semibold text-sm">
                   Notifications
                 </span>
@@ -164,103 +172,112 @@ export function NotificationBell() {
                 )}
               </div>
 
-              {/* Upcoming events reminder section */}
-              {upcomingEvents.length > 0 && (
-                <div className="border-b">
-                  <div className="px-3 py-2 bg-primary/5 flex items-center gap-1.5">
-                    <AlarmClock className="h-3.5 w-3.5 text-primary" />
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">
-                      Coming up
-                    </span>
-                  </div>
-                  <div className="divide-y">
-                    {upcomingEvents.map((e) => {
-                      const eventDate = parseISO(e.scheduledAt);
-                      const isSoon =
-                        eventDate.getTime() - Date.now() < 30 * 60 * 1000; // < 30 min
-                      return (
-                        <div
-                          key={e.id}
-                          className="px-3 py-2.5 flex items-start gap-2 hover:bg-accent/30 transition-colors"
-                        >
-                          <CalendarClock
-                            className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${
-                              isSoon ? "text-amber-500" : "text-muted-foreground"
-                            }`}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium truncate">
-                              {e.title}
-                            </p>
-                            <p
-                              className={`text-[10px] mt-0.5 ${
+              {/* Scrollable middle: upcoming reminders + notification list.
+                  Capped by the panel max-height so long lists never overflow
+                  the viewport on small screens. */}
+              <div className="flex-1 min-h-0 overflow-y-auto ng-scroll">
+                {/* Upcoming events reminder section */}
+                {upcomingEvents.length > 0 && (
+                  <div className="border-b">
+                    <div className="px-3 py-2 bg-primary/5 flex items-center gap-1.5">
+                      <AlarmClock className="h-3.5 w-3.5 text-primary" />
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">
+                        Coming up
+                      </span>
+                    </div>
+                    <div className="divide-y">
+                      {upcomingEvents.map((e) => {
+                        const eventDate = parseISO(e.scheduledAt);
+                        const isSoon =
+                          eventDate.getTime() - Date.now() < 30 * 60 * 1000; // < 30 min
+                        return (
+                          <div
+                            key={e.id}
+                            className="px-3 py-2.5 flex items-start gap-2 hover:bg-accent/30 transition-colors"
+                          >
+                            <CalendarClock
+                              className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${
                                 isSoon
-                                  ? "text-amber-600 font-medium"
+                                  ? "text-amber-500"
                                   : "text-muted-foreground"
                               }`}
-                            >
-                              {format(eventDate, "EEE, MMM d 'at' h:mm a")}
-                              {" · "}
-                              {formatDistanceToNow(eventDate, { addSuffix: true })}
-                            </p>
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium truncate">
+                                {e.title}
+                              </p>
+                              <p
+                                className={`text-[10px] mt-0.5 ${
+                                  isSoon
+                                    ? "text-amber-600 font-medium"
+                                    : "text-muted-foreground"
+                                }`}
+                              >
+                                {format(eventDate, "EEE, MMM d 'at' h:mm a")}
+                                {" · "}
+                                {formatDistanceToNow(eventDate, {
+                                  addSuffix: true,
+                                })}
+                              </p>
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Notifications list */}
-              <ScrollArea className="max-h-80">
-                {notifications.length === 0 ? (
-                  <div className="p-6 text-center">
-                    <div className="grid place-items-center h-10 w-10 rounded-full bg-muted/50 mx-auto mb-2">
-                      <Bell className="h-4 w-4 text-muted-foreground/60" />
+                        );
+                      })}
                     </div>
-                    <p className="text-xs font-medium text-muted-foreground">
-                      All caught up
-                    </p>
-                    <p className="text-[10px] text-muted-foreground/70 mt-0.5">
-                      New notifications will appear here
-                    </p>
-                  </div>
-                ) : (
-                  <div className="divide-y">
-                    {notifications.map((n) => (
-                      <button
-                        key={n.id}
-                        onClick={() => handleClickNotification(n.id)}
-                        className={`w-full text-left p-3 hover:bg-accent/40 transition-colors ${
-                          !n.readAt ? "bg-primary/5" : ""
-                        }`}
-                      >
-                        <div className="flex items-start gap-2">
-                          {!n.readAt && (
-                            <span className="h-2 w-2 rounded-full bg-primary shrink-0 mt-1.5" />
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">
-                              {n.title}
-                            </p>
-                            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
-                              {n.body}
-                            </p>
-                            <p className="text-[10px] text-muted-foreground mt-1">
-                              {formatDistanceToNow(new Date(n.createdAt), {
-                                addSuffix: true,
-                              })}
-                            </p>
-                          </div>
-                        </div>
-                      </button>
-                    ))}
                   </div>
                 )}
-              </ScrollArea>
+
+                {/* Notifications list */}
+                <ScrollArea className="max-h-80">
+                  {notifications.length === 0 ? (
+                    <div className="p-6 text-center">
+                      <div className="grid place-items-center h-10 w-10 rounded-full bg-muted/50 mx-auto mb-2">
+                        <Bell className="h-4 w-4 text-muted-foreground/60" />
+                      </div>
+                      <p className="text-xs font-medium text-muted-foreground">
+                        All caught up
+                      </p>
+                      <p className="text-[10px] text-muted-foreground/70 mt-0.5">
+                        New notifications will appear here
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="divide-y">
+                      {notifications.map((n) => (
+                        <button
+                          key={n.id}
+                          onClick={() => handleClickNotification(n.id)}
+                          className={`w-full text-left p-3 hover:bg-accent/40 transition-colors ${
+                            !n.readAt ? "bg-primary/5" : ""
+                          }`}
+                        >
+                          <div className="flex items-start gap-2">
+                            {!n.readAt && (
+                              <span className="h-2 w-2 rounded-full bg-primary shrink-0 mt-1.5" />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">
+                                {n.title}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                                {n.body}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground mt-1">
+                                {formatDistanceToNow(new Date(n.createdAt), {
+                                  addSuffix: true,
+                                })}
+                              </p>
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </ScrollArea>
+              </div>
 
               {/* Footer: enable/disable */}
-              <div className="p-2 border-t">
+              <div className="p-2 border-t shrink-0">
                 {isEnabled ? (
                   <Button
                     variant="ghost"

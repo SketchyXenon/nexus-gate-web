@@ -255,14 +255,18 @@ export function ProjectQrView() {
 
   // Compute QR pixel size:
   //  - Normal (non-fullscreen): 320 px (was 280) for a more prominent code
-  //  - Fullscreen: 70% of the smaller viewport dimension, capped at 720 px
-  //     so it never overflows on small projectors.
+  //  - Fullscreen: 70% of the smaller viewport dimension minus a reserve
+  //     for the in-flow top bar, timer row, hint text and padding, capped at
+  //     720 px so it never overflows on small projectors.
   const normalQrSize = 320;
   const fullscreenQrSize = Math.max(
-    240,
+    180,
     Math.min(
       720,
-      Math.floor(Math.min(viewportSize.w || 800, viewportSize.h || 600) * 0.7),
+      Math.floor(
+        Math.min((viewportSize.w || 800) - 32, (viewportSize.h || 600) - 230) *
+          0.7,
+      ),
     ),
   );
   const qrSize = isFullscreen ? fullscreenQrSize : normalQrSize;
@@ -281,9 +285,11 @@ export function ProjectQrView() {
     >
       {/* ============================ FULLSCREEN MODE ============================ */}
       {isFullscreen && (
-        <div className="w-full h-full flex flex-col items-center justify-center gap-4 sm:gap-8">
-          {/* Top bar: event title + exit button */}
-          <div className="absolute top-4 left-4 right-4 flex items-center justify-between gap-4">
+        <div className="w-full h-full flex flex-col min-h-0">
+          {/* Top bar: event title + exit button. In normal document flow
+              (not absolutely positioned) so it can never overlap the code
+              on short/landscape viewports. */}
+          <div className="w-full flex items-center justify-between gap-4 shrink-0">
             <div className="min-w-0">
               <p className="text-[10px] sm:text-xs uppercase tracking-widest text-white/60">
                 Projecting check-in code for
@@ -295,7 +301,7 @@ export function ProjectQrView() {
             <Button
               variant="secondary"
               onClick={exitFullscreen}
-              className="shrink-0 gap-1.5"
+              className="shrink-0 gap-1.5 h-11 sm:h-8"
               size="sm"
             >
               <Minimize2 className="h-4 w-4" />
@@ -304,113 +310,116 @@ export function ProjectQrView() {
             </Button>
           </div>
 
-          {/* QR code - fills most of the screen */}
-          <div className="relative grid place-items-center">
-            <svg
-              className="absolute inset-0 -rotate-90 pointer-events-none"
-              viewBox={`0 0 ${qrSize + 40} ${qrSize + 40}`}
-              preserveAspectRatio="xMidYMid meet"
-              style={{ width: qrSize + 40, height: qrSize + 40 }}
-            >
-              <circle
-                cx={(qrSize + 40) / 2}
-                cy={(qrSize + 40) / 2}
-                r={(qrSize + 40) / 2 - 4}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="4"
-                className="text-white/15"
-              />
-              <circle
-                cx={(qrSize + 40) / 2}
-                cy={(qrSize + 40) / 2}
-                r={(qrSize + 40) / 2 - 4}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="4"
-                strokeLinecap="round"
-                className={pct < 25 ? "text-amber-400" : "text-primary"}
-                strokeDasharray={`${2 * Math.PI * ((qrSize + 40) / 2 - 4)}`}
-                strokeDashoffset={`${
-                  2 * Math.PI * ((qrSize + 40) / 2 - 4) * (1 - pct / 100)
-                }`}
-                style={{ transition: "stroke-dashoffset 100ms linear" }}
-              />
-            </svg>
-            <div className="p-3 sm:p-4 bg-white rounded-2xl">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={`${block}-${subFrame}`}
-                  initial={{ opacity: 0.5, scale: 0.97 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.15 }}
-                >
-                  <QRCodeCanvas
-                    value={token || "pending"}
-                    size={qrSize}
-                    level="H"
-                    marginSize={2}
-                    fgColor="#0c1a17"
-                    bgColor="#ffffff"
-                  />
-                </motion.div>
-              </AnimatePresence>
+          {/* QR code + timer centered in the remaining space */}
+          <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-4 sm:gap-8 overflow-hidden">
+            {/* QR code - fills most of the screen */}
+            <div className="relative grid place-items-center min-h-0">
+              <svg
+                className="absolute inset-0 -rotate-90 pointer-events-none"
+                viewBox={`0 0 ${qrSize + 40} ${qrSize + 40}`}
+                preserveAspectRatio="xMidYMid meet"
+                style={{ width: qrSize + 40, height: qrSize + 40 }}
+              >
+                <circle
+                  cx={(qrSize + 40) / 2}
+                  cy={(qrSize + 40) / 2}
+                  r={(qrSize + 40) / 2 - 4}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                  className="text-white/15"
+                />
+                <circle
+                  cx={(qrSize + 40) / 2}
+                  cy={(qrSize + 40) / 2}
+                  r={(qrSize + 40) / 2 - 4}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                  strokeLinecap="round"
+                  className={pct < 25 ? "text-amber-400" : "text-primary"}
+                  strokeDasharray={`${2 * Math.PI * ((qrSize + 40) / 2 - 4)}`}
+                  strokeDashoffset={`${
+                    2 * Math.PI * ((qrSize + 40) / 2 - 4) * (1 - pct / 100)
+                  }`}
+                  style={{ transition: "stroke-dashoffset 100ms linear" }}
+                />
+              </svg>
+              <div className="p-3 sm:p-4 bg-white rounded-2xl">
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={`${block}-${subFrame}`}
+                    initial={{ opacity: 0.5, scale: 0.97 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    <QRCodeCanvas
+                      value={token || "pending"}
+                      size={qrSize}
+                      level="H"
+                      marginSize={2}
+                      fgColor="#0c1a17"
+                      bgColor="#ffffff"
+                    />
+                  </motion.div>
+                </AnimatePresence>
+              </div>
             </div>
-          </div>
 
-          {/* Timer + live indicator (always visible in fullscreen) */}
-          <div className="flex items-center gap-4 sm:gap-6 flex-wrap justify-center">
-            <div className="flex items-center gap-2">
-              <RefreshCw
-                className={`h-5 w-5 sm:h-6 sm:w-6 text-primary ${
-                  expiresInMs < 1500 ? "animate-spin" : ""
-                }`}
-              />
-              <span className="text-2xl sm:text-4xl font-bold tabular-nums">
-                {Math.ceil(expiresInMs / 1000)}
-                <span className="text-base sm:text-xl font-normal text-white/60">
-                  s
+            {/* Timer + live indicator (always visible in fullscreen) */}
+            <div className="flex items-center gap-4 sm:gap-6 flex-wrap justify-center">
+              <div className="flex items-center gap-2">
+                <RefreshCw
+                  className={`h-5 w-5 sm:h-6 sm:w-6 text-primary ${
+                    expiresInMs < 1500 ? "animate-spin" : ""
+                  }`}
+                />
+                <span className="text-2xl sm:text-4xl font-bold tabular-nums">
+                  {Math.ceil(expiresInMs / 1000)}
+                  <span className="text-base sm:text-xl font-normal text-white/60">
+                    s
+                  </span>
                 </span>
-              </span>
-              <span className="text-xs sm:text-sm text-white/60">
-                until next code
-              </span>
-            </div>
-            <Badge
-              variant="outline"
-              className={`gap-1.5 text-sm sm:text-base px-2.5 py-1 ${
-                secretQ.data?.isTimeOutLive
-                  ? "border-amber-400/50 text-amber-300"
-                  : "border-emerald-400/50 text-emerald-300"
-              }`}
-            >
-              <Radio className="h-3.5 w-3.5 animate-pulse" />
-              {secretQ.data?.isTimeOutLive ? "Time-out" : "Live"}
-            </Badge>
-            <Badge
-              variant="outline"
-              className="gap-1.5 border-white/30 text-white text-sm sm:text-base px-2.5 py-1"
-            >
-              <Users className="h-3.5 w-3.5" />
-              <span className="tabular-nums">{presentCount}</span>
-              <span className="text-white/60">/ {eligibleCount}</span>
-            </Badge>
-            {enableTimeOut && (
+                <span className="text-xs sm:text-sm text-white/60">
+                  until next code
+                </span>
+              </div>
               <Badge
                 variant="outline"
-                className="gap-1.5 border-amber-400/40 text-amber-200 text-sm sm:text-base px-2.5 py-1"
-                title={`Students who scanned to time out (${timeOutCount} of ${presentCount} checked in)`}
+                className={`gap-1.5 text-sm sm:text-base px-2.5 py-1 ${
+                  secretQ.data?.isTimeOutLive
+                    ? "border-amber-400/50 text-amber-300"
+                    : "border-emerald-400/50 text-emerald-300"
+                }`}
               >
-                <LogOut className="h-3.5 w-3.5" />
-                <span className="tabular-nums">{timeOutCount}</span>
-                <span className="text-white/60">/ {presentCount}</span>
+                <Radio className="h-3.5 w-3.5 animate-pulse" />
+                {secretQ.data?.isTimeOutLive ? "Time-out" : "Live"}
               </Badge>
-            )}
+              <Badge
+                variant="outline"
+                className="gap-1.5 border-white/30 text-white text-sm sm:text-base px-2.5 py-1"
+              >
+                <Users className="h-3.5 w-3.5" />
+                <span className="tabular-nums">{presentCount}</span>
+                <span className="text-white/60">/ {eligibleCount}</span>
+              </Badge>
+              {enableTimeOut && (
+                <Badge
+                  variant="outline"
+                  className="gap-1.5 border-amber-400/40 text-amber-200 text-sm sm:text-base px-2.5 py-1"
+                  title={`Students who scanned to time out (${timeOutCount} of ${presentCount} checked in)`}
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span className="tabular-nums">{timeOutCount}</span>
+                  <span className="text-white/60">/ {presentCount}</span>
+                </Badge>
+              )}
+            </div>
+            <p className="text-[10px] sm:text-xs text-white/50 text-center max-w-md">
+              Hold your camera steady for ~2 seconds to scan. A new code appears
+              every 15 seconds - screenshots can&apos;t be reused.
+            </p>
           </div>
-          <p className="text-[10px] sm:text-xs text-white/50 text-center max-w-md">
-            Hold your camera steady for ~2 seconds to scan. A new code appears
-            every 15 seconds - screenshots can&apos;t be reused.
-          </p>
         </div>
       )}
 

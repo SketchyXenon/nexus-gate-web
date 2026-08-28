@@ -2,6 +2,7 @@
 export const maxDuration = 15;
 
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { verifyAuthenticationResponse } from "@simplewebauthn/server";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { db } from "@/lib/db";
@@ -13,6 +14,7 @@ import {
   createSupabaseServerClient,
   isSupabaseConfigured,
 } from "@/lib/supabase-server";
+import { MFA_CHALLENGE_COOKIE, signChallenge } from "@/lib/mfa";
 
 function toFixedArrayBuffer(
   bytes: Uint8Array<ArrayBufferLike>,
@@ -147,6 +149,7 @@ export async function POST(req: NextRequest) {
       supabaseAuthUid: true,
       passkeyCredential: true,
       isDeactivated: true,
+      mfaEnabled: true,
     },
   });
 
@@ -400,6 +403,53 @@ export async function POST(req: NextRequest) {
     targetId: verifiedAccount.id,
     req,
   }).catch(() => {});
+
+  // --- MFA gate (same policy as password login + magic link) ---
+  // Passkey possession is a strong factor, but the account's configured
+  // MFA (TOTP) must still be satisfied before the session is usable -
+  // otherwise a stolen/unlocked device with a saved passkey would skip
+  // the second factor entirely. Issue the standard 5-min challenge; the
+  // client reuses the same OTP UI + /api/auth/mfa/login-verify flow.
+  if (verifiedAccount.mfaEnabled) {
+    const challengeId = randomUUID();
+    await db.mfaChallenge.create({
+      data: {
+        id: challengeId,
+        accountId: verifiedAccount.id,
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      },
+    });
+    const challengeJwt = await signChallenge(challengeId, verifiedAccount.id);
+    const mfaResponse = NextResponse.json(
+      { ok: true, status: "mfa_required" },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+    mfaResponse.cookies.set(MFA_CHALLENGE_COOKIE, challengeJwt, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 5 * 60,
+    });
+    // Passkey sign-in has no remember-me affordance: always session-scoped.
+    mfaResponse.cookies.set("ng_mfa_remember", "0", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 5 * 60,
+    });
+    await audit({
+      actorId: verifiedAccount.id,
+      action: "auth.mfa_challenge",
+      targetType: "Account",
+      targetId: verifiedAccount.id,
+      metadata: { via: "passkey" },
+      req,
+    }).catch(() => {});
+    mfaResponse.cookies.delete("ng_passkey_challenge");
+    return mfaResponse;
+  }
 
   // Single cookie-set path (was previously duplicated across two branches).
   // Session cookies are set by @supabase/ssr via the anon client's verifyOtp

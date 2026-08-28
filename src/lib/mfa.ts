@@ -86,10 +86,7 @@ export function encryptSecret(plaintext: string): string {
   const key = getEncryptionKey();
   const iv = randomBytes(12); // 96-bit IV is the GCM standard.
   const cipher = createCipheriv("aes-256-gcm", key, iv);
-  const enc = Buffer.concat([
-    cipher.update(plaintext, "utf8"),
-    cipher.final(),
-  ]);
+  const enc = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
   return Buffer.concat([iv, enc, tag]).toString("base64");
 }
@@ -138,10 +135,7 @@ export function buildOtpAuthUrl(opts: {
 // Uses otplib v13's verifySync with a ±30s tolerance (one step before/
 // after the current 30s period - matches RFC 6238 §5.2 transmission
 // delay). Constant-time comparison is performed inside otplib.
-export function verifyTotp(opts: {
-  token: string;
-  secret: string;
-}): boolean {
+export function verifyTotp(opts: { token: string; secret: string }): boolean {
   const cleaned = opts.token.replace(/\s/g, "");
   if (!/^\d{6,8}$/.test(cleaned)) return false;
   try {
@@ -290,7 +284,11 @@ export async function signMfaVerified(
     .setIssuedAt()
     .setIssuer("nexus-gate")
     .setSubject(accountId);
-  if (expSeconds > 0) {
+  // expSeconds = 0 means "browser session" (no `exp` claim, no maxAge on
+  // the cookie). Any OTHER non-zero value - including a negative one -
+  // sets an explicit expiry so a bad call can never mint a token that
+  // lives forever (fail closed per 06-security-architecture.md section 1).
+  if (expSeconds !== 0) {
     builder.setExpirationTime(`${expSeconds}s`);
   }
   return builder.sign(getJwtSecretKey());

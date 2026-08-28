@@ -18,7 +18,13 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BarChart3, Clock, TrendingUp, Trophy } from "lucide-react";
 import { motion } from "framer-motion";
@@ -69,7 +75,7 @@ export function AnalyticsCharts() {
   return (
     <div className="space-y-4">
       {/* Summary strip */}
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
+      <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
         <MiniStat
           icon={TrendingUp}
           label="Scans (30d)"
@@ -81,18 +87,18 @@ export function AnalyticsCharts() {
           value={
             totalScans > 0
               ? `${Math.round((data.scansBySource.qr / totalScans) * 100)}%`
-              : "—"
+              : " - "
           }
         />
         <MiniStat
           icon={Clock}
           label="Peak hour"
-          value={peakHour.count > 0 ? `${peakHour.hour}:00` : "—"}
+          value={peakHour.count > 0 ? `${peakHour.hour}:00` : " - "}
         />
         <MiniStat
           icon={Trophy}
           label="Top event"
-          value={topEvent ? `${topEvent.presentCount}` : "—"}
+          value={topEvent ? topEvent.title : " - "}
         />
       </div>
 
@@ -113,14 +119,35 @@ export function AnalyticsCharts() {
             </CardHeader>
             <CardContent className="pt-0">
               <ChartContainer config={scansChartConfig} className="h-48 w-full">
-                <AreaChart data={data.scansByDay} margin={{ left: -20, right: 8, top: 8 }}>
+                <AreaChart
+                  data={data.scansByDay}
+                  margin={{ left: -20, right: 8, top: 8 }}
+                >
                   <defs>
-                    <linearGradient id="scansGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.4} />
-                      <stop offset="100%" stopColor="var(--primary)" stopOpacity={0.05} />
+                    <linearGradient
+                      id="scansGradient"
+                      x1="0"
+                      y1="0"
+                      x2="0"
+                      y2="1"
+                    >
+                      <stop
+                        offset="0%"
+                        stopColor="var(--primary)"
+                        stopOpacity={0.4}
+                      />
+                      <stop
+                        offset="100%"
+                        stopColor="var(--primary)"
+                        stopOpacity={0.05}
+                      />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid vertical={false} strokeDasharray="3 3" className="stroke-muted" />
+                  <CartesianGrid
+                    vertical={false}
+                    strokeDasharray="3 3"
+                    className="stroke-muted"
+                  />
                   <XAxis
                     dataKey="date"
                     tickFormatter={shortDate}
@@ -142,7 +169,10 @@ export function AnalyticsCharts() {
                       <ChartTooltipContent
                         labelFormatter={(_, payload) =>
                           payload?.[0]?.payload?.date
-                            ? format(new Date(payload[0].payload.date + "T00:00:00"), "EEE, MMM d")
+                            ? format(
+                                new Date(payload[0].payload.date + "T00:00:00"),
+                                "EEE, MMM d",
+                              )
                             : ""
                         }
                       />
@@ -177,8 +207,15 @@ export function AnalyticsCharts() {
             </CardHeader>
             <CardContent className="pt-0">
               <ChartContainer config={hourChartConfig} className="h-48 w-full">
-                <BarChart data={data.scansByHour} margin={{ left: -20, right: 8, top: 8 }}>
-                  <CartesianGrid vertical={false} strokeDasharray="3 3" className="stroke-muted" />
+                <BarChart
+                  data={data.scansByHour}
+                  margin={{ left: -20, right: 8, top: 8 }}
+                >
+                  <CartesianGrid
+                    vertical={false}
+                    strokeDasharray="3 3"
+                    className="stroke-muted"
+                  />
                   <XAxis
                     dataKey="hour"
                     tickFormatter={(h) => `${h}h`}
@@ -205,7 +242,11 @@ export function AnalyticsCharts() {
                       />
                     }
                   />
-                  <Bar dataKey="count" fill="var(--primary)" radius={[3, 3, 0, 0]} />
+                  <Bar
+                    dataKey="count"
+                    fill="var(--primary)"
+                    radius={[3, 3, 0, 0]}
+                  />
                 </BarChart>
               </ChartContainer>
             </CardContent>
@@ -247,7 +288,9 @@ export function AnalyticsCharts() {
                         </span>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-baseline justify-between gap-2">
-                            <p className="text-sm font-medium truncate">{e.title}</p>
+                            <p className="text-sm font-medium truncate">
+                              {e.title}
+                            </p>
                             <span className="text-xs text-muted-foreground shrink-0">
                               {e.presentCount} present
                             </span>
@@ -288,13 +331,24 @@ export function AnalyticsCharts() {
                   No scans recorded yet.
                 </p>
               ) : (
-                <ChartContainer config={sourceChartConfig} className="h-48 w-full">
+                <ChartContainer
+                  config={sourceChartConfig}
+                  className="h-48 w-full"
+                >
                   <PieChart>
                     <ChartTooltip content={<ChartTooltipContent />} />
                     <Pie
                       data={[
-                        { name: "qr", value: data.scansBySource.qr, fill: "var(--primary)" },
-                        { name: "override", value: data.scansBySource.override, fill: "var(--muted-foreground)" },
+                        {
+                          name: "qr",
+                          value: data.scansBySource.qr,
+                          fill: "var(--primary)",
+                        },
+                        {
+                          name: "override",
+                          value: data.scansBySource.override,
+                          fill: "var(--muted-foreground)",
+                        },
                       ]}
                       dataKey="value"
                       nameKey="name"
@@ -326,15 +380,15 @@ function MiniStat({
   value: string | number;
 }) {
   return (
-    <div className="flex items-center gap-2.5 rounded-lg border bg-card p-3">
+    <div className="flex items-center gap-2.5 rounded-lg border bg-card p-4 min-w-0">
       <div className="grid place-items-center h-8 w-8 rounded-md bg-primary/10 text-primary shrink-0">
         <Icon className="h-4 w-4" />
       </div>
       <div className="min-w-0">
-        <p className="text-[10px] uppercase tracking-wide text-muted-foreground truncate">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground truncate min-w-0">
           {label}
         </p>
-        <p className="text-sm font-bold truncate">{value}</p>
+        <p className="text-sm font-bold truncate min-w-0">{value}</p>
       </div>
     </div>
   );

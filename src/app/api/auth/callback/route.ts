@@ -2,6 +2,7 @@
 export const maxDuration = 15;
 
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { db } from "@/lib/db";
 import {
   createSupabaseServerClient,
@@ -14,6 +15,7 @@ import {
   isAccountDeactivated,
 } from "@/lib/safe-account";
 import { checkRateLimit } from "@/lib/api";
+import { MFA_CHALLENGE_COOKIE, signChallenge } from "@/lib/mfa";
 
 // ====================================================================
 // GET /api/auth/callback?code=<pkce_code>&type=<magiclink|recovery|...>
@@ -125,16 +127,19 @@ export async function GET(req: NextRequest) {
   // This is the single point where Supabase's email confirmation
   // transitions our account from PENDING_VERIFICATION to ACTIVE.
   let wasSignupConfirmation = false;
+  let mfaRequired = false;
   if (authUid && resolvedType !== "recovery") {
     try {
-      // Safe lookup: degrades if migration 0017 not applied.
+      // Safe lookup: degrades if migration 0017 not applied. Includes
+      // mfaEnabled + lockout columns so this route can enforce the same
+      // brute-force lockout and MFA gate as the password login route.
       const account = await safeFindAccountByAuthUid(authUid);
 
       if (account) {
         if (isAccountDeactivated(account)) {
           // Deactivated accounts must NOT hold a session. Deactivation does
           // not delete the Supabase Auth user, so a magic link can still be
-          // delivered and exchanged — revoke the session here so a
+          // delivered and exchanged - revoke the session here so a
           // deactivated user cannot authenticate via magic link.
           await supabase.auth.signOut().catch(() => {});
         } else if (account.status === "PENDING_VERIFICATION") {
@@ -169,7 +174,95 @@ export async function GET(req: NextRequest) {
           await supabase.auth.signOut().catch(() => {});
         } else if (account.status === "ACTIVE") {
           // Magic-link sign-in to an already-ACTIVE account: the session IS
-          // the authentication. Keep it.
+          // the authentication. But the same protections as password login
+          // apply BEFORE the session is honored:
+          if (account.lockedUntil && account.lockedUntil > new Date()) {
+            // Brute-force lockout: without this check, an attacker with
+            // access to the victim's inbox could bypass the 5-fail/15-min
+            // lock by requesting a magic link instead (audit HIGH).
+            await supabase.auth.signOut().catch(() => {});
+            const retryMs = account.lockedUntil.getTime() - Date.now();
+            return NextResponse.json(
+              {
+                error: `Too many failed attempts. Please try again in ${Math.ceil(retryMs / 1000)} seconds.`,
+                code: "LOCKED",
+                retryAfterMs: retryMs,
+              },
+              { status: 423, headers: NO_STORE },
+            );
+          }
+          if (account.mfaEnabled) {
+            // MFA gate (same policy as the password login route): the
+            // magic-link session alone must NOT be enough to use the app
+            // when the account has a second factor. Issue an MFA challenge
+            // (DB row + signed 5-min cookie) and tell the client to show
+            // the OTP input; /api/auth/mfa/login-verify completes the flow
+            // by setting ng_mfa_verified. Without this, MFA users bounced
+            // between the callback and /api/auth/me in a fail-closed loop.
+            mfaRequired = true;
+            const challengeId = randomUUID();
+            await db.mfaChallenge.create({
+              data: {
+                id: challengeId,
+                accountId: account.id,
+                expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+              },
+            });
+            const challengeJwt = await signChallenge(challengeId, account.id);
+            const resp = NextResponse.json(
+              { ok: true, type: resolvedType, mfaRequired },
+              { headers: NO_STORE },
+            );
+            resp.cookies.set(MFA_CHALLENGE_COOKIE, challengeJwt, {
+              httpOnly: true,
+              sameSite: "lax",
+              secure: process.env.NODE_ENV === "production",
+              path: "/",
+              maxAge: 5 * 60,
+            });
+            // Magic-link sign-in has no remember-me checkbox: the MFA
+            // intent cookie is always "0" so login-verify keeps the
+            // session browser-scoped (mirrors the ADMIN policy).
+            resp.cookies.set("ng_mfa_remember", "0", {
+              httpOnly: true,
+              sameSite: "lax",
+              secure: process.env.NODE_ENV === "production",
+              path: "/",
+              maxAge: 5 * 60,
+            });
+            await audit({
+              actorId: account.id,
+              action: "auth.mfa_challenge",
+              targetType: "Account",
+              targetId: account.id,
+              metadata: { via: "magic_link" },
+              req,
+            }).catch(() => {});
+            return resp;
+          }
+          // Successful magic-link sign-in without MFA: reset the
+          // brute-force counters and stamp lastLoginAt, exactly like the
+          // password login route (previously this path never touched them,
+          // so a locked-out counter persisted after a successful link
+          // sign-in and lastLoginAt went stale).
+          await db.account
+            .update({
+              where: { id: account.id },
+              data: {
+                failedLoginAttempts: 0,
+                lockedUntil: null,
+                lastLoginAt: new Date(),
+              },
+            })
+            .catch(() => {});
+          await audit({
+            actorId: account.id,
+            action: "auth.login",
+            targetType: "Account",
+            targetId: account.id,
+            metadata: { method: "magic_link" },
+            req,
+          }).catch(() => {});
         } else {
           // Any other status (e.g. SUSPENDED): the account is not in good
           // standing. Sign out so the user cannot use a magic link to
@@ -184,7 +277,7 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json(
-    { ok: true, type: resolvedType, wasSignupConfirmation },
+    { ok: true, type: resolvedType, wasSignupConfirmation, mfaRequired },
     { headers: NO_STORE },
   );
 }

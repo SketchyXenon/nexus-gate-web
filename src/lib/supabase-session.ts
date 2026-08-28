@@ -129,12 +129,26 @@ export async function getCurrentAccountSupabase(options?: {
   // NOTE: we do NOT cache recovery sessions, because the cache key is just
   // authUid and a recovery session must not be reusable as a normal session
   // by a later (non-allowRecovery) caller.
+  //
+  // MFA GATE EXEMPTION (recovery only): the MFA gate is intentionally NOT
+  // applied here. A recovery session exists ONLY because the user clicked
+  // a password-reset link from their inbox - they are, by definition,
+  // unable to complete a login flow (they forgot the password). Requiring
+  // ng_mfa_verified here deadlocks every MFA-enabled user out of password
+  // reset forever ("invalid token" loop). This is safe because:
+  //   1. Recovery sessions are rejected by every OTHER caller (default
+  //      allowRecovery=false returns null above), so this exemption can
+  //      only ever be observed by /api/auth/reset-password.
+  //   2. reset-password itself re-verifies the recovery AMR claim and
+  //      signs the session out after the update.
+  //   3. The password change does NOT bypass MFA: the login route still
+  //      challenges with TOTP after the password is reset.
   if (session.isRecovery) {
     const account = await resolveAccountFromDb(
       session.authUid,
       /* cacheResult */ false,
     );
-    return applyMfaGate(account);
+    return account;
   }
 
   // Check the unified cache (Redis first, then in-memory).

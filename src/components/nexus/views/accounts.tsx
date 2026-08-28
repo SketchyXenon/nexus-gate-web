@@ -512,8 +512,10 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
             </div>
           )}
           {/* ---- Batch action bar (appears when accounts are selected) ---- */}
+          {/* Desktop only; on mobile a sticky bottom bar renders after the
+              card so it stays visible above the bottom tab navigation. */}
           {selectedCount > 0 && (
-            <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b bg-primary/5 text-sm">
+            <div className="hidden md:flex flex-wrap items-center gap-2 px-4 py-2.5 border-b bg-primary/5 text-sm">
               <Badge variant="secondary" className="gap-1 min-w-0 shrink-0">
                 {selectedCount} selected
               </Badge>
@@ -854,8 +856,29 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
             </Table>
           </div>
 
-          {/* Mobile card list - same data/handlers as the table, no checkboxes */}
+          {/* Mobile card list - same data/handlers as the table, including
+              batch selection (checkbox per card + select-all), so batch
+              actions are reachable on phones. */}
           <div className="md:hidden space-y-2 px-4 py-3">
+            {!isLoading && accounts.length > 0 && (
+              <label className="flex items-center gap-2 min-h-[44px] px-1 -mx-1 -mt-1 cursor-pointer">
+                <Checkbox
+                  checked={
+                    allVisibleSelected
+                      ? true
+                      : someVisibleSelected
+                        ? "indeterminate"
+                        : false
+                  }
+                  onCheckedChange={toggleAllVisible}
+                  aria-label="Select all visible accounts"
+                  className="h-5 w-5"
+                />
+                <span className="text-xs font-medium text-muted-foreground">
+                  {allVisibleSelected ? "Deselect all" : "Select all"}
+                </span>
+              </label>
+            )}
             {isLoading && (
               <p className="text-center text-sm text-muted-foreground py-8">
                 Loading…
@@ -882,10 +905,23 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                     duration: 0.18,
                     delay: Math.min(idx * 0.015, 0.15),
                   }}
-                  className="rounded-lg border p-3 space-y-2"
+                  className={`rounded-lg border p-3 space-y-2 ${
+                    selected[a.id] ? "border-primary/40 bg-primary/5" : ""
+                  }`}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-medium truncate">{a.fullName}</p>
+                  <div className="flex items-center gap-2">
+                    {/* 44px hit area (label) wrapping the small checkbox */}
+                    <label className="flex items-center justify-center shrink-0 min-h-[44px] min-w-[44px] -my-1.5 -ml-1 cursor-pointer">
+                      <Checkbox
+                        checked={!!selected[a.id]}
+                        onCheckedChange={() => toggleRow(a.id)}
+                        aria-label={`Select ${a.fullName}`}
+                        className="h-5 w-5"
+                      />
+                    </label>
+                    <p className="text-sm font-medium truncate flex-1 min-w-0">
+                      {a.fullName}
+                    </p>
                     <Badge
                       variant="outline"
                       className={
@@ -1044,6 +1080,68 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
           )}
         </CardContent>
       </Card>
+
+      {/* Mobile batch action bar - sticky at the bottom of the scrolling
+          area, so it never overlaps the bottom tab bar (a sibling below the
+          scroll container) and respects the safe-area handled by the nav.
+          Buttons use h-11 (44px) touch targets. */}
+      {selectedCount > 0 && (
+        <div className="md:hidden sticky bottom-0 z-30 -mx-4 sm:-mx-6 -mb-4 sm:-mb-6 border-t bg-background/95 backdrop-blur px-4 pt-2 pb-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <Badge variant="secondary" className="gap-1 min-w-0 shrink-0">
+              {selectedCount} selected
+            </Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-11"
+              onClick={clearSelection}
+            >
+              Clear
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              variant="outline"
+              className="h-11"
+              disabled={batchMut.isPending}
+              onClick={() => setBatchConfirm({ action: "activate" })}
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Activate
+            </Button>
+            <Button
+              variant="outline"
+              className="h-11"
+              disabled={batchMut.isPending}
+              onClick={() => setBatchConfirm({ action: "suspend" })}
+            >
+              <Ban className="h-4 w-4" />
+              Suspend
+            </Button>
+            <Button
+              variant="outline"
+              className="h-11"
+              disabled={batchMut.isPending}
+              onClick={() =>
+                setBatchConfirm({ action: "setRole", role: "ORGANIZER" })
+              }
+            >
+              Set Organizer
+            </Button>
+            <Button
+              variant="outline"
+              className="h-11"
+              disabled={batchMut.isPending}
+              onClick={() =>
+                setBatchConfirm({ action: "setRole", role: "USER" })
+              }
+            >
+              Set Student
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Create account dialog */}
       <Dialog
