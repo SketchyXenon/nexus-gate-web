@@ -56,6 +56,15 @@ model Account {
   passkeyCredential    String?
   passkeyCredentialId  String?  @unique
   supabaseAuthUid      String?  @unique
+  // MFA (TOTP, RFC 6238). Optional per account. Secret is AES-256-GCM
+  // encrypted at rest (mfa.ts encryptSecret/decryptSecret). The plaintext
+  // secret never persists; only the base64 ciphertext+iv+tag blob does.
+  mfaSecretEnc        String?
+  mfaEnabled          Boolean  @default(false)
+  mfaEnabledAt        DateTime?
+  // JSON array of bcrypt-hashed one-time backup codes (generateBackupCodes).
+  // SQLite has no native JSON column type - we store the serialized array.
+  mfaBackupCodesHash  String?
   notificationEnabled  Boolean  @default(false)
   notificationPrefs    String? // JSON string (SQLite has no native JSON type)
   lastLoginAt     DateTime?
@@ -79,6 +88,7 @@ model Account {
   refreshTokens     RefreshToken[]
   deviceKeys        DeviceKey[]
   termsAcceptances  TermsAcceptance[]
+  mfaChallenges     MfaChallenge[]
 
   @@index([role, status])
   @@index([program, section])
@@ -358,4 +368,27 @@ model Visit {
   @@unique([dayBucket, visitorHash, route])
   @@index([dayBucket])
   @@index([route])
+}
+
+// ====================================================================
+// 14. MFA CHALLENGES (TOTP, RFC 6238)
+// --------------------------------------------------------------------
+// A short-lived row created at /api/auth/login when account.mfaEnabled.
+// The login-verify route reads + consumes it within a 5-minute window.
+// `attempts` is bumped on each failed verify so we can lock the
+// challenge after 5 failures. `consumedAt` is set on success, lockout,
+// or expiry, so the challengeJwt can be replayed only until consumed.
+// ====================================================================
+
+model MfaChallenge {
+  id         String   @id @default(cuid())
+  accountId  String
+  account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@index([accountId, consumedAt])
+  @@index([expiresAt])
 }

@@ -41,6 +41,17 @@ const NEW_FIELDS = {
   deactivatedReason: true,
 } as const;
 
+// Fields added by the MFA (TOTP) migration (Task 6). Treated as "new
+// fields" for the P2022 fallback: if these columns are missing (the MFA
+// migration hasn't been applied), the safe lookup retries WITHOUT them
+// and mfaEnabled defaults to undefined (the gate treats that as "off").
+const MFA_FIELDS = {
+  mfaEnabled: true,
+  mfaEnabledAt: true,
+  mfaSecretEnc: true,
+  mfaBackupCodesHash: true,
+} as const;
+
 // Detect Prisma P2022 error (column not found).
 function isMissingColumnError(e: unknown): boolean {
   if (typeof e === "object" && e !== null && "code" in e) {
@@ -69,15 +80,27 @@ export type SafeAccount = {
   emailVerifiedAt?: Date | null;
   deactivatedAt?: Date | null;
   deactivatedReason?: string | null;
+  // MFA fields (optional - missing if migration not applied).
+  mfaEnabled?: boolean;
+  mfaEnabledAt?: Date | null;
+  mfaSecretEnc?: string | null;
+  mfaBackupCodesHash?: string | null;
 };
 
 // Safe findUnique by email. Returns null if not found.
 // Falls back to legacy columns if migration 0017 not applied.
+// Includes MFA fields - if the MFA migration isn't applied, mfaEnabled is
+// undefined (the MFA gate treats that as "off").
 export async function safeFindAccountByEmail(
   email: string,
   extraSelect: Prisma.AccountSelect = {},
 ): Promise<SafeAccount | null> {
-  const fullSelect = { ...LEGACY_FIELDS, ...NEW_FIELDS, ...extraSelect };
+  const fullSelect = {
+    ...LEGACY_FIELDS,
+    ...NEW_FIELDS,
+    ...MFA_FIELDS,
+    ...extraSelect,
+  };
   try {
     return (await db.account.findUnique({
       where: { email },
@@ -100,7 +123,12 @@ export async function safeFindAccountById(
   id: string,
   extraSelect: Prisma.AccountSelect = {},
 ): Promise<SafeAccount | null> {
-  const fullSelect = { ...LEGACY_FIELDS, ...NEW_FIELDS, ...extraSelect };
+  const fullSelect = {
+    ...LEGACY_FIELDS,
+    ...NEW_FIELDS,
+    ...MFA_FIELDS,
+    ...extraSelect,
+  };
   try {
     return (await db.account.findUnique({
       where: { id },
@@ -118,10 +146,11 @@ export async function safeFindAccountById(
 }
 
 // Safe findFirst by supabaseAuthUid. Returns null if not found.
+// Includes MFA fields so the login route can branch on mfaEnabled.
 export async function safeFindAccountByAuthUid(
   authUid: string,
 ): Promise<SafeAccount | null> {
-  const fullSelect = { ...LEGACY_FIELDS, ...NEW_FIELDS };
+  const fullSelect = { ...LEGACY_FIELDS, ...NEW_FIELDS, ...MFA_FIELDS };
   try {
     return (await db.account.findFirst({
       where: { supabaseAuthUid: authUid },

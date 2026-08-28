@@ -25,6 +25,11 @@ export interface ApiAccount {
   organizationName: string | null;
   year: number | null;
   lastLoginAt: string | null;
+  // MFA (TOTP). When true, the session layer (supabase-session.ts and
+  // session.ts) requires a valid ng_mfa_verified cookie bound to this
+  // account.id before granting access - fail closed.
+  mfaEnabled?: boolean;
+  mfaEnabledAt?: string | null;
 }
 
 export async function getApiAccount(): Promise<ApiAccount | null> {
@@ -328,7 +333,9 @@ export async function checkRateLimitByKey(
     | "whitelistImport"
     | "whitelistImportFile"
     | "passkeyRegister"
-    | "override",
+    | "override"
+    | "mfaVerify"
+    | "mfaAccount",
 ): Promise<NextResponse | null> {
   const result = await rateLimit(`${preset}:acct:${key}`, preset);
   if (!result.allowed) return tooManyRequests(result.retryAfterMs);

@@ -57,6 +57,17 @@ const PRESETS: Record<string, RateLimitConfig> = {
   // how fast an organizer can bulk-fabricate attendance (30/min = one
   // entry every 2s, plenty for legitimate dead-phone cases at the door).
   override: { maxRequests: 30, windowMs: 60_000 },
+  // MFA login-verify: keyed by challengeId (one per login attempt). 10/min
+  // matches the existing passkeyVerify preset - same risk profile
+  // (verifying a one-time credential against a stored hash, no DB writes
+  // on failure). The challenge is single-use and 5-min-lived, so this
+  // primarily defends against a script replaying codes within the window.
+  mfaVerify: { maxRequests: 10, windowMs: 60_000 },
+  // MFA enroll/verify/disable (account-scoped). 5/min matches loginAccount
+  // - enough for legitimate UX (re-scan QR, retry one bad code, retry
+  // disable), tight enough to stop a hijacked session from brute-forcing
+  // the disable TOTP. Reuse the same name+config in three routes.
+  mfaAccount: { maxRequests: 5, windowMs: 60_000 },
 };
 
 export type RateLimitPreset = keyof typeof PRESETS;
@@ -78,6 +89,11 @@ const SENSITIVE_PRESETS: ReadonlySet<RateLimitPreset> = new Set([
   // Overrides bypass QR anti-cheat entirely - failing open on a Redis
   // outage would uncap bulk fabrication. Fail closed instead.
   "override",
+  // MFA verify (login-verify) is the brute-force defense for accounts
+  // with MFA enabled. Fail closed so a Redis outage can't uncap TOTP
+  // guessing.
+  "mfaVerify",
+  "mfaAccount",
 ]);
 
 // ---- In-memory backend (dev fallback) ----

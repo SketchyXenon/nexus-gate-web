@@ -21,6 +21,7 @@ import {
   EyeOff,
   Info,
   Fingerprint,
+  KeyRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +42,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  InputOTP,
+  InputOTPGroup,
+  InputOTPSlot,
+} from "@/components/ui/input-otp";
 import { ThemeToggle } from "./theme-toggle";
 import { CookieConsent } from "./cookie-consent";
 import { InfoModals, openInfoModal } from "./info-modals";
@@ -55,6 +61,7 @@ import {
   useForgotPassword,
   useResetPassword,
   useCheckAvailability,
+  useMfaLoginVerify,
 } from "@/lib/api-client";
 import { toast } from "@/hooks/use-toast";
 import { ROLE_LABELS, ROLE_DESCRIPTIONS, type Role } from "@/lib/rbac";
@@ -66,6 +73,7 @@ import {
 type Mode =
   | "landing"
   | "login"
+  | "mfa"
   | "register"
   | "success"
   | "verify-success"
@@ -289,6 +297,18 @@ function AuthScreen({
   const register = useRegister();
   const forgotPassword = useForgotPassword();
   const resetPassword = useResetPassword();
+  const mfaLoginVerify = useMfaLoginVerify();
+
+  // ---- MFA (TOTP) input mode state ----
+  // Switched on when the login route returns { status: "mfa_required" }.
+  // The ng_mfa_challenge cookie is sent automatically by the browser on
+  // the login-verify POST.
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaBackupInput, setMfaBackupInput] = useState("");
+  const [mfaUseBackup, setMfaUseBackup] = useState(false);
+  const [mfaFailures, setMfaFailures] = useState(0);
+  const [mfaLockedOut, setMfaLockedOut] = useState(false);
+  const [mfaError, setMfaError] = useState<string | null>(null);
 
   // Reset the registration wizard when leaving register mode.
   // Track previous mode in render and reset synchronously - the canonical
@@ -550,11 +570,32 @@ function AuthScreen({
     login.mutate(
       { email, password, rememberMe },
       {
-        onSuccess: () =>
+        onSuccess: (data) => {
+          // If the account has MFA enabled, the login route returns
+          // { status: "mfa_required" } with HTTP 200 (the Supabase
+          // session cookie is set, but the sticky ng_sess marker is NOT
+          // - the session can't be persisted across browser restarts
+          // until MFA is satisfied). Switch to the MFA input mode.
+          if (
+            data &&
+            typeof data === "object" &&
+            "status" in data &&
+            data.status === "mfa_required"
+          ) {
+            setMfaCode("");
+            setMfaBackupInput("");
+            setMfaUseBackup(false);
+            setMfaFailures(0);
+            setMfaLockedOut(false);
+            setMfaError(null);
+            setMode("mfa");
+            return;
+          }
           toast({
             title: "Welcome back!",
             description: "Loading your dashboard...",
-          }),
+          });
+        },
         onError: (err) => {
           toast({
             title: "Couldn't sign in",
@@ -564,6 +605,68 @@ function AuthScreen({
         },
       },
     );
+  }
+
+  // ---- MFA verify (login flow) ----
+  // POSTs { code } (or { backupCode }) to /api/auth/mfa/login-verify.
+  // The ng_mfa_challenge cookie (HttpOnly, set by the login route) is
+  // sent automatically. On 5 failures, the server-side challenge is
+  // consumed (locked out); we show a "sign in again" message and reset
+  // to login mode.
+  async function handleMfaVerify(e: React.FormEvent) {
+    e.preventDefault();
+    if (mfaLockedOut) return;
+    const code = mfaUseBackup ? mfaBackupInput.trim() : mfaCode.trim();
+    if (mfaUseBackup ? code.length === 0 : code.length !== 6) {
+      setMfaError(
+        mfaUseBackup
+          ? "Enter a backup code"
+          : "Enter the 6-digit code from your authenticator",
+      );
+      return;
+    }
+    setMfaError(null);
+    mfaLoginVerify.mutate(mfaUseBackup ? { backupCode: code } : { code }, {
+      onSuccess: () => {
+        toast({
+          title: "Welcome back!",
+          description: "Loading your dashboard...",
+        });
+        // Hard reload so the page.tsx flow re-runs with the new
+        // cookies (ng_mfa_verified + ng_sess) in place.
+        window.location.reload();
+      },
+      onError: (err) => {
+        const next = (mfaFailures ?? 0) + 1;
+        setMfaFailures(next);
+        if (next >= 5) {
+          setMfaLockedOut(true);
+          setMfaError("Too many attempts. Sign in again to start over.");
+        } else {
+          setMfaError(err.message || "Incorrect or expired code. Try again.");
+        }
+        setMfaCode("");
+        setMfaBackupInput("");
+      },
+    });
+  }
+
+  // Cancel: clears the challenge cookie via /api/auth/logout, then
+  // returns to login mode. The logout route also signs out of the
+  // Supabase session, which is correct — the user wants to start over.
+  async function handleMfaCancel() {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // Non-critical — the route sets maxAge=0 cookies on response.
+    }
+    setMfaCode("");
+    setMfaBackupInput("");
+    setMfaUseBackup(false);
+    setMfaFailures(0);
+    setMfaLockedOut(false);
+    setMfaError(null);
+    setMode("login");
   }
 
   async function handleRegister(e: React.FormEvent) {
@@ -752,6 +855,7 @@ function AuthScreen({
                 <CardHeader>
                   <CardTitle className="font-heading text-2xl">
                     {mode === "login" && "Welcome back"}
+                    {mode === "mfa" && "Two-factor code"}
                     {mode === "register" && "Create account"}
                     {mode === "success" &&
                       (needsEmailConfirmation
@@ -951,6 +1055,111 @@ function AuthScreen({
                           Sign up
                         </button>
                       </div>
+                    </div>
+                  )}
+
+                  {/* MFA (TOTP) INPUT - shown after the login route returns
+                      { status: "mfa_required" }. The browser holds the
+                      ng_mfa_challenge cookie (HttpOnly, set by the login
+                      route); it's sent automatically on the verify POST. */}
+                  {mode === "mfa" && (
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <ShieldCheck className="h-4 w-4 text-primary" />
+                        Enter the 6-digit code from your authenticator app.
+                      </div>
+                      {mfaLockedOut ? (
+                        <div className="space-y-3">
+                          <p className="text-sm text-destructive">
+                            Too many failed attempts. Sign in again to start
+                            over.
+                          </p>
+                          <Button
+                            className="w-full h-11"
+                            onClick={handleMfaCancel}
+                          >
+                            <LogIn className="h-4 w-4" /> Back to sign in
+                          </Button>
+                        </div>
+                      ) : (
+                        <form onSubmit={handleMfaVerify} className="space-y-3">
+                          {mfaUseBackup ? (
+                            <div className="space-y-1.5">
+                              <Label htmlFor="mfaBackup">Backup code</Label>
+                              <div className="relative">
+                                <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                  id="mfaBackup"
+                                  placeholder="XXXX-XXXX"
+                                  value={mfaBackupInput}
+                                  onChange={(e) =>
+                                    setMfaBackupInput(
+                                      e.target.value.toUpperCase(),
+                                    )
+                                  }
+                                  className="pl-9 font-mono"
+                                  autoComplete="off"
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              <Label htmlFor="mfaOtp">Authenticator code</Label>
+                              <InputOTP
+                                id="mfaOtp"
+                                maxLength={6}
+                                value={mfaCode}
+                                onChange={(v) => setMfaCode(v)}
+                                containerClassName="justify-center"
+                              >
+                                <InputOTPGroup>
+                                  <InputOTPSlot index={0} />
+                                  <InputOTPSlot index={1} />
+                                  <InputOTPSlot index={2} />
+                                  <InputOTPSlot index={3} />
+                                  <InputOTPSlot index={4} />
+                                  <InputOTPSlot index={5} />
+                                </InputOTPGroup>
+                              </InputOTP>
+                            </div>
+                          )}
+                          {mfaError && (
+                            <p className="text-xs text-destructive">
+                              {mfaError}
+                            </p>
+                          )}
+                          <Button
+                            type="submit"
+                            className="w-full h-11 transition-all hover:scale-[1.01]"
+                            disabled={mfaLoginVerify.isPending}
+                          >
+                            {mfaLoginVerify.isPending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <ShieldCheck className="h-4 w-4" />
+                            )}
+                            Verify
+                          </Button>
+                          <div className="flex items-center justify-between text-sm">
+                            <button
+                              type="button"
+                              onClick={() => setMfaUseBackup((v) => !v)}
+                              className="text-muted-foreground hover:text-primary hover:underline"
+                            >
+                              {mfaUseBackup
+                                ? "Use authenticator code"
+                                : "Use a backup code"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleMfaCancel}
+                              className="text-muted-foreground hover:text-primary hover:underline"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </form>
+                      )}
                     </div>
                   )}
 

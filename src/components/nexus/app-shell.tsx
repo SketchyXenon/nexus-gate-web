@@ -209,7 +209,7 @@ const NAV: NavItem[] = [
     id: "profile",
     label: "Profile",
     icon: UserCircle,
-    roles: ["ORGANIZER", "USER"],
+    roles: ["ADMIN", "ORGANIZER", "USER"],
     description: "Your account",
   },
 ];
@@ -340,12 +340,12 @@ export function AppShell({
         </aside>
 
         <div className="flex-1 flex flex-col min-w-0">
-          <header className="sticky top-0 z-20 h-14 border-b bg-background/80 backdrop-blur px-4 flex items-center gap-3">
+          <header className="sticky top-0 z-20 h-14 border-b bg-background/80 backdrop-blur px-4 flex items-center gap-2">
             <div className="flex-1 min-w-0">
               <h2 className="text-sm font-semibold truncate">
                 {NAV.find((n) => n.id === activeView)?.label}
               </h2>
-              <p className="text-[11px] text-muted-foreground truncate">
+              <p className="hidden sm:block text-[11px] text-muted-foreground truncate">
                 {NAV.find((n) => n.id === activeView)?.description}
               </p>
             </div>
@@ -483,7 +483,7 @@ function BottomTabBar({
     <>
       <nav
         aria-label="Primary"
-        className="md:hidden border-t bg-background/95 backdrop-blur flex pb-safe pb-[env(safe-area-inset-bottom)]"
+        className="md:hidden border-t bg-background/95 backdrop-blur flex px-1 pb-safe pb-[env(safe-area-inset-bottom)]"
       >
         {tabs.map((item) => {
           const Icon = item.icon;
@@ -493,12 +493,12 @@ function BottomTabBar({
               key={item.id}
               onClick={() => onSelect(item.id)}
               aria-current={active ? "page" : undefined}
-              className={`flex-1 flex flex-col items-center justify-center gap-1 min-h-[56px] text-muted-foreground transition-colors ${
+              className={`flex-1 flex flex-col items-center justify-center gap-1 min-h-[52px] px-1 text-muted-foreground transition-colors ${
                 active ? "text-primary" : "hover:text-foreground"
               }`}
             >
               <Icon className="size-5" />
-              <span className="text-[10px] font-medium leading-none max-w-full truncate px-1">
+              <span className="text-[10px] font-medium leading-none max-w-[64px] truncate">
                 {item.label}
               </span>
             </button>
@@ -511,12 +511,12 @@ function BottomTabBar({
             aria-haspopup="dialog"
             aria-expanded={moreOpen}
             aria-current={moreActive ? "page" : undefined}
-            className={`flex-1 flex flex-col items-center justify-center gap-1 min-h-[56px] text-muted-foreground transition-colors ${
+            className={`flex-1 flex flex-col items-center justify-center gap-1 min-h-[52px] px-1 text-muted-foreground transition-colors ${
               moreActive ? "text-primary" : "hover:text-foreground"
             }`}
           >
             <LayoutGrid className="size-5" />
-            <span className="text-[10px] font-medium leading-none max-w-full truncate px-1">
+            <span className="text-[10px] font-medium leading-none max-w-[64px] truncate">
               More
             </span>
           </button>

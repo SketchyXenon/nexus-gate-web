@@ -69,6 +69,7 @@ import { DiceBearAvatar } from "@/components/nexus/dicebear-avatar";
 import { NotificationPreferences } from "@/components/nexus/notification-preferences";
 import { DeactivateAccountDialog } from "@/components/nexus/deactivate-account-dialog";
 import { PasswordStrengthMeter } from "@/components/nexus/password-meter";
+import { MfaCard } from "@/components/nexus/mfa-card";
 import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { PROGRAMS } from "@/lib/programs";
@@ -666,6 +667,10 @@ export function ProfileView() {
           ) : null}
         </CardContent>
       </Card>
+
+      {/* Two-factor authentication (TOTP, RFC 6238) - self-service enroll
+          + disable. Mirrors the Passkey card pattern above. */}
+      <MfaCard />
 
       {/* Registered Devices - self-service device key management */}
       <RegisteredDevicesCard />

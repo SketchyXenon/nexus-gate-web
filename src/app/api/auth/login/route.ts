@@ -2,6 +2,7 @@
 export const maxDuration = 15;
 
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import { loginSchema } from "@/lib/validation";
@@ -19,6 +20,8 @@ import {
   createSupabaseServerClient,
   createSupabaseAdminClient,
   isSupabaseConfigured,
+  REMEMBER_MAX_AGE_S,
+  SESSION_MARKER_COOKIE,
 } from "@/lib/supabase-server";
 import { invalidateAccountCache } from "@/lib/supabase-session";
 import {
@@ -26,6 +29,7 @@ import {
   safeFindAccountByAuthUid,
   isAccountDeactivated,
 } from "@/lib/safe-account";
+import { MFA_CHALLENGE_COOKIE, signChallenge } from "@/lib/mfa";
 
 // Brute-force protection constants.
 const MAX_FAILED_ATTEMPTS = 5;
@@ -73,7 +77,7 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) {
       return badRequest(parsed.error.issues[0]?.message ?? "Invalid input");
     }
-    const { email, password } = parsed.data;
+    const { email, password, rememberMe } = parsed.data;
 
     // Per-email rate limit (5/min). The DB lockout (5 fails -> 15-min) is
     // the primary brute-force defense; this prevents enumeration attempts.
@@ -82,9 +86,13 @@ export async function POST(req: NextRequest) {
 
     // ---- Pre-auth lockout check ----
     // Uses safe lookup that degrades gracefully if migration 0017 not applied.
+    // (role is selected for the "Remember me" policy below - resolved here,
+    // BEFORE auth, because the session cookies must be written with the
+    // right persistence at signInWithPassword time.)
     const preCheck = await safeFindAccountByEmail(email, {
       failedLoginAttempts: true,
       lockedUntil: true,
+      role: true,
     });
 
     // Lockout check. We KEEP the 423 LOCKED response here because by the time
@@ -112,8 +120,21 @@ export async function POST(req: NextRequest) {
       if (acctRl) return acctRl;
     }
 
+    // ---- "Remember me" policy ----
+    // Resolved from the PRE-AUTH lookup (by email) because the Supabase
+    // session cookies must be written with the right persistence at
+    // signInWithPassword time - before the post-auth account load. If
+    // preCheck is null (unknown email / degraded migration) the login
+    // cannot succeed anyway, so defaulting to session-scoped is safe.
+    // ADMIN accounts are force-excluded: a 30-day privileged cookie on a
+    // shared machine is an unacceptable blast radius; admin sessions stay
+    // browser-scoped.
+    const remembered = rememberMe === true && preCheck?.role !== "ADMIN";
+
     // Sign in via Supabase Auth (sets the session cookie).
-    const supabase = await createSupabaseServerClient();
+    const supabase = await createSupabaseServerClient({
+      rememberSession: remembered,
+    });
     const { data: authData, error: authError } =
       await supabase.auth.signInWithPassword({ email, password });
 
@@ -263,6 +284,68 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // --- MFA gate (optional, per-account) ---
+    // Per 06-security-architecture.md §2 "defense in depth". When the
+    // account has MFA enabled, do NOT sign in yet. We leave the Supabase
+    // session intact (it's needed for the post-MFA cookie write) but
+    // DON'T set the sticky ng_sess marker, so the session can't be
+    // persisted across browser restarts until MFA is satisfied. The
+    // frontend shows the OTP input; the user POSTs to /api/auth/mfa/
+    // login-verify, which validates the challenge cookie + the TOTP /
+    // backup code, then sets ng_mfa_verified AND ng_sess (when remembered).
+    //
+    // Enumeration trade-off (06 §2): a distinct `mfa_required` status
+    // reveals that the email+password was correct AND MFA is on. The
+    // accepted UX trade-off. The challengeId is unguessable (cuid +
+    // signed JWT) and the verify route returns a generic 401 for every
+    // failure (wrong code, expired challenge, consumed challenge,
+    // disabled-during-window), so attackers can't probe WHICH step
+    // failed.
+    if (account.mfaEnabled) {
+      const challengeId = randomUUID();
+      await db.mfaChallenge.create({
+        data: {
+          id: challengeId,
+          accountId: account.id,
+          expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+        },
+      });
+      const challengeJwt = await signChallenge(challengeId, account.id);
+      const resp = NextResponse.json(
+        { status: "mfa_required" },
+        { status: 200, headers: { "Cache-Control": "no-store" } },
+      );
+      resp.cookies.set(MFA_CHALLENGE_COOKIE, challengeJwt, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+        maxAge: 5 * 60,
+      });
+      // Carry remember-me intent through the 5-minute challenge window
+      // (browser-scoped cookie). The login-verify route reads this to
+      // set ng_sess with the right persistence. ADMIN accounts: the
+      // login route force-disabled `remembered` at line 130, so this
+      // cookie is always "0" for them - privileged sessions stay
+      // browser-scoped.
+      resp.cookies.set("ng_mfa_remember", remembered ? "1" : "0", {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+        maxAge: 5 * 60,
+      });
+      await audit({
+        actorId: account.id,
+        action: "auth.mfa_challenge",
+        targetType: "Account",
+        targetId: account.id,
+        metadata: {},
+        req,
+      });
+      return resp;
+    }
+
     // Revoke previous refresh tokens (legacy field, defense-in-depth).
     await db.refreshToken
       .updateMany({
@@ -285,10 +368,14 @@ export async function POST(req: NextRequest) {
       action: "auth.login",
       targetType: "Account",
       targetId: account.id,
+      metadata: {
+        rememberMe: remembered,
+        role: account.role,
+      },
       req,
     });
 
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         id: account.id,
         email: account.email,
@@ -301,6 +388,27 @@ export async function POST(req: NextRequest) {
       },
       { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } },
     );
+
+    // ---- Sticky persistence marker ----
+    // ng_sess=p (30d, HttpOnly, SameSite=Lax) tells every later
+    // createSupabaseServerClient() call (token refresh, any API route)
+    // to keep applying 30-day persistence to the session cookies.
+    // Without the marker: delete it so a previous remembered session on
+    // this browser can't leak persistence into a fresh session-scoped
+    // login. The marker carries no secret (single letter) and is HttpOnly.
+    if (remembered) {
+      response.cookies.set(SESSION_MARKER_COOKIE, "p", {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+        maxAge: REMEMBER_MAX_AGE_S,
+      });
+    } else {
+      response.cookies.delete(SESSION_MARKER_COOKIE);
+    }
+
+    return response;
   } catch (e) {
     if (isDbUnavailableError(e)) return dbUnavailable(e);
     throw e;

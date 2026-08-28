@@ -23,6 +23,11 @@ export interface Account {
   createdAt?: string;
   isDeactivated?: boolean;
   deactivatedAt?: string | null;
+  // MFA (TOTP) state. When mfaEnabled is true, the session layer
+  // (supabase-session.ts) requires a valid ng_mfa_verified cookie bound
+  // to account.id before granting access - fail closed.
+  mfaEnabled?: boolean;
+  mfaEnabledAt?: string | null;
 }
 
 export interface Profile extends Account {
@@ -186,6 +191,12 @@ export const useMe = () =>
     staleTime: 60_000,
   });
 
+// Discriminated response for the login route. The 200 status returns
+// EITHER a full Account (login complete) OR `{ status: "mfa_required" }`
+// (account.mfaEnabled is on - the frontend switches to the MFA-input
+// mode and POSTs to /api/auth/mfa/login-verify).
+export type LoginResponse = Account | { status: "mfa_required" };
+
 export const useLogin = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -194,11 +205,16 @@ export const useLogin = () => {
       password: string;
       rememberMe?: boolean;
     }) =>
-      api<Account>("/api/auth/login", {
+      api<LoginResponse>("/api/auth/login", {
         method: "POST",
         body: JSON.stringify(vars),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["me"] }),
+    onSuccess: (data) => {
+      // Don't invalidate "me" when MFA is pending - the user isn't
+      // authed yet. The login-verify route's onSuccess will do it.
+      if (data && typeof data === "object" && "status" in data) return;
+      qc.invalidateQueries({ queryKey: ["me"] });
+    },
   });
 };
 
@@ -285,6 +301,73 @@ export const useLogout = () => {
       qc.setQueryData(["me"], null);
       qc.clear();
     },
+  });
+};
+
+// ---------------- MFA (TOTP) ----------------
+// Five React Query hooks wrapping the /api/auth/mfa/* routes. All return
+// the raw response shape - the components decide what to do with it
+// (e.g. show backup codes, switch to MFA input mode, redirect to login).
+// The ng_mfa_challenge cookie is sent automatically with each request
+// (HttpOnly, same-origin).
+
+// GET /api/auth/mfa/status - current MFA state for the signed-in user.
+// Used by the Profile UI to render the right button.
+export const useMfaStatus = () =>
+  useQuery({
+    queryKey: ["mfa", "status"],
+    queryFn: async () =>
+      api<{ enabled: boolean; enabledAt: string | null }>(
+        "/api/auth/mfa/status",
+      ),
+    staleTime: 30_000,
+  });
+
+// POST /api/auth/mfa/enroll - generate a new secret + otpauth URL.
+// Returns the plaintext secret + the otpauth URL for QR rendering.
+export const useMfaEnroll = () =>
+  useMutation({
+    mutationFn: () =>
+      api<{ secret: string; otpauthUrl: string }>("/api/auth/mfa/enroll", {
+        method: "POST",
+      }),
+  });
+
+// POST /api/auth/mfa/verify - confirm enrollment. Returns the 10
+// one-time backup codes (only time they're shown).
+export const useMfaVerify = () =>
+  useMutation({
+    mutationFn: (vars: { code: string }) =>
+      api<{ backupCodes: string[] }>("/api/auth/mfa/verify", {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
+  });
+
+// POST /api/auth/mfa/disable - turn MFA off. Requires a current TOTP
+// or backup code.
+export const useMfaDisable = () =>
+  useMutation({
+    mutationFn: (vars: { code: string }) =>
+      api<{ ok: boolean }>("/api/auth/mfa/disable", {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
+  });
+
+// POST /api/auth/mfa/login-verify - public, used by the login screen
+// after the login route returned `mfa_required`. body { code } for TOTP
+// OR { backupCode } for the backup path. On success, returns the same
+// Account payload shape as the login route.
+export const useMfaLoginVerify = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { code?: string; backupCode?: string }) =>
+      api<Account>("/api/auth/mfa/login-verify", {
+        method: "POST",
+        body: JSON.stringify(vars),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["me"] }),
   });
 };
 

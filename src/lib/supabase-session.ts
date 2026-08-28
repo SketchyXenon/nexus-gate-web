@@ -14,6 +14,8 @@ import { db } from "@/lib/db";
 import type { ApiAccount } from "@/lib/api";
 import { getJwtSession, isJwtValidationAvailable } from "@/lib/jwt-session";
 import { getAccountCache, setAccountCache } from "@/lib/account-cache";
+import { cookies } from "next/headers";
+import { MFA_VERIFIED_COOKIE, verifyMfaVerified } from "@/lib/mfa";
 
 export interface SupabaseSession {
   authUid: string;
@@ -107,6 +109,17 @@ export async function getSupabaseSession(options?: {
 //
 // options.allowRecovery: set true ONLY for /api/auth/reset-password. All
 // other callers use the default (false) which rejects recovery sessions.
+//
+// MFA ENFORCEMENT (per 06-security-architecture.md §2 "defense in depth"):
+// When the resolved account has mfaEnabled === true, this function ALSO
+// requires a valid ng_mfa_verified cookie (JWT signed with
+// SUPABASE_JWT_SECRET, bound to account.id). If the cookie is missing or
+// invalid, the function returns null - the caller (requireAuth) treats
+// the request as unauthenticated (fail closed). The cookie is set by
+// /api/auth/mfa/login-verify after the user submits a correct TOTP /
+// backup code at sign-in. The MFA gate runs AFTER the cache lookup so
+// the cache (keyed by authUid) can stay warm across requests that share
+// the same browser session.
 export async function getCurrentAccountSupabase(options?: {
   allowRecovery?: boolean;
 }): Promise<ApiAccount | null> {
@@ -117,18 +130,50 @@ export async function getCurrentAccountSupabase(options?: {
   // authUid and a recovery session must not be reusable as a normal session
   // by a later (non-allowRecovery) caller.
   if (session.isRecovery) {
-    return resolveAccountFromDb(session.authUid, /* cacheResult */ false);
+    const account = await resolveAccountFromDb(
+      session.authUid,
+      /* cacheResult */ false,
+    );
+    return applyMfaGate(account);
   }
 
   // Check the unified cache (Redis first, then in-memory).
   const cached = await getAccountCache(session.authUid);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) {
+    return applyMfaGate(cached);
+  }
 
   const result = await resolveAccountFromDb(
     session.authUid,
     /* cacheResult */ true,
   );
-  return result;
+  return applyMfaGate(result);
+}
+
+// ---- MFA gate ----
+// If the account has MFA enabled, require a valid ng_mfa_verified cookie
+// bound to account.id. Returns null (fail closed) on:
+//   - missing cookie
+//   - tampered/expired JWT
+//   - subject mismatch (cookie belongs to a different account)
+// Otherwise returns the account unchanged.
+//
+// This runs on EVERY requireAuth-protected request, so it must be cheap.
+// verifyMfaVerified is a local jose HS256 verify (~0.1ms).
+async function applyMfaGate(
+  account: ApiAccount | null,
+): Promise<ApiAccount | null> {
+  if (!account) return null;
+  if (!account.mfaEnabled) return account;
+  try {
+    const cookieStore = await cookies();
+    const cookie = cookieStore.get(MFA_VERIFIED_COOKIE)?.value;
+    if (!cookie) return null;
+    const ok = await verifyMfaVerified(cookie, account.id);
+    return ok ? account : null;
+  } catch {
+    return null;
+  }
 }
 
 // Fetch the account from the DB by authUid, with P2022-safe fallback for
@@ -136,6 +181,9 @@ export async function getCurrentAccountSupabase(options?: {
 // result (including null) is written to the Redis+in-memory cache so
 // subsequent requests skip the DB. Recovery sessions pass cacheResult=false
 // to avoid poisoning the cache with a session-scoped identity.
+//
+// Also selects mfaEnabled / mfaEnabledAt so the MFA gate in
+// getCurrentAccountSupabase can read it from the cache without a re-query.
 async function resolveAccountFromDb(
   authUid: string,
   cacheResult: boolean,
@@ -154,6 +202,8 @@ async function resolveAccountFromDb(
     year: number | null;
     lastLoginAt: Date | null;
     isDeactivated?: boolean;
+    mfaEnabled?: boolean;
+    mfaEnabledAt?: Date | null;
   } | null = null;
 
   try {
@@ -172,10 +222,14 @@ async function resolveAccountFromDb(
         year: true,
         lastLoginAt: true,
         isDeactivated: true,
+        mfaEnabled: true,
+        mfaEnabledAt: true,
       },
     });
   } catch (e) {
-    // P2022: is_deactivated column missing (migration 0017 not applied).
+    // P2022: a column is missing (migration 0017 or MFA migration not
+    // applied). Fall back to the bare schema. MFA fields default to
+    // undefined on the ApiAccount, which the gate treats as "not enabled".
     if (
       typeof e === "object" &&
       e !== null &&
@@ -211,6 +265,10 @@ async function resolveAccountFromDb(
           role: account.role as ApiAccount["role"],
           lastLoginAt: account.lastLoginAt
             ? account.lastLoginAt.toISOString()
+            : null,
+          mfaEnabled: account.mfaEnabled ?? false,
+          mfaEnabledAt: account.mfaEnabledAt
+            ? account.mfaEnabledAt.toISOString()
             : null,
         }
       : null;

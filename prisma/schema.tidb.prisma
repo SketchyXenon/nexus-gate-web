@@ -61,6 +61,14 @@ model Account {
   passkeyCredential    String?   @map("passkey_credential") @db.LongText
   passkeyCredentialId  String?   @unique @map("passkey_credential_id") @db.VarChar(255)
   supabaseAuthUid      String?   @unique @map("supabase_auth_uid") @db.VarChar(128)
+  // MFA (TOTP, RFC 6238). Optional per account. Secret is AES-256-GCM
+  // encrypted at rest (mfa.ts encryptSecret/decryptSecret). The plaintext
+  // secret never persists; only the base64 ciphertext+iv+tag blob does.
+  mfaSecretEnc         String?   @map("mfa_secret_enc") @db.Text
+  mfaEnabled           Boolean   @default(false) @map("mfa_enabled")
+  mfaEnabledAt         DateTime? @map("mfa_enabled_at")
+  // JSON array of bcrypt-hashed one-time backup codes (generateBackupCodes).
+  mfaBackupCodesHash   String?   @map("mfa_backup_codes_hash") @db.Text
   notificationEnabled  Boolean   @default(false) @map("notification_enabled")
   notificationPrefs    Json?     @map("notification_prefs")
   lastLoginAt          DateTime? @map("last_login_at")
@@ -84,6 +92,7 @@ model Account {
   refreshTokens      RefreshToken[]
   deviceKeys         DeviceKey[]
   termsAcceptances   TermsAcceptance[]
+  mfaChallenges      MfaChallenge[]
 
   @@index([role, status])
   @@index([program, section])
@@ -375,4 +384,28 @@ model Visit {
   @@index([dayBucket])
   @@index([route])
   @@map("visits")
+}
+
+// ====================================================================
+// 14. MFA CHALLENGES (TOTP, RFC 6238)
+// --------------------------------------------------------------------
+// A short-lived row created at /api/auth/login when account.mfaEnabled.
+// The login-verify route reads + consumes it within a 5-minute window.
+// `attempts` is bumped on each failed verify so we can lock the
+// challenge after 5 failures. `consumedAt` is set on success, lockout,
+// or expiry, so the challengeJwt can be replayed only until consumed.
+// ====================================================================
+
+model MfaChallenge {
+  id         String    @id @default(cuid()) @db.VarChar(128)
+  accountId  String    @map("account_id") @db.VarChar(128)
+  account    Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime  @map("expires_at")
+  consumedAt DateTime? @map("consumed_at")
+  attempts   Int       @default(0)
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([accountId, consumedAt])
+  @@index([expiresAt])
+  @@map("mfa_challenges")
 }
