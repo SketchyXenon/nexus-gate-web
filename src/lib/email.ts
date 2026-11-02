@@ -108,3 +108,40 @@ export async function sendWelcomeEmail(
     // Non-critical.
   }
 }
+
+// ====================================================================
+// Infrastructure alerts (dependency keep-alive watchdog)
+// --------------------------------------------------------------------
+// Unlike the user-facing sends above, this one is CRITICAL-priority:
+// it is the only channel that reaches admins while Supabase Auth is
+// down (in-app notifications require a login, which is exactly what is
+// broken). See docs/supabase-keep-alive.md.
+//
+// THROWS on any failure (unconfigured SMTP, transport error) so the
+// caller (src/lib/keep-alive.ts) can leave the dedupe anchor untouched
+// and retry delivery on the next run instead of marking it delivered.
+// ====================================================================
+export async function sendInfraAlertEmail(input: {
+  to: string[];
+  subject: string;
+  text: string;
+  html: string;
+}): Promise<void> {
+  const config = getEmailConfig();
+  if (!config) {
+    throw new Error(
+      "SMTP is not configured (SMTP_USER/SMTP_PASS) - infra alert cannot be " +
+        "delivered. Set the SMTP_* env vars so auth-outage alerts reach the " +
+        "admins (docs/supabase-keep-alive.md §5).",
+    );
+  }
+  const transport = getTransporter();
+  if (!transport) throw new Error("SMTP transporter unavailable");
+  await transport.sendMail({
+    from: `"${config.fromName}" <${config.from}>`,
+    to: input.to.join(", "),
+    subject: input.subject,
+    text: input.text,
+    html: input.html,
+  });
+}

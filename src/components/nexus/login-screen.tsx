@@ -2012,37 +2012,10 @@ function AuthScreen({
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="relative z-10 border-t border-border/40 px-6 py-4 text-center text-xs text-muted-foreground">
-        Nexus Gate ·{" "}
-        <button
-          className="hover:text-primary underline"
-          onClick={() => openInfoModal("terms")}
-        >
-          Terms
-        </button>
-        {" · "}
-        <button
-          className="hover:text-primary underline"
-          onClick={() => openInfoModal("privacy")}
-        >
-          Privacy
-        </button>
-        {" · "}
-        <button
-          className="hover:text-primary underline"
-          onClick={() => openInfoModal("faq")}
-        >
-          FAQ
-        </button>
-        {" · "}
-        <button
-          className="hover:text-primary underline"
-          onClick={() => openInfoModal("bug")}
-        >
-          Report a bug
-        </button>
-      </footer>
+      {/* Footer intentionally removed: the login screen keeps a single
+          focused column. Terms/Privacy/FAQ/report-a-bug remain reachable
+          via the in-card links (openInfoModal) and the CookieConsent
+          banner; InfoModals stays mounted so those links still work. */}
 
       <CookieConsent />
       <InfoModals />

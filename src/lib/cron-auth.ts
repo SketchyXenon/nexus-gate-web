@@ -35,12 +35,13 @@ let queryAuthWarned = false;
 
 /**
  * Check cron authorization. If `endpoint` is provided (e.g. "cleanup",
- * "reminders"), checks CRON_CLEANUP_SECRET / CRON_REMINDERS_SECRET first,
- * falling back to CRON_SECRET. This limits blast radius if one secret leaks.
+ * "reminders", "keepalive"), checks CRON_CLEANUP_SECRET /
+ * CRON_REMINDERS_SECRET / CRON_KEEPALIVE_SECRET first, falling back to
+ * CRON_SECRET. This limits blast radius if one secret leaks.
  */
 export function checkCronAuth(
   req: NextRequest,
-  endpoint?: "cleanup" | "reminders",
+  endpoint?: "cleanup" | "reminders" | "keepalive",
 ): CronAuthResult {
   // Build the list of valid secrets: endpoint-specific first, then global.
   const secrets: string[] = [];
@@ -177,7 +178,7 @@ function constantTimeEqual(a: string, b: string): boolean {
 // valid secret (endpoint-specific or global).
 export function checkBodySecret(
   body: unknown,
-  endpoint?: "cleanup" | "reminders",
+  endpoint?: "cleanup" | "reminders" | "keepalive",
 ): boolean {
   const secrets: string[] = [];
   if (endpoint) {

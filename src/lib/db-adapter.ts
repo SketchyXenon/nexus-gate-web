@@ -24,7 +24,10 @@
 // ====================================================================
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaMariaDb } from "@prisma/adapter-mariadb";
-import type { SqlDriverAdapter, SqlDriverAdapterFactory } from "@prisma/driver-adapter-utils";
+import type {
+  SqlDriverAdapter,
+  SqlDriverAdapterFactory,
+} from "@prisma/driver-adapter-utils";
 
 // Every Prisma 7 adapter implements SqlDriverAdapterFactory, which is
 // exactly what the PrismaClient constructor's `adapter` prop expects.
@@ -33,11 +36,14 @@ export type PrismaDriverAdapter = SqlDriverAdapterFactory;
 // Runtime detection without importing bun-types into the Node type
 // graph: property probing on globalThis keeps tsc (which may run
 // without bun-types) happy.
-const isBunRuntime = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+const isBunRuntime =
+  typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
 
 // Memoized module handle for the bun:sqlite adapter (loaded at most
 // once per process, and only from inside connect() under Bun).
-let bunSqliteFactoryPromise: Promise<{ connect(): Promise<SqlDriverAdapter> }> | null = null;
+let bunSqliteFactoryPromise: Promise<{
+  connect(): Promise<SqlDriverAdapter>;
+}> | null = null;
 
 /**
  * Returns a SYNCHRONOUS factory object for the bun:sqlite adapter whose
@@ -81,8 +87,22 @@ export function createAdapterFromUrl(rawUrl: string): PrismaDriverAdapter {
     //   connection_limit=N -> connectionLimit (default 5, matches the
     //     300-concurrent TiDB Serverless sizing in example.env)
     //   pool_timeout=S     -> acquireTimeout (mariadb takes milliseconds)
-    const connectionLimit = Number.parseInt(params.get("connection_limit") ?? "", 10);
+    const connectionLimit = Number.parseInt(
+      params.get("connection_limit") ?? "",
+      10,
+    );
     const poolTimeout = Number.parseInt(params.get("pool_timeout") ?? "", 10);
+
+    // INCIDENT HARDENING (2026-11-02, /api/cron/event-reminders P2039):
+    // "pool failed to retrieve a connection (active=0 idle=0 limit=5)"
+    // means the pool had to CREATE a new connection and that attempt
+    // failed. Without explicit timeouts the underlying TCP/TLS handshake
+    // can stall for the OS default (~2 min), holding the request until
+    // Vercel kills it. Cap the handshake at 8s and the pool-wait at 10s
+    // (overridable via pool_timeout) so failures surface as clean,
+    // retryable 503s instead of hangs.
+    const CONNECT_TIMEOUT_MS = 8_000;
+    const DEFAULT_ACQUIRE_TIMEOUT_MS = 10_000;
 
     // TLS: TiDB Serverless REQUIRES encrypted connections. Honor the
     // classic Prisma sslaccept values, a plain ssl=true/false, and
@@ -94,7 +114,12 @@ export function createAdapterFromUrl(rawUrl: string): PrismaDriverAdapter {
     let ssl: { rejectUnauthorized: boolean } | undefined;
     if (sslAccept === "accept_invalid_certs" || sslParam === "false") {
       ssl = { rejectUnauthorized: false };
-    } else if (sslAccept === "strict" || sslParam === "true" || sslAccept || isTiDBCloud) {
+    } else if (
+      sslAccept === "strict" ||
+      sslParam === "true" ||
+      sslAccept ||
+      isTiDBCloud
+    ) {
       ssl = { rejectUnauthorized: true };
     }
 
@@ -105,7 +130,13 @@ export function createAdapterFromUrl(rawUrl: string): PrismaDriverAdapter {
       password: decodeURIComponent(u.password),
       database: u.pathname.replace(/^\//, "") || undefined,
       connectionLimit: Number.isFinite(connectionLimit) ? connectionLimit : 5,
-      ...(Number.isFinite(poolTimeout) ? { acquireTimeout: poolTimeout * 1000 } : {}),
+      // Cap TCP+TLS handshake establishment (mariadb connector, ms).
+      connectTimeout: CONNECT_TIMEOUT_MS,
+      // Cap the wait for a pool slot. Defaults to 10s when the URL omits
+      // pool_timeout - the mariadb connector's own default, now explicit.
+      acquireTimeout: Number.isFinite(poolTimeout)
+        ? poolTimeout * 1000
+        : DEFAULT_ACQUIRE_TIMEOUT_MS,
       ...(ssl ? { ssl } : {}),
     });
   }

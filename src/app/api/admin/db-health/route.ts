@@ -7,6 +7,7 @@ import {
   datasourceEnvMismatch,
   type DbProvider,
 } from "@/lib/db-provider";
+import { KEEPALIVE_KEYS } from "@/lib/keep-alive";
 
 // ====================================================================
 // GET /api/admin/db-health (ADMIN only)
@@ -163,6 +164,41 @@ export async function GET() {
     const tableExists = columns.length > 0;
     const verdict = !tableExists || missing.length > 0 ? "DRIFT" : "OK";
 
+    // Dependency keep-alive watchdog state (docs/supabase-keep-alive.md
+    // §4). Best-effort read: if the settings table is unavailable, the
+    // schema introspection above must still be reported.
+    let keepalive: Record<string, unknown> | null = null;
+    try {
+      const [kaStatus, kaRunAt, kaSuccessAt, kaError] = await Promise.all([
+        db.setting.findUnique({ where: { key: KEEPALIVE_KEYS.status } }),
+        db.setting.findUnique({ where: { key: KEEPALIVE_KEYS.runAt } }),
+        db.setting.findUnique({ where: { key: KEEPALIVE_KEYS.successAt } }),
+        db.setting.findUnique({ where: { key: KEEPALIVE_KEYS.error } }),
+      ]);
+      const successMs = kaSuccessAt?.value
+        ? Date.parse(kaSuccessAt.value)
+        : Number.NaN;
+      // Supabase pauses free-tier projects after ~7 days without API
+      // activity; 72h without a successful ping means the watchdog itself
+      // (or a dependency) needs attention LONG before that.
+      const stale =
+        Number.isNaN(successMs) || Date.now() - successMs > 72 * 3_600_000;
+      keepalive = {
+        status: kaStatus?.value ?? null,
+        lastRunAt: kaRunAt?.value ?? null,
+        lastSuccessAt: kaSuccessAt?.value ?? null,
+        lastError: kaError?.value || null,
+        stale,
+        hint: stale
+          ? "No successful keep-alive run in 72h. Check that the daily cleanup " +
+            "cron ran (Vercel logs, 03:00 UTC) and set up an external scheduler " +
+            "for /api/cron/keep-alive (docs/supabase-keep-alive.md §6)."
+          : null,
+      };
+    } catch {
+      keepalive = null;
+    }
+
     return NextResponse.json(
       {
         ok: true,
@@ -197,6 +233,7 @@ export async function GET() {
         missingColumns: missing,
         extraColumns: extra,
         verdict,
+        keepalive,
         hint:
           verdict === "DRIFT"
             ? missing.length > 0

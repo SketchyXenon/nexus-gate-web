@@ -20,7 +20,7 @@
     "db:push": "npx --no-install prisma db push --config=prisma.config.ts",
     "db:push:sqlite": "npx --no-install prisma db push --config=prisma.config.ts",
     "db:push:tidb": "npx --no-install prisma db push --config=prisma.tidb.config.ts",
-    "db:generate": "npx --no-install prisma generate --config=prisma.config.ts",
+    "db:generate": "npx --no-install prisma generate --config=prisma.postgres.config.ts",
     "db:generate:sqlite": "npx --no-install prisma generate --config=prisma.config.ts",
     "db:generate:tidb": "npx --no-install prisma generate --config=prisma.tidb.config.ts",
     "db:verify:tidb": "bun run scripts/verify-tidb-schema.ts",

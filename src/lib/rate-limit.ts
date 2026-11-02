@@ -6,10 +6,35 @@
 // entirely inside Redis - no TOCTOU window between count and increment.
 // Works with ANY standard Redis (Aiven, ElastiCache, self-hosted), not
 // just Upstash's REST API.
+//
+// DEGRADATION POLICY (incident 2026-11-02):
+// The original design failed CLOSED for sensitive presets (login,
+// register, ...) when Redis errored - reasoning: an attacker could DDoS
+// Redis to bypass brute-force protection. Production proved the
+// availability flaw in that trade-off: a plain Redis outage (connect
+// ETIMEDOUT) made the first rate-limit call hang forever (offline
+// queue) -> 15s Vercel wall -> 504 for EVERY login; and once the hang
+// was fixed, fail-closed would still have locked EVERY user out for as
+// long as Redis stayed down (a far worse outcome than weakened
+// per-instance limiting, and a self-inflicted DoS an attacker can
+// trigger by DDoSing Redis in the first place).
+//
+// NEW POLICY: any Redis failure/timeout degrades to the IN-MEMORY
+// limiter for ALL presets. Protection that remains during a Redis
+// outage:
+//   - per-instance in-memory sliding window (every Vercel instance
+//     enforces its own buckets - still caps brute-force rate per
+//     instance),
+//   - the DB lockout in /api/auth/login (5 fails -> 15-min account
+//     lock) - the PRIMARY brute-force defense, Redis-independent,
+//   - Supabase Auth's own rate limits on the auth endpoints.
+// Availability of the auth path wins: a temporary weakening of
+// cross-instance limiting is recoverable; a total login outage is not.
+// See ARCHITECTURE-SECURITY.md "Redis degradation policy".
 // ====================================================================
 
 import "server-only";
-import { redis, isRedisAvailable } from "@/lib/redis";
+import { redis, isRedisAvailable, withRedisTimeout } from "@/lib/redis";
 
 interface RateLimitConfig {
   maxRequests: number;
@@ -72,9 +97,11 @@ const PRESETS: Record<string, RateLimitConfig> = {
 
 export type RateLimitPreset = keyof typeof PRESETS;
 
-// Sensitive presets where failing OPEN on Redis error would let an
-// attacker bypass brute-force protection by DDoSing Redis. These fail
-// CLOSED (deny the request) when Redis is unreachable.
+// Sensitive presets: these gate credential-bearing endpoints (login,
+// register, passkeys, MFA, admin mutations). During a Redis outage they
+// degrade to the same in-memory fallback as every other preset (see the
+// DEGRADATION POLICY note in the header) - but they log at ERROR level
+// so a sustained outage on an auth endpoint is loud in the Vercel logs.
 const SENSITIVE_PRESETS: ReadonlySet<RateLimitPreset> = new Set([
   "login",
   "register",
@@ -202,15 +229,14 @@ let scriptSha: string | null = null;
 async function getScriptSha(): Promise<string | null> {
   if (scriptSha) return scriptSha;
   if (!redis) return null;
-  try {
+  // Bounded like every other round-trip (see redisLimit).
+  const sha = await withRedisTimeout(async () => {
     // ioredis returns RedisReturnType (Buffer | string | null) for SCRIPT LOAD.
     // Cast to string; the SHA1 is always a 40-char hex string.
-    const sha = (await redis.script("LOAD", SLIDING_WINDOW_LUA)) as string;
-    scriptSha = typeof sha === "string" ? sha : null;
-    return scriptSha;
-  } catch {
-    return null;
-  }
+    return (await redis!.script("LOAD", SLIDING_WINDOW_LUA)) as string;
+  });
+  scriptSha = typeof sha === "string" ? sha : null;
+  return scriptSha;
 }
 
 function randomId(): string {
@@ -236,37 +262,15 @@ async function redisLimit(
   const reqid = randomId();
   const redisKey = `nexus-gate:${preset}:${key}`;
   const sha = await getScriptSha();
-  let result: number[] | null = null;
-  try {
+  // Every round-trip is bounded (see withRedisTimeout): a dead socket on
+  // an established connection can't hang the caller past 1.5s. SCRIPT
+  // LOAD is included in the bound - it rides the same connection.
+  const result = await withRedisTimeout(async (): Promise<number[] | null> => {
     if (sha) {
-      // EVALSHA (1 round-trip). Falls back to EVAL on NOSCRIPT error.
-      result = (await redis.evalsha(
-        sha,
-        1,
-        redisKey,
-        String(config.windowMs),
-        String(config.maxRequests),
-        String(now),
-        reqid,
-      )) as number[] | null;
-    }
-    if (!result) {
-      result = (await redis.eval(
-        SLIDING_WINDOW_LUA,
-        1,
-        redisKey,
-        String(config.windowMs),
-        String(config.maxRequests),
-        String(now),
-        reqid,
-      )) as number[] | null;
-    }
-  } catch (e) {
-    // NOSCRIPT: the script was evicted from Redis's cache. Reload + retry once.
-    if (e instanceof Error && /NOSCRIPT/i.test(e.message)) {
       try {
-        result = (await redis.eval(
-          SLIDING_WINDOW_LUA,
+        // EVALSHA (1 round-trip). Falls back to EVAL on NOSCRIPT below.
+        return (await redis!.evalsha(
+          sha,
           1,
           redisKey,
           String(config.windowMs),
@@ -274,15 +278,29 @@ async function redisLimit(
           String(now),
           reqid,
         )) as number[] | null;
-        // Refresh the cached SHA on the next call.
-        scriptSha = null;
-      } catch (e2) {
-        throw e2;
+      } catch (e) {
+        // NOSCRIPT: the script was evicted from Redis's cache (a Redis
+        // restart flushes the script cache while our cached SHA stays).
+        // Drop the cached SHA so the next call re-LOADs, and run EVAL
+        // (text) once here - otherwise a Redis restart would degrade
+        // every request to in-memory until the process restarted.
+        if (e instanceof Error && /NOSCRIPT/i.test(e.message)) {
+          scriptSha = null;
+        } else {
+          throw e;
+        }
       }
-    } else {
-      throw e;
     }
-  }
+    return (await redis!.eval(
+      SLIDING_WINDOW_LUA,
+      1,
+      redisKey,
+      String(config.windowMs),
+      String(config.maxRequests),
+      String(now),
+      reqid,
+    )) as number[] | null;
+  });
   if (!result || result.length < 3) {
     return { allowed: false, remaining: 0, retryAfterMs: config.windowMs };
   }
@@ -315,24 +333,27 @@ export async function rateLimit(
   try {
     return await redisLimit(key, preset);
   } catch (e) {
-    // On serverless (Vercel) without Redis, in-memory limiting doesn't work
-    // (each request hits a different instance). For general API presets we
-    // fail OPEN to avoid blocking all users during a Redis outage. For
-    // SENSITIVE presets (login, register, passkey) we fail CLOSED - an
-    // attacker could otherwise DDoS Redis to bypass brute-force protection.
+    // DEGRADATION POLICY (see header): Redis outage => in-memory fallback
+    // for ALL presets. NEVER fail closed for sensitive presets - that
+    // turned a Redis outage into a full login outage (incident
+    // 2026-11-02: connect ETIMEDOUT hung the route -> 15s -> 504).
+    // getScriptSha's failure also lands here (it returns null on error,
+    // but a rejected SCRIPT LOAD propagates) - uniform handling below.
     const isSensitive = SENSITIVE_PRESETS.has(preset);
-    console.error(
-      `[rate-limit] Redis error, failing ${isSensitive ? "CLOSED" : "open"}:`,
-      e instanceof Error ? e.message : e,
-    );
+    const msg = e instanceof Error ? e.message : String(e);
     if (isSensitive) {
-      return { allowed: false, remaining: 0, retryAfterMs: config.windowMs };
+      console.error(
+        `[rate-limit] Redis unavailable for "${preset}" - DEGRADED to in-memory limiter. ` +
+          "Auth endpoints stay reachable; cross-instance limiting is weakened until Redis recovers. Error:",
+        msg,
+      );
+    } else {
+      console.error(
+        `[rate-limit] Redis unavailable for "${preset}" - degraded to in-memory limiter:`,
+        msg,
+      );
     }
-    return {
-      allowed: true,
-      remaining: config.maxRequests - 1,
-      retryAfterMs: 0,
-    };
+    return memoryLimit(key, preset);
   }
 }
 

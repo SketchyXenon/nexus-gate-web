@@ -4,6 +4,8 @@ export const maxDuration = 30;
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { checkCronAuth, checkBodySecret } from "@/lib/cron-auth";
+import { isDbUnavailableError } from "@/lib/api";
+import { notifyDbFailure, runKeepAlive } from "@/lib/keep-alive";
 
 // /api/cron/cleanup
 // Removes expired tokens + old notifications.
@@ -68,6 +70,75 @@ async function runCleanup() {
   };
 }
 
+const TRANSIENT_DB_ERROR =
+  /P2039|P1001|P2024|pool failed|ETIMEDOUT|ECONNRESET|ECONNREFUSED/i;
+
+async function runCleanupWithRetry() {
+  try {
+    return await runCleanup();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!TRANSIENT_DB_ERROR.test(msg)) throw e;
+    console.error(
+      `[cron/cleanup] transient DB error, retrying once: ${msg.slice(0, 200)}`,
+    );
+    await new Promise((r) => setTimeout(r, 1_500));
+    return await runCleanup();
+  }
+}
+
+/**
+ * Runs the daily cleanup, then the dependency keep-alive watchdog.
+ *
+ * WHY EMBEDDED (docs/supabase-keep-alive.md §2 M2): Vercel Hobby caps
+ * cron jobs at 2 and both slots are used - a third vercel.json entry
+ * would fail the deploy. The Supabase pause-protection ping therefore
+ * rides along with the daily cleanup run. It never throws and never
+ * changes the cleanup result: if the watchdog fails, cleanup still
+ * reports ok (they guard different dependencies).
+ *
+ * INCIDENT FIX (2026-11-02): if the cleanup DB queries fail, the old
+ * code aborted BEFORE the watchdog ran - so a TiDB outage suppressed
+ * the very alert that would have reported it. The watchdog now runs
+ * FIRST on the failure path: runKeepAlive is independent of cleanup
+ * (separate probes + its own DB ping) and its alert state machine
+ * decides whether to email admins.
+ */
+async function runCleanupWithKeepAlive() {
+  const result = await runCleanupWithRetry();
+  const keepAlive = await runKeepAlive();
+  return { ...result, keepAlive };
+}
+
+/**
+ * Shared failure path: structured 503 + watchdog trigger on DB
+ * unavailability, rethrow for genuinely unexpected errors (code bugs).
+ */
+async function handleRunnerError(e: unknown): Promise<NextResponse> {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (isDbUnavailableError(e) || TRANSIENT_DB_ERROR.test(msg)) {
+    console.error(
+      `[cron/cleanup] DB unavailable after retry: ${msg.slice(0, 300)}`,
+    );
+    // The watchdog run IS the alerting path here - it re-probes the DB
+    // (with its own bounded ping) and emails admins on the transition.
+    await notifyDbFailure("cron/cleanup");
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "DB_UNAVAILABLE",
+        error:
+          "The database is temporarily unreachable. The run will be retried by the scheduler.",
+      },
+      {
+        status: 503,
+        headers: { "Cache-Control": "no-store", "Retry-After": "60" },
+      },
+    );
+  }
+  throw e;
+}
+
 function authorizeCron(req: NextRequest): NextResponse | null {
   const result = checkCronAuth(req, "cleanup");
   if (result.ok) return null;
@@ -92,11 +163,15 @@ function authorizeCron(req: NextRequest): NextResponse | null {
 export async function GET(req: NextRequest) {
   const denied = authorizeCron(req);
   if (denied) return denied;
-  const result = await runCleanup();
-  return NextResponse.json(
-    { ok: true, ...result },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  try {
+    const result = await runCleanupWithKeepAlive();
+    return NextResponse.json(
+      { ok: true, ...result },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  } catch (e) {
+    return handleRunnerError(e);
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -109,8 +184,12 @@ export async function POST(req: NextRequest) {
       try {
         const body = await req.json();
         if (checkBodySecret(body, "cleanup")) {
-          const result = await runCleanup();
-          return NextResponse.json({ ok: true, ...result });
+          try {
+            const result = await runCleanupWithKeepAlive();
+            return NextResponse.json({ ok: true, ...result });
+          } catch (e) {
+            return handleRunnerError(e);
+          }
         }
       } catch {
         // Empty/invalid JSON - fall through to 401.
@@ -123,6 +202,10 @@ export async function POST(req: NextRequest) {
     if (denied) return denied;
   }
 
-  const result = await runCleanup();
-  return NextResponse.json({ ok: true, ...result });
+  try {
+    const result = await runCleanupWithKeepAlive();
+    return NextResponse.json({ ok: true, ...result });
+  } catch (e) {
+    return handleRunnerError(e);
+  }
 }
