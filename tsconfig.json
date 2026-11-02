@@ -34,5 +34,15 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],
-  "exclude": ["node_modules", "mini-services"]
+  "exclude": [
+    "node_modules",
+    "mini-services",
+    "examples",
+    "skills",
+    // Test files are executed by vitest (which type-checks nothing) and
+    // must never fail a production `next build` on Vercel - a stale test
+    // import used to deploy-block the whole app (TS2305 @prisma/client).
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
+  ]
 }

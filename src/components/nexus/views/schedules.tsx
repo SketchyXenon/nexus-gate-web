@@ -19,14 +19,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
+import { CalendarClock, MapPin, UserRound, Sun, MoonStar } from "lucide-react";
 import {
-  CalendarClock,
-  MapPin,
-  UserRound,
-  Sun,
-  MoonStar,
-} from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -190,16 +190,21 @@ export function SchedulesView() {
 
   const validateForm = (): string | null => {
     if (!form.subject.trim()) return "Enter a subject name.";
-    if (!TIME_PATTERN.test(form.startTime)) return "Start time must be HH:MM (24h), e.g. 08:00.";
-    if (!TIME_PATTERN.test(form.endTime)) return "End time must be HH:MM (24h), e.g. 19:30.";
-    if (form.endTime <= form.startTime) return "End time must be after the start time.";
+    if (!TIME_PATTERN.test(form.startTime))
+      return "Start time must be HH:MM (24h), e.g. 08:00.";
+    if (!TIME_PATTERN.test(form.endTime))
+      return "End time must be HH:MM (24h), e.g. 19:30.";
+    if (form.endTime <= form.startTime)
+      return "End time must be after the start time.";
     if (form.program && !PROGRAMS.some((p) => p.code === form.program)) {
       return "Select a valid program.";
     }
     if (form.section && !SECTION_PATTERN.test(form.section.trim())) {
       return "Section must look like '2-A' (year-letter).";
     }
-    if (!canManage && role === "ORGANIZER" && !me?.program && form.program) {
+    // Organizers are program-scoped: without an assigned program they
+    // cannot pick one (they may only create department-wide entries).
+    if (role === "ORGANIZER" && !me?.program && form.program) {
       return "Your account has no program assigned. Ask an administrator.";
     }
     return null;
@@ -208,7 +213,11 @@ export function SchedulesView() {
   const handleSave = async () => {
     const problem = validateForm();
     if (problem) {
-      toast({ title: "Check the form", description: problem, variant: "destructive" });
+      toast({
+        title: "Check the form",
+        description: problem,
+        variant: "destructive",
+      });
       return;
     }
     setSaving(true);
@@ -227,10 +236,16 @@ export function SchedulesView() {
     try {
       if (editing) {
         await updateSchedule.mutateAsync({ id: editing.id, data: payload });
-        toast({ title: "Schedule updated", description: `${payload.subject} on ${DAY_NAMES[payload.dayOfWeek]}.` });
+        toast({
+          title: "Schedule updated",
+          description: `${payload.subject} on ${DAY_NAMES[payload.dayOfWeek]}.`,
+        });
       } else {
         await createSchedule.mutateAsync(payload);
-        toast({ title: "Schedule added", description: `${payload.subject} on ${DAY_NAMES[payload.dayOfWeek]}.` });
+        toast({
+          title: "Schedule added",
+          description: `${payload.subject} on ${DAY_NAMES[payload.dayOfWeek]}.`,
+        });
       }
       setDialogOpen(false);
     } catch (e) {
@@ -248,7 +263,10 @@ export function SchedulesView() {
     if (!deleting) return;
     try {
       await deleteSchedule.mutateAsync(deleting.id);
-      toast({ title: "Schedule removed", description: `${deleting.subject} was deleted.` });
+      toast({
+        title: "Schedule removed",
+        description: `${deleting.subject} was deleted.`,
+      });
     } catch (e) {
       toast({
         title: "Delete failed",
@@ -286,7 +304,8 @@ export function SchedulesView() {
     return byShift;
   }, [schedules]);
 
-  const hasFilters = shiftFilter !== "ALL" || dayFilter !== "all" || search.trim() !== "";
+  const hasFilters =
+    shiftFilter !== "ALL" || dayFilter !== "all" || search.trim() !== "";
   const shiftTabs: Array<{ value: "DAY" | "NIGHT" | "ALL"; label: string }> = [
     { value: "DAY", label: "Day" },
     { value: "NIGHT", label: "Night" },
@@ -380,7 +399,11 @@ export function SchedulesView() {
                 Day of week
               </Label>
               <Select value={dayFilter} onValueChange={setDayFilter}>
-                <SelectTrigger id="schedule-day" className="h-9 w-full" aria-label="Filter by day of week">
+                <SelectTrigger
+                  id="schedule-day"
+                  className="h-9 w-full"
+                  aria-label="Filter by day of week"
+                >
                   <SelectValue placeholder="All days" />
                 </SelectTrigger>
                 <SelectContent>
@@ -411,7 +434,12 @@ export function SchedulesView() {
             )}
             <div className="flex items-center sm:justify-end">
               {hasFilters && (
-                <Button variant="outline" size="sm" className="h-9" onClick={clearFilters}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9"
+                  onClick={clearFilters}
+                >
                   Clear
                 </Button>
               )}
@@ -431,7 +459,10 @@ export function SchedulesView() {
       ) : schedules.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-2 py-10 text-center">
-            <CalendarClock className="h-10 w-10 text-muted-foreground/50" aria-hidden="true" />
+            <CalendarClock
+              className="h-10 w-10 text-muted-foreground/50"
+              aria-hidden="true"
+            />
             <p className="font-medium">No schedules found</p>
             <p className="max-w-sm text-sm text-muted-foreground">
               {hasFilters
@@ -453,7 +484,10 @@ export function SchedulesView() {
             <section key={shift} aria-labelledby={`shift-${shift}-heading`}>
               <div className="mb-2 flex items-center gap-2">
                 {shift === "NIGHT" ? (
-                  <MoonStar className="h-4 w-4 text-slate-500" aria-hidden="true" />
+                  <MoonStar
+                    className="h-4 w-4 text-slate-500"
+                    aria-hidden="true"
+                  />
                 ) : (
                   <Sun className="h-4 w-4 text-amber-500" aria-hidden="true" />
                 )}
@@ -463,7 +497,8 @@ export function SchedulesView() {
                 >
                   {shift === "NIGHT" ? "Night Shift" : "Day Shift"}
                   <span className="ml-2 font-normal normal-case">
-                    {"\u00b7"} {rows.length} {rows.length === 1 ? "class" : "classes"}
+                    {"\u00b7"} {rows.length}{" "}
+                    {rows.length === 1 ? "class" : "classes"}
                   </span>
                 </h2>
               </div>
@@ -474,18 +509,34 @@ export function SchedulesView() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <caption className="sr-only">
-                        {shift === "NIGHT" ? "Night" : "Day"} shift weekly class schedule
+                        {shift === "NIGHT" ? "Night" : "Day"} shift weekly class
+                        schedule
                       </caption>
                       <thead>
                         <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                          <th scope="col" className="px-4 py-2.5 font-medium">Day</th>
-                          <th scope="col" className="px-4 py-2.5 font-medium">Time</th>
-                          <th scope="col" className="px-4 py-2.5 font-medium">Subject</th>
-                          <th scope="col" className="px-4 py-2.5 font-medium">Section</th>
-                          <th scope="col" className="px-4 py-2.5 font-medium">Instructor</th>
-                          <th scope="col" className="px-4 py-2.5 font-medium">Room</th>
+                          <th scope="col" className="px-4 py-2.5 font-medium">
+                            Day
+                          </th>
+                          <th scope="col" className="px-4 py-2.5 font-medium">
+                            Time
+                          </th>
+                          <th scope="col" className="px-4 py-2.5 font-medium">
+                            Subject
+                          </th>
+                          <th scope="col" className="px-4 py-2.5 font-medium">
+                            Section
+                          </th>
+                          <th scope="col" className="px-4 py-2.5 font-medium">
+                            Instructor
+                          </th>
+                          <th scope="col" className="px-4 py-2.5 font-medium">
+                            Room
+                          </th>
                           {canManage && (
-                            <th scope="col" className="px-4 py-2.5 text-right font-medium">
+                            <th
+                              scope="col"
+                              className="px-4 py-2.5 text-right font-medium"
+                            >
                               <span className="sr-only">Actions</span>
                               <span aria-hidden="true">Actions</span>
                             </th>
@@ -503,15 +554,21 @@ export function SchedulesView() {
                             <td className="px-4 py-3 whitespace-nowrap">
                               {DAY_NAMES[s.dayOfWeek]}
                               {s.dayOfWeek === today && (
-                                <Badge variant="outline" className="ml-2 border-amber-500/40 text-amber-600">
+                                <Badge
+                                  variant="outline"
+                                  className="ml-2 border-amber-500/40 text-amber-600"
+                                >
                                   Today
                                 </Badge>
                               )}
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
-                              {formatTime(s.startTime)} &ndash; {formatTime(s.endTime)}
+                              {formatTime(s.startTime)} &ndash;{" "}
+                              {formatTime(s.endTime)}
                             </td>
-                            <td className="px-4 py-3 font-medium">{s.subject}</td>
+                            <td className="px-4 py-3 font-medium">
+                              {s.subject}
+                            </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               {s.section
                                 ? `${s.program ?? "All"} ${s.section}`
@@ -519,12 +576,29 @@ export function SchedulesView() {
                                   ? `${getProgramLabel(s.program) ?? s.program}`
                                   : "Department-wide"}
                             </td>
-                            <td className="px-4 py-3">{s.instructor || <span className="text-muted-foreground">&mdash;</span>}</td>
-                            <td className="px-4 py-3">{s.room || <span className="text-muted-foreground">&mdash;</span>}</td>
+                            <td className="px-4 py-3">
+                              {s.instructor || (
+                                <span className="text-muted-foreground">
+                                  &mdash;
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              {s.room || (
+                                <span className="text-muted-foreground">
+                                  &mdash;
+                                </span>
+                              )}
+                            </td>
                             {canManage && (
                               <td className="px-4 py-3">
                                 <div className="flex justify-end gap-2">
-                                  <Button variant="outline" size="sm" className="h-9" onClick={() => openEdit(s)}>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-9"
+                                    onClick={() => openEdit(s)}
+                                  >
                                     Edit
                                   </Button>
                                   <Button
@@ -555,15 +629,26 @@ export function SchedulesView() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.15 }}
                   >
-                    <Card className={s.dayOfWeek === today ? "border-amber-500/40" : undefined}>
+                    <Card
+                      className={
+                        s.dayOfWeek === today
+                          ? "border-amber-500/40"
+                          : undefined
+                      }
+                    >
                       <CardContent className="p-4">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <p className="font-medium leading-snug">{s.subject}</p>
+                            <p className="font-medium leading-snug">
+                              {s.subject}
+                            </p>
                             {renderRowMeta(s)}
                           </div>
                           {s.dayOfWeek === today && (
-                            <Badge variant="outline" className="shrink-0 border-amber-500/40 text-amber-600">
+                            <Badge
+                              variant="outline"
+                              className="shrink-0 border-amber-500/40 text-amber-600"
+                            >
                               Today
                             </Badge>
                           )}
@@ -571,20 +656,31 @@ export function SchedulesView() {
                         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                           {s.instructor && (
                             <span className="inline-flex items-center gap-1">
-                              <UserRound className="h-3.5 w-3.5" aria-hidden="true" />
+                              <UserRound
+                                className="h-3.5 w-3.5"
+                                aria-hidden="true"
+                              />
                               {s.instructor}
                             </span>
                           )}
                           {s.room && (
                             <span className="inline-flex items-center gap-1">
-                              <MapPin className="h-3.5 w-3.5" aria-hidden="true" />
+                              <MapPin
+                                className="h-3.5 w-3.5"
+                                aria-hidden="true"
+                              />
                               {s.room}
                             </span>
                           )}
                         </div>
                         {canManage && (
                           <div className="mt-3 flex gap-2">
-                            <Button variant="outline" size="sm" className="h-9 flex-1" onClick={() => openEdit(s)}>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-9 flex-1"
+                              onClick={() => openEdit(s)}
+                            >
                               Edit
                             </Button>
                             <Button
@@ -611,7 +707,9 @@ export function SchedulesView() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editing ? "Edit Schedule" : "Add Schedule"}</DialogTitle>
+            <DialogTitle>
+              {editing ? "Edit Schedule" : "Add Schedule"}
+            </DialogTitle>
             <DialogDescription>
               One weekly class slot. Tag it as a Day or Night class so the right
               student population sees it.
@@ -640,9 +738,14 @@ export function SchedulesView() {
               <Label htmlFor="schedule-shift-select">Class shift</Label>
               <Select
                 value={form.shift}
-                onValueChange={(v) => setForm({ ...form, shift: v as ClassShift })}
+                onValueChange={(v) =>
+                  setForm({ ...form, shift: v as ClassShift })
+                }
               >
-                <SelectTrigger id="schedule-shift-select" className="mt-1 w-full">
+                <SelectTrigger
+                  id="schedule-shift-select"
+                  className="mt-1 w-full"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -675,7 +778,9 @@ export function SchedulesView() {
                 id="schedule-start"
                 type="time"
                 value={form.startTime}
-                onChange={(e) => setForm({ ...form, startTime: e.target.value })}
+                onChange={(e) =>
+                  setForm({ ...form, startTime: e.target.value })
+                }
                 className="mt-1"
                 required
               />
@@ -696,7 +801,9 @@ export function SchedulesView() {
                 <Label htmlFor="schedule-program">Program</Label>
                 <Select
                   value={form.program || "none"}
-                  onValueChange={(v) => setForm({ ...form, program: v === "none" ? "" : v })}
+                  onValueChange={(v) =>
+                    setForm({ ...form, program: v === "none" ? "" : v })
+                  }
                 >
                   <SelectTrigger id="schedule-program" className="mt-1 w-full">
                     <SelectValue />
@@ -721,7 +828,10 @@ export function SchedulesView() {
                   aria-describedby="schedule-program-hint"
                   className="mt-1"
                 />
-                <p id="schedule-program-hint" className="mt-1 text-xs text-muted-foreground">
+                <p
+                  id="schedule-program-hint"
+                  className="mt-1 text-xs text-muted-foreground"
+                >
                   Locked to your program.
                 </p>
               </div>
@@ -736,7 +846,10 @@ export function SchedulesView() {
                 className="mt-1"
                 aria-describedby="schedule-section-hint"
               />
-              <p id="schedule-section-hint" className="mt-1 text-xs text-muted-foreground">
+              <p
+                id="schedule-section-hint"
+                className="mt-1 text-xs text-muted-foreground"
+              >
                 Empty = all sections in the program.
               </p>
             </div>
@@ -745,7 +858,9 @@ export function SchedulesView() {
               <Input
                 id="schedule-instructor"
                 value={form.instructor}
-                onChange={(e) => setForm({ ...form, instructor: e.target.value })}
+                onChange={(e) =>
+                  setForm({ ...form, instructor: e.target.value })
+                }
                 className="mt-1"
               />
             </div>
@@ -776,11 +891,19 @@ export function SchedulesView() {
               </div>
             )}
             <DialogFooter className="sm:col-span-2">
-              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDialogOpen(false)}
+              >
                 Cancel
               </Button>
               <Button type="submit" disabled={saving}>
-                {saving ? "Saving..." : editing ? "Save Changes" : "Add Schedule"}
+                {saving
+                  ? "Saving..."
+                  : editing
+                    ? "Save Changes"
+                    : "Add Schedule"}
               </Button>
             </DialogFooter>
           </form>

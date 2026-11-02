@@ -9,7 +9,11 @@
 // It is NOT required for the core auth flow to work.
 // ====================================================================
 
+// @types/nodemailer v8 dropped the `nodemailer` namespace in favour of
+// named exports - import the Transporter TYPE explicitly and keep the
+// runtime value import for createTransport().
 import nodemailer from "nodemailer";
+import type { Transporter } from "nodemailer";
 import { getAppUrl } from "@/lib/app-url";
 
 function escapeHtml(s: string): string {
@@ -45,9 +49,9 @@ function getEmailConfig(): EmailConfig | null {
   };
 }
 
-let transporter: nodemailer.Transporter | null = null;
+let transporter: Transporter | null = null;
 
-function getTransporter(): nodemailer.Transporter | null {
+function getTransporter(): Transporter | null {
   const config = getEmailConfig();
   if (!config) return null;
   if (!transporter) {
@@ -82,7 +86,7 @@ export async function sendWelcomeEmail(
       from: `"${config.fromName}" <${config.from}>`,
       to,
       subject: "Welcome to Nexus Gate",
-      text: `Hi ${fullName},\n\nYour account is now active. You can sign in at ${appUrl}\n\n— Nexus Gate Team`,
+      text: `Hi ${fullName},\n\nYour account is now active. You can sign in at ${appUrl}\n\n - Nexus Gate Team`,
       html: `
         <div style="font-family: 'Roboto Mono', ui-monospace, monospace; max-width: 480px; margin: 0 auto; padding: 24px; background: #fffef7; border-radius: 12px;">
           <div style="text-align: center; margin-bottom: 24px;">
