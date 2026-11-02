@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkCronAuth, checkBodySecret } from "@/lib/cron-auth";
 import { runKeepAlive } from "@/lib/keep-alive";
 
+// HARDENING (pass 2026-11-02): this route previously used the platform
+// default duration while awaiting a FULL watchdog run: Supabase ping
+// (5s) + DB probe (3s) + settings writes + SMTP alert delivery (now
+// bounded at ~15s by the transporter timeouts in src/lib/email.ts).
+// Worst case ~23s exceeds the platform default - pin the budget like
+// the sibling cron routes so an SMTP stall returns a clean timeout
+// instead of an opaque 504.
+export const maxDuration = 30;
+
 export const dynamic = "force-dynamic";
 
 // ====================================================================

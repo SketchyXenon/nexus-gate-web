@@ -34,7 +34,13 @@
 // ====================================================================
 
 import "server-only";
-import { redis, isRedisAvailable, withRedisTimeout } from "@/lib/redis";
+import {
+  redis,
+  isRedisAvailable,
+  withRedisTimeout,
+  RedisTimeoutError,
+  markRedisUnhealthy,
+} from "@/lib/redis";
 
 interface RateLimitConfig {
   maxRequests: number;
@@ -162,12 +168,27 @@ if (typeof setInterval !== "undefined") {
 function memoryLimit(key: string, preset: RateLimitPreset) {
   const config = PRESETS[preset];
   const now = Date.now();
-  let bucket = memoryBuckets.get(key);
+  // HARDENING (caught by tests, pass 2026-11-02): namespace the bucket by
+  // preset. The Redis path keys as `nexus-gate:${preset}:${key}` but the
+  // memory fallback previously used the RAW key - so during a Redis
+  // outage, 5 denied login attempts for an IP also throttled that IP's
+  // scan/api/register budgets (cross-preset budget theft), and a heavy
+  // scan user could consume the login budget. Mirrors the Redis keying.
+  const bucketKey = `${preset}:${key}`;
+  let bucket = memoryBuckets.get(bucketKey);
   if (!bucket) {
     // Bound the map size before inserting a new key.
     if (memoryBuckets.size >= MEMORY_MAX_KEYS) evictExpiredAndCap();
     bucket = { count: 0, windowStart: now };
-    memoryBuckets.set(key, bucket);
+    memoryBuckets.set(bucketKey, bucket);
+    // Off-by-one guard (caught by tests): the pre-insert eviction only
+    // runs at size >= MAX and trims TO MAX, so a fresh insert can push
+    // size to MAX+1 without evicting. Enforce the cap post-insert.
+    if (memoryBuckets.size > MEMORY_MAX_KEYS) {
+      const oldest = memoryBuckets.keys().next().value;
+      if (oldest !== undefined && oldest !== bucketKey)
+        memoryBuckets.delete(oldest);
+    }
   }
   if (now - bucket.windowStart >= config.windowMs) {
     bucket.count = 0;
@@ -322,8 +343,11 @@ export async function rateLimit(
 
   if (!isRedisAvailable()) {
     if (process.env.NODE_ENV === "production" && !warningLogged) {
+      // Accurate degradation reason (hardening pass 2026-11-02): this
+      // branch also runs when the circuit breaker is open or the client
+      // is dead - blaming "REDIS_URL not set" misled outage triage.
       console.warn(
-        "[rate-limit] REDIS_URL not set - using in-memory fallback.",
+        "[rate-limit] Redis unavailable (not configured, dead client, or circuit breaker open) - using in-memory fallback.",
       );
       warningLogged = true;
     }
@@ -333,6 +357,15 @@ export async function rateLimit(
   try {
     return await redisLimit(key, preset);
   } catch (e) {
+    // HARDENING (pass 2026-11-02): a RedisTimeoutError means the socket
+    // is ESTABLISHED but silently dead - ioredis has no connect error
+    // to emit, so without this the breaker never opens and EVERY
+    // request pays the full 1.5s deadline on the dead socket. Tripping
+    // the breaker here makes subsequent requests skip Redis instantly
+    // for BREAKER_COOLDOWN_MS, exactly like a connect-level failure.
+    if (e instanceof RedisTimeoutError) {
+      markRedisUnhealthy();
+    }
     // DEGRADATION POLICY (see header): Redis outage => in-memory fallback
     // for ALL presets. NEVER fail closed for sensitive presets - that
     // turned a Redis outage into a full login outage (incident

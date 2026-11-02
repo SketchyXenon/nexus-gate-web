@@ -67,7 +67,9 @@ export interface KeepAliveAlertInput {
   html: string;
 }
 
-export type KeepAliveAlertSender = (input: KeepAliveAlertInput) => Promise<void>;
+export type KeepAliveAlertSender = (
+  input: KeepAliveAlertInput,
+) => Promise<void>;
 
 export interface KeepAliveDeps {
   /** Prisma-like client for settings + admin lookup (default: @/lib/db). */
@@ -176,12 +178,21 @@ async function pingDatabase(
   dbPing: () => Promise<void>,
   timeoutMs: number,
 ): Promise<PingResult> {
+  // Hardening (pass 2026-11-02): clear the deadline timer when the probe
+  // settles - the previous version left a live 3s setTimeout on every
+  // run, keeping the event loop (and a serverless invocation) alive for
+  // the full timeout even on success.
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
       dbPing(),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`DB probe timed out after ${timeoutMs}ms`)), timeoutMs),
-      ),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`DB probe timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+        timer.unref?.();
+      }),
     ]);
     return { check: "ok", detail: null };
   } catch (err) {
@@ -189,6 +200,8 @@ async function pingDatabase(
       check: "down",
       detail: `Database probe failed: ${err instanceof Error ? err.message : String(err)}`,
     };
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -216,7 +229,10 @@ async function defaultSendAlert(input: KeepAliveAlertInput): Promise<void> {
 // Settings helpers (all best-effort - a watchdog must never throw)
 // ------------------------------------------------------------------
 
-async function readSettingSafe(db: KeepAliveDb, key: string): Promise<string | null> {
+async function readSettingSafe(
+  db: KeepAliveDb,
+  key: string,
+): Promise<string | null> {
   try {
     const row = await db.setting.findUnique({ where: { key } });
     return row?.value ?? null;
@@ -225,7 +241,11 @@ async function readSettingSafe(db: KeepAliveDb, key: string): Promise<string | n
   }
 }
 
-async function writeSettingSafe(db: KeepAliveDb, key: string, value: string): Promise<boolean> {
+async function writeSettingSafe(
+  db: KeepAliveDb,
+  key: string,
+  value: string,
+): Promise<boolean> {
   try {
     await db.setting.upsert({
       where: { key },
@@ -253,7 +273,11 @@ function escapeHtml(s: string): string {
   );
 }
 
-function buildAlertEmail(ranAt: Date, auth: PingResult, dbRes: PingResult): {
+function buildAlertEmail(
+  ranAt: Date,
+  auth: PingResult,
+  dbRes: PingResult,
+): {
   subject: string;
   text: string;
   html: string;
@@ -285,7 +309,11 @@ function buildAlertEmail(ranAt: Date, auth: PingResult, dbRes: PingResult): {
   return { subject, text, html };
 }
 
-function buildRecoveryEmail(ranAt: Date): { subject: string; text: string; html: string } {
+function buildRecoveryEmail(ranAt: Date): {
+  subject: string;
+  text: string;
+  html: string;
+} {
   const subject = `[Nexus Gate] KEEP-ALIVE RECOVERED - auth/database reachable again (${ranAt.toISOString()})`;
   const text = [
     "The Nexus Gate dependency keep-alive check RECOVERED.",
@@ -408,7 +436,9 @@ export async function notifyDbFailure(
  * the app database, persist watchdog state, alert on transitions.
  * NEVER THROWS - a watchdog that crashes would be worse than useless.
  */
-export async function runKeepAlive(deps: KeepAliveDeps = {}): Promise<KeepAliveSummary> {
+export async function runKeepAlive(
+  deps: KeepAliveDeps = {},
+): Promise<KeepAliveSummary> {
   const now = deps.now ?? (() => new Date());
   try {
     const db = deps.db ?? (await getRealDb());
@@ -426,8 +456,16 @@ export async function runKeepAlive(deps: KeepAliveDeps = {}): Promise<KeepAliveS
 
     if (configured) {
       [auth, dbRes] = await Promise.all([
-        pingSupabaseAuth(baseUrl, anonKey, deps.authTimeoutMs ?? AUTH_TIMEOUT_MS, doFetch),
-        pingDatabase(deps.dbPing ?? defaultDbPing, deps.dbTimeoutMs ?? DB_TIMEOUT_MS),
+        pingSupabaseAuth(
+          baseUrl,
+          anonKey,
+          deps.authTimeoutMs ?? AUTH_TIMEOUT_MS,
+          doFetch,
+        ),
+        pingDatabase(
+          deps.dbPing ?? defaultDbPing,
+          deps.dbTimeoutMs ?? DB_TIMEOUT_MS,
+        ),
       ]);
     }
 
@@ -448,10 +486,16 @@ export async function runKeepAlive(deps: KeepAliveDeps = {}): Promise<KeepAliveS
     if (status !== "skipped") {
       await writeSettingSafe(db, KEEPALIVE_KEYS.status, status);
       if (status === "ok") {
-        await writeSettingSafe(db, KEEPALIVE_KEYS.successAt, ranAt.toISOString());
+        await writeSettingSafe(
+          db,
+          KEEPALIVE_KEYS.successAt,
+          ranAt.toISOString(),
+        );
         await writeSettingSafe(db, KEEPALIVE_KEYS.error, "");
       } else {
-        const errorText = [auth.detail, dbRes.detail].filter(Boolean).join(" | ") || "unknown failure";
+        const errorText =
+          [auth.detail, dbRes.detail].filter(Boolean).join(" | ") ||
+          "unknown failure";
         await writeSettingSafe(db, KEEPALIVE_KEYS.error, errorText);
       }
     }
@@ -463,11 +507,17 @@ export async function runKeepAlive(deps: KeepAliveDeps = {}): Promise<KeepAliveS
     if (status === "fail") {
       // Alert on the ok/unknown -> fail transition, then at most once per
       // RE_ALERT_HOURS while the failure persists.
-      const lastAlertedRaw = await readSettingSafe(db, KEEPALIVE_KEYS.alertedAt);
-      const lastAlertedMs = lastAlertedRaw ? Date.parse(lastAlertedRaw) : Number.NaN;
+      const lastAlertedRaw = await readSettingSafe(
+        db,
+        KEEPALIVE_KEYS.alertedAt,
+      );
+      const lastAlertedMs = lastAlertedRaw
+        ? Date.parse(lastAlertedRaw)
+        : Number.NaN;
       const windowMs = RE_ALERT_HOURS * 60 * 60 * 1000;
       const dueForAlert =
-        Number.isNaN(lastAlertedMs) || ranAt.getTime() - lastAlertedMs >= windowMs;
+        Number.isNaN(lastAlertedMs) ||
+        ranAt.getTime() - lastAlertedMs >= windowMs;
 
       if (prevStatus !== "fail" || dueForAlert) {
         const delivered = await deliverAlert(
@@ -480,7 +530,11 @@ export async function runKeepAlive(deps: KeepAliveDeps = {}): Promise<KeepAliveS
         if (delivered) {
           alerted = true;
           alertChannel = "email";
-          await writeSettingSafe(db, KEEPALIVE_KEYS.alertedAt, ranAt.toISOString());
+          await writeSettingSafe(
+            db,
+            KEEPALIVE_KEYS.alertedAt,
+            ranAt.toISOString(),
+          );
         }
       }
     } else if (status === "ok" && prevStatus === "fail") {

@@ -4,11 +4,51 @@ export const maxDuration = 30;
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { checkCronAuth, checkBodySecret } from "@/lib/cron-auth";
+import { isDbUnavailableError } from "@/lib/api";
+import { notifyDbFailure } from "@/lib/keep-alive";
+import { eligibleAccountIdsForEvent } from "@/lib/event-targeting";
 
 // /api/cron/event-reminders
 // Finds events starting within the next 30 min and creates notifications.
 // Auth: Bearer header, Basic auth (cron-job.org password), custom header,
 //       query param, or JSON body field. See src/lib/cron-auth.ts.
+//
+// RESILIENCE (incident 2026-11-02): an external scheduler hits this
+// route every 5 minutes. When TiDB connections failed (Prisma P2039
+// "pool failed to retrieve a connection"), every run threw a raw 500
+// with a full Prisma stack trace - six times in 30 minutes, with NO
+// alert to the admin (the keep-alive watchdog only ran in the daily
+// cleanup). Now: transient pool/connect failures get ONE retry after a
+// short backoff; persistent DB failures return a structured 503 (clean
+// logs, Retry-After for the scheduler) and trigger the keep-alive
+// watchdog, which emails admins on the failure transition.
+
+// Error signatures that are usually transient (pool churn, gateway
+// hiccup, connection storm) - worth exactly one retry.
+// HARDENING (pass 2026-11-02): "45028" is TiDB Cloud's pool-exhaustion
+// error code and "retrieve a connection" is the mariadb-adapter pool
+// message - both observed in production (P2039 incidents) in shapes
+// where the top-level message text varied. Matching them here means the
+// retry + structured-503 path also covers driver-native error text.
+const TRANSIENT_DB_ERROR =
+  /P2039|P1001|P2024|pool failed|retrieve a connection|45028|ETIMEDOUT|ECONNRESET|ECONNREFUSED/i;
+
+async function runEventRemindersWithRetry() {
+  try {
+    return await runEventReminders();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!TRANSIENT_DB_ERROR.test(msg)) throw e;
+    // One retry after 1.5s: the pool's dead connections are typically
+    // reaped within a second and a fresh connect attempt usually
+    // succeeds. Total added latency stays far under maxDuration=30.
+    console.error(
+      `[cron/event-reminders] transient DB error, retrying once: ${msg.slice(0, 200)}`,
+    );
+    await new Promise((r) => setTimeout(r, 1_500));
+    return await runEventReminders();
+  }
+}
 
 async function runEventReminders() {
   const now = new Date();
@@ -49,38 +89,26 @@ async function runEventReminders() {
     select: { id: true, program: true, section: true },
   });
 
+  // Step 3: resolve the audience per event. M3 FIX (hardening pass
+  // 2026-11-02): targetProgram/targetSection are independently nullable,
+  // so "program-only" and "section-only" events are legal - the old
+  // inline filter silently skipped them (no reminders ever sent).
+  // eligibleAccountIdsForEvent handles all four combinations; see
+  // src/lib/event-targeting.ts for the exact semantics + tests.
   const eventConditions: Array<{
     event: (typeof upcomingEvents)[0];
     accountIds: string[];
-  }> = [];
+  }> = upcomingEvents.map((event) => ({
+    event,
+    accountIds: eligibleAccountIdsForEvent(event, allEligibleStudents),
+  }));
 
-  for (const event of upcomingEvents) {
-    if (event.targetProgram && event.targetSection) {
-      // Exact program + section match - filter in memory.
-      const accountIds = allEligibleStudents
-        .filter(
-          (s) =>
-            s.program === event.targetProgram &&
-            s.section === event.targetSection,
-        )
-        .map((s) => s.id);
-      eventConditions.push({ event, accountIds });
-    } else if (!event.targetProgram && !event.targetSection) {
-      // Open to all - all eligible students.
-      eventConditions.push({
-        event,
-        accountIds: allEligibleStudents.map((s) => s.id),
-      });
-    }
-    // Events with only program OR only section (not both) are skipped.
-  }
-
-  // Step 3: collect all unique account IDs for the dedup query.
+  // Step 4: collect all unique account IDs for the dedup query.
   const allAccountIds = Array.from(
     new Set(eventConditions.flatMap((ec) => ec.accountIds)),
   );
 
-  // Step 4: bulk-fetch existing reminder notifications for dedup.
+  // Step 5: bulk-fetch existing reminder notifications for dedup.
   // One query instead of N (one per student per event). Dedup is based on
   // the type field which encodes the eventId as "reminder:event:N" - this
   // avoids false-positive matches from the old title-substring check
@@ -107,7 +135,7 @@ async function runEventReminders() {
     }
   }
 
-  // Step 5: build the list of notifications to create.
+  // Step 6: build the list of notifications to create.
   const toCreate: Array<{
     accountId: string;
     title: string;
@@ -134,7 +162,7 @@ async function runEventReminders() {
     }
   }
 
-  // Step 6: bulk insert all new notifications in one query.
+  // Step 7: bulk insert all new notifications in one query.
   let notificationsCreated = 0;
   if (toCreate.length > 0) {
     const result = await db.notification.createMany({ data: toCreate });
@@ -187,11 +215,47 @@ function authorizeCron(req: NextRequest): NextResponse | null {
 export async function GET(req: NextRequest) {
   const denied = authorizeCron(req);
   if (denied) return denied;
-  const result = await runEventReminders();
-  return NextResponse.json(
-    { ok: true, ...result },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  try {
+    const result = await runEventRemindersWithRetry();
+    return NextResponse.json(
+      { ok: true, ...result },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  } catch (e) {
+    return handleRunnerError(e);
+  }
+}
+
+/**
+ * Shared failure path for GET/POST: structured 503 for DB
+ * unavailability (with Retry-After so external schedulers back off
+ * gracefully), watchdog trigger for minutes-level alerting, and a
+ * rethrow for anything genuinely unexpected (still surfaces as a 500,
+ * but that is now a code bug, not a DB blip).
+ */
+async function handleRunnerError(e: unknown): Promise<NextResponse> {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (isDbUnavailableError(e) || TRANSIENT_DB_ERROR.test(msg)) {
+    console.error(
+      `[cron/event-reminders] DB unavailable after retry: ${msg.slice(0, 300)}`,
+    );
+    // Fire-and-forget: runs the keep-alive watchdog (throttled to once
+    // per 60s in-process) which emails admins on the failure transition.
+    await notifyDbFailure("cron/event-reminders");
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "DB_UNAVAILABLE",
+        error:
+          "The database is temporarily unreachable. The run will be retried by the scheduler.",
+      },
+      {
+        status: 503,
+        headers: { "Cache-Control": "no-store", "Retry-After": "60" },
+      },
+    );
+  }
+  throw e;
 }
 
 export async function POST(req: NextRequest) {
@@ -205,8 +269,17 @@ export async function POST(req: NextRequest) {
       try {
         const body = await req.json();
         if (checkBodySecret(body, "reminders")) {
-          const result = await runEventReminders();
-          return NextResponse.json({ ok: true, ...result });
+          try {
+            const result = await runEventRemindersWithRetry();
+            return NextResponse.json(
+              { ok: true, ...result },
+              // L5 (hardening pass 2026-11-02): POST responses are
+              // scheduler-triggered and contain run counts - never cache.
+              { headers: { "Cache-Control": "no-store" } },
+            );
+          } catch (e) {
+            return handleRunnerError(e);
+          }
         }
       } catch {
         // Empty/invalid JSON - fall through to 401.
@@ -220,6 +293,13 @@ export async function POST(req: NextRequest) {
     if (denied) return denied;
   }
 
-  const result = await runEventReminders();
-  return NextResponse.json({ ok: true, ...result });
+  try {
+    const result = await runEventRemindersWithRetry();
+    return NextResponse.json(
+      { ok: true, ...result },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  } catch (e) {
+    return handleRunnerError(e);
+  }
 }

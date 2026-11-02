@@ -38,6 +38,15 @@
 //   5. withRedisTimeout(): per-operation deadline (1.5s) so a stall on
 //      an ESTABLISHED connection (dead socket, no RST) can't hang a
 //      request either. Callers catch RedisTimeoutError and degrade.
+//   6. SELF-HEALING (hardening pass 2026-11-02): when retryStrategy
+//      gives up, ioredis enters the terminal "end" state and NEVER
+//      reconnects on its own - previously the cached client stayed dead
+//      for the life of the instance, permanently downgrading that
+//      instance to in-memory rate limiting. isRedisAvailable() now
+//      detects the "end" state, kicks a manual client.connect() in the
+//      background, and reports unavailable until the connection (or the
+//      breaker cooldown) resolves. Redis outages now RECOVER without an
+//      instance recycle.
 // ====================================================================
 
 import "server-only";
@@ -82,6 +91,53 @@ export function markRedisUnhealthy(): void {
 /** True when a connect-level failure recently happened (breaker open). */
 function isBreakerOpen(): boolean {
   return Date.now() < unhealthyUntil();
+}
+
+// Reconnect bookkeeping. A manual client.connect() is fire-and-forget:
+// the flag prevents N concurrent requests from each calling connect()
+// on the same dead client (ioredis throws "Cannot connect while
+// connecting" if overlapping).
+let reviveInFlight = false;
+
+/**
+ * HARDENING (pass 2026-11-02): ioredis stops retrying forever once
+ * retryStrategy returns null - the client sits in the terminal "end"
+ * state and every command rejects with "Stream isn't writeable" /
+ * "Connection is closed". Without this, a single >3s Redis outage
+ * permanently degraded the instance (cross-instance rate limiting and
+ * the shared account cache silently lost until the lambda recycled).
+ *
+ * Kicks ONE background client.connect() and reports nothing - the
+ * caller (isRedisAvailable) already decided to degrade this request.
+ * On success the client returns to "ready" and Redis is usable again;
+ * on failure the breaker opens so callers keep skipping Redis until
+ * the next probe after the cooldown.
+ */
+function reviveDeadClient(): void {
+  const client = globalWithRedis.__redisClient;
+  if (!client || client.status !== "end" || reviveInFlight) return;
+  reviveInFlight = true;
+  console.warn(
+    "[redis] client in terminal 'end' state - attempting background reconnect",
+  );
+  void Promise.resolve()
+    .then(() => client.connect())
+    .then(() => {
+      console.warn("[redis] background reconnect succeeded - Redis recovered");
+    })
+    .catch((err: unknown) => {
+      // Stay degraded: open the breaker so callers skip Redis until the
+      // next probe after the cooldown (they would otherwise pay a
+      // failing connect attempt on every request).
+      markRedisUnhealthy();
+      console.error(
+        "[redis] background reconnect failed - breaker re-opened:",
+        err instanceof Error ? err.message : String(err),
+      );
+    })
+    .finally(() => {
+      reviveInFlight = false;
+    });
 }
 
 // Errors that indicate the CONNECTION layer is broken (as opposed to a
@@ -219,7 +275,16 @@ export const redis: Redis | null = cachedClient ?? null;
  * while this gate is closed.
  */
 export function isRedisAvailable(): boolean {
-  return redis !== null && initError === null && !isBreakerOpen();
+  if (redis === null || initError !== null || isBreakerOpen()) return false;
+  // Terminal "end" state (retryStrategy exhausted): ioredis never
+  // auto-reconnects from here. Trigger one background reconnect and
+  // degrade THIS request to in-memory; once connect() resolves the
+  // client is "ready" again and later requests use Redis normally.
+  if (redis.status === "end") {
+    reviveDeadClient();
+    return false;
+  }
+  return true;
 }
 
 export function getRedisInitError(): Error | null {

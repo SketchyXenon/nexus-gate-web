@@ -70,8 +70,15 @@ async function runCleanup() {
   };
 }
 
+// Error signatures that are usually transient (pool churn, gateway
+// hiccup, connection storm) - worth exactly one retry.
+// HARDENING (pass 2026-11-02): "45028" is TiDB Cloud's pool-exhaustion
+// error code and "retrieve a connection" is the mariadb-adapter pool
+// message - both observed in production (P2039 incidents) in shapes
+// where the top-level message text varied. Matching them here means the
+// retry + structured-503 path also covers driver-native error text.
 const TRANSIENT_DB_ERROR =
-  /P2039|P1001|P2024|pool failed|ETIMEDOUT|ECONNRESET|ECONNREFUSED/i;
+  /P2039|P1001|P2024|pool failed|retrieve a connection|45028|ETIMEDOUT|ECONNRESET|ECONNREFUSED/i;
 
 async function runCleanupWithRetry() {
   try {
@@ -186,7 +193,11 @@ export async function POST(req: NextRequest) {
         if (checkBodySecret(body, "cleanup")) {
           try {
             const result = await runCleanupWithKeepAlive();
-            return NextResponse.json({ ok: true, ...result });
+            return NextResponse.json(
+              { ok: true, ...result },
+              // L5 (hardening pass 2026-11-02): never cache cron responses.
+              { headers: { "Cache-Control": "no-store" } },
+            );
           } catch (e) {
             return handleRunnerError(e);
           }
@@ -204,7 +215,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await runCleanupWithKeepAlive();
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json(
+      { ok: true, ...result },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (e) {
     return handleRunnerError(e);
   }

@@ -21,7 +21,13 @@
 
 import "server-only";
 import type { ApiAccount } from "@/lib/api";
-import { redis, isRedisAvailable, withRedisTimeout } from "@/lib/redis";
+import {
+  redis,
+  isRedisAvailable,
+  withRedisTimeout,
+  RedisTimeoutError,
+  markRedisUnhealthy,
+} from "@/lib/redis";
 
 // The account cache serves auth-critical reads - bound it tighter than
 // the generic REDIS_OP_TIMEOUT_MS (1.5s): a cache that costs 1.5s is
@@ -86,8 +92,14 @@ export async function getAccountCache(
       });
       return account;
     }
-  } catch {
+  } catch (e) {
     // Redis error/timeout - fall through to undefined (cache miss).
+    // HARDENING (pass 2026-11-02): a timeout means the socket is dead
+    // but established - trip the breaker so later requests skip Redis
+    // instantly instead of paying the 1s deadline every time.
+    if (e instanceof RedisTimeoutError) {
+      markRedisUnhealthy();
+    }
   }
 
   return undefined;
@@ -102,11 +114,20 @@ export async function setAccountCache(
   if (ttlMs <= 0) {
     // Invalidation.
     memCache.delete(authUid);
-    if (isRedisAvailable() && redis) {
+    // HARDENING (pass 2026-11-02, correctness over latency): unlike the
+    // write path below, invalidation MUST attempt the shared-layer DEL
+    // even while the circuit breaker is open. enableOfflineQueue=false
+    // makes a DEL during an outage fail FAST, so the penalty is at most
+    // the 1s deadline on a stalled socket - while skipping the DEL left
+    // stale accounts readable cross-instance for up to REDIS_TTL_S
+    // (e.g. a deactivated account remaining valid on other instances).
+    if (redis) {
       await withRedisTimeout(
         () => redis!.del(`${REDIS_PREFIX}${authUid}`),
         CACHE_OP_TIMEOUT_MS,
-      ).catch(() => {});
+      ).catch((e: unknown) => {
+        if (e instanceof RedisTimeoutError) markRedisUnhealthy();
+      });
     }
     return;
   }
@@ -129,8 +150,13 @@ export async function setAccountCache(
         () => redis!.set(`${REDIS_PREFIX}${authUid}`, value, "EX", REDIS_TTL_S),
         CACHE_OP_TIMEOUT_MS,
       );
-    } catch {
-      // Non-critical - in-memory cache still works.
+    } catch (e) {
+      // Non-critical - in-memory cache still works. A timeout trips the
+      // breaker (see getAccountCache) so writes are skipped entirely
+      // while the socket is dead.
+      if (e instanceof RedisTimeoutError) {
+        markRedisUnhealthy();
+      }
     }
   }
 }

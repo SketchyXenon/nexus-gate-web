@@ -44,6 +44,7 @@ const globalWithKey = globalThis as unknown as {
   __prismaCacheKey?: string;
   prisma?: PrismaClient;
   prismaRead?: PrismaClient;
+  __prismaReadCacheKey?: string;
 };
 
 /**
@@ -79,6 +80,16 @@ if (
 ) {
   // Cache hit - reuse the existing client.
 } else if (DATABASE_URL) {
+  // M4 (hardening pass 2026-11-02): dispose the STALE client before
+  // replacing it. On a schema-key bump (dev HMR), the old client's pool
+  // previously leaked - its sockets kept the old generated client alive
+  // and held SQLite file handles / TiDB connections until GC.
+  const stale = globalWithKey.prisma;
+  if (stale) {
+    void stale.$disconnect().catch(() => {
+      // Best-effort - a dead pool may refuse; never block module load.
+    });
+  }
   globalWithKey.prisma = createPrismaClient(DATABASE_URL);
   globalWithKey.__prismaCacheKey = SCHEMA_CACHE_KEY;
 } else {
@@ -101,9 +112,25 @@ export const db = globalWithKey.prisma!;
 // it must be a mysql:// (TiDB) URL. Legacy postgres:// replica URLs are
 // ignored with a warning (Supabase is auth-only since the TiDB cutover).
 const REPLICA_URL = process.env.DATABASE_REPLICA_URL;
+// M4 (hardening pass 2026-11-02): the replica client is now invalidated
+// by the same SCHEMA_CACHE_KEY as the primary - previously a schema bump
+// rebuilt `prisma` but kept serving the OLD generated client from
+// `prismaRead`, a confusing dev failure (replica queries error with
+// "column does not exist" while primary queries succeed).
+const REPLICA_CACHE_KEY = `${SCHEMA_CACHE_KEY}:replica`;
+if (
+  REPLICA_URL &&
+  globalWithKey.prismaRead &&
+  globalWithKey.__prismaReadCacheKey !== REPLICA_CACHE_KEY
+) {
+  // Dispose the stale replica pool before rebuilding (best-effort).
+  void globalWithKey.prismaRead.$disconnect().catch(() => {});
+  globalWithKey.prismaRead = undefined;
+}
 if (REPLICA_URL && !globalWithKey.prismaRead) {
   if (REPLICA_URL.startsWith("mysql")) {
     globalWithKey.prismaRead = createPrismaClient(REPLICA_URL);
+    globalWithKey.__prismaReadCacheKey = REPLICA_CACHE_KEY;
   } else {
     console.warn(
       "[db] DATABASE_REPLICA_URL is set but is not a mysql:// URL - " +

@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { createHash, timingSafeEqual } from "crypto";
 
 // ====================================================================
 // Nexus Gate - Cron Authorization
@@ -38,6 +39,16 @@ let queryAuthWarned = false;
  * "reminders", "keepalive"), checks CRON_CLEANUP_SECRET /
  * CRON_REMINDERS_SECRET / CRON_KEEPALIVE_SECRET first, falling back to
  * CRON_SECRET. This limits blast radius if one secret leaks.
+ *
+ * L1 FIX (hardening pass 2026-11-02): ALL credentials present on the
+ * request are now evaluated before failing. Previously the check
+ * early-returned on the FIRST recognized method, so a client sending a
+ * rotated/stale `Authorization: Bearer <old>` PLUS a valid
+ * `x-cron-secret` got a 401 despite carrying a valid credential - a
+ * confusing, order-dependent failure. Order now never matters: every
+ * candidate is checked, and the FIRST MATCH wins (method precedence in
+ * the result is informational only). A malformed Basic header likewise
+ * no longer aborts evaluation of the remaining methods.
  */
 export function checkCronAuth(
   req: NextRequest,
@@ -62,20 +73,21 @@ export function checkCronAuth(
   const matchesAny = (candidate: string): boolean =>
     secrets.some((s) => constantTimeEqual(candidate, s));
 
-  // ---- Method 1: Authorization: Bearer <secret> ----
+  // Collect EVERY credential present on the request (L1 fix).
+  const candidates: Array<{ value: string; method: string }> = [];
+
+  // ---- Candidate source 1: Authorization: Bearer <secret> ----
   const authHeader = req.headers.get("authorization") || "";
   if (authHeader.startsWith("Bearer ")) {
     const token = authHeader.slice(7).trim();
-    if (matchesAny(token)) {
-      return { ok: true, method: "bearer" };
-    }
-    return { ok: false, reason: "Bearer token mismatch", method: "bearer" };
+    if (token) candidates.push({ value: token, method: "bearer" });
   }
 
-  // ---- Method 2: Authorization: Basic <base64(user:secret)> ----
+  // ---- Candidate source 2: Authorization: Basic <base64(user:secret)> ----
   // cron-job.org's "Password" field sends this format. We decode and
   // check if the PASSWORD portion matches CRON_SECRET (username is
-  // ignored - only the secret matters).
+  // ignored - only the secret matters). Decode failure is recorded but
+  // does NOT abort the remaining candidates (L1 fix).
   if (authHeader.startsWith("Basic ")) {
     try {
       const decoded = Buffer.from(authHeader.slice(6), "base64").toString(
@@ -84,20 +96,14 @@ export function checkCronAuth(
       // Format is "username:password" - take the part after the first colon
       const colonIdx = decoded.indexOf(":");
       const password = colonIdx >= 0 ? decoded.slice(colonIdx + 1) : decoded;
-      if (matchesAny(password.trim())) {
-        return { ok: true, method: "basic" };
-      }
-      return {
-        ok: false,
-        reason: "Basic auth password mismatch",
-        method: "basic",
-      };
+      const trimmed = password.trim();
+      if (trimmed) candidates.push({ value: trimmed, method: "basic" });
     } catch {
-      return { ok: false, reason: "Basic auth decode failed", method: "basic" };
+      // Malformed base64 - fall through to the remaining candidates.
     }
   }
 
-  // ---- Method 3: Custom headers ----
+  // ---- Candidate source 3: Custom headers ----
   const headerSecret = (
     req.headers.get("x-cron-secret") ||
     req.headers.get("x-cronjob-secret") ||
@@ -105,22 +111,16 @@ export function checkCronAuth(
     ""
   ).trim();
   if (headerSecret) {
-    if (matchesAny(headerSecret)) {
-      return { ok: true, method: "header" };
-    }
-    return {
-      ok: false,
-      reason: "Custom header secret mismatch",
-      method: "header",
-    };
+    candidates.push({ value: headerSecret, method: "header" });
   }
 
-  // ---- Method 4: Query parameter (DEPRECATED - leaks secret via logs) ----
+  // ---- Candidate source 4: Query parameter (DEPRECATED - leaks secret via logs) ----
   // Kept for backward compatibility with existing cron jobs that put the
   // secret in the URL. Logs a one-time warning so operators migrate to a
-  // header-based method (Bearer / x-cron-secret). Per 06-security-architecture.md
-  // §9, query params are captured in proxy access logs, Referer headers, and
-  // browser history - all of which leak the secret.
+  // header-based method (Bearer / x-cron-secret). Per
+  // 06-security-architecture.md §9, query params are captured in proxy
+  // access logs, Referer headers, and browser history - all of which
+  // leak the secret.
   const url = new URL(req.url);
   const querySecret = (
     url.searchParams.get("secret") ||
@@ -140,22 +140,27 @@ export function checkCronAuth(
           " Query params leak via access logs / Referer / browser history.",
       );
     }
-    if (matchesAny(querySecret)) {
-      return { ok: true, method: "query-deprecated" };
-    }
-    return {
-      ok: false,
-      reason: "Query param secret mismatch",
-      method: "query",
-    };
+    candidates.push({ value: querySecret, method: "query-deprecated" });
   }
 
-  // ---- Method 5: JSON body field (only for POST/PUT) ----
-  // NOTE: We can't read the body here without consuming it. The route
-  // handler reads the body and passes the secret separately. This is
-  // handled in the route itself via a helper. For now, return "no auth
-  // method found" and let the route try body auth if needed.
-  return { ok: false, reason: "No auth credentials provided" };
+  // ---- Evaluate ALL candidates (L1 fix): first match wins ----
+  for (const candidate of candidates) {
+    if (matchesAny(candidate.value)) {
+      return { ok: true, method: candidate.method };
+    }
+  }
+
+  // ---- No candidate matched: report which methods were ATTEMPTED ----
+  // (names only - never the values). Empty candidates => no credentials.
+  const attempted = [...new Set(candidates.map((c) => c.method))];
+  return {
+    ok: false,
+    reason:
+      attempted.length > 0
+        ? `All provided credentials mismatch (attempted: ${attempted.join(", ")})`
+        : "No auth credentials provided",
+    method: attempted[0],
+  };
 }
 
 // Backward-compatible boolean wrapper.
@@ -164,13 +169,16 @@ export function isAuthorizedCronRequest(req: NextRequest): boolean {
 }
 
 // Timing-safe string comparison (constant-time).
+// L7 (hardening pass 2026-11-02): the previous implementation early-
+// returned when lengths differed, leaking the secret's LENGTH via
+// timing (cheap for an attacker to measure against a known-prefix
+// endpoint). Both sides are now SHA-256 digested first, so
+// timingSafeEqual always compares fixed 32-byte buffers - constant
+// time regardless of input content or length.
 function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return result === 0;
+  const da = createHash("sha256").update(a, "utf8").digest();
+  const dbb = createHash("sha256").update(b, "utf8").digest();
+  return timingSafeEqual(da, dbb);
 }
 
 // Helper for routes that want to read the secret from a JSON body field.

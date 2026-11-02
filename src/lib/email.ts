@@ -60,6 +60,16 @@ function getTransporter(): Transporter | null {
       port: config.port,
       secure: config.port === 465,
       auth: { user: config.user, pass: config.pass },
+      // HARDENING (pass 2026-11-02): nodemailer's defaults can hold a
+      // dead SMTP socket for minutes (socketTimeout defaults to ~10min,
+      // connection setup unbounded). Emails are sent INSIDE request and
+      // cron handlers (verification flows, keep-alive alerts inside
+      // /api/cron/*), so an unbounded SMTP stall turns into another
+      // 504 vector. These caps keep worst-case delivery ~15s - well
+      // inside the cron functions' maxDuration (30s).
+      connectionTimeout: 10_000, // TCP + TLS + EHLO handshake
+      greetingTimeout: 8_000, // time to SMTP banner after connect
+      socketTimeout: 15_000, // hard stop on an idle/stalled socket
     });
   }
   return transporter;

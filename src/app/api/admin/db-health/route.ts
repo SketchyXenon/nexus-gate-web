@@ -115,45 +115,45 @@ export async function GET() {
     let serverDatabase: string | null = null;
     let serverVersion: string | null = null;
 
+    // L6 (hardening pass 2026-11-02): all introspection now uses
+    // parameterized $queryRaw tagged templates instead of
+    // $queryRawUnsafe string interpolation. `table` currently comes from
+    // a static server-side constant (TABLE_NAME), so this was not
+    // exploitable - but tagged templates make injection structurally
+    // impossible even if TABLE_NAME ever becomes dynamic. Verified:
+    // SQLite's pragma_table_info() table-valued function accepts bound
+    // parameters (pragma vtab args are ordinary expressions).
     if (provider === "sqlite") {
       // SQLite: table-valued pragma functions work as plain SELECTs.
-      const colRows = (await db.$queryRawUnsafe(
-        `SELECT name FROM pragma_table_info('${table}')`,
-      )) as ColumnRow[];
+      const colRows =
+        (await db.$queryRaw`SELECT name FROM pragma_table_info(${table})`) as ColumnRow[];
       columns = colRows
         .map((r) => firstString(r.name))
         .filter((c): c is string => !!c);
-      const info = (await db.$queryRawUnsafe(
-        "SELECT sqlite_version() AS version",
-      )) as ServerInfoRow[];
+      const info =
+        (await db.$queryRaw`SELECT sqlite_version() AS version`) as ServerInfoRow[];
       serverVersion = firstString(info[0]?.version);
       serverDatabase = target.database; // file path from the url
     } else if (provider === "mysql") {
       // TiDB / MySQL: information_schema scoped to the CURRENT database.
-      const colRows = (await db.$queryRawUnsafe(
-        `SELECT COLUMN_NAME FROM information_schema.COLUMNS ` +
-          `WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${table}'`,
-      )) as ColumnRow[];
+      const colRows =
+        (await db.$queryRaw`SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${table}`) as ColumnRow[];
       columns = colRows
         .map((r) => firstString(r.COLUMN_NAME))
         .filter((c): c is string => !!c);
-      const info = (await db.$queryRawUnsafe(
-        "SELECT DATABASE() AS schema_name, VERSION() AS version",
-      )) as ServerInfoRow[];
+      const info =
+        (await db.$queryRaw`SELECT DATABASE() AS schema_name, VERSION() AS version`) as ServerInfoRow[];
       serverDatabase = firstString(info[0]?.schema_name);
       serverVersion = firstString(info[0]?.version);
     } else {
       // PostgreSQL.
-      const colRows = (await db.$queryRawUnsafe(
-        `SELECT column_name FROM information_schema.columns ` +
-          `WHERE table_schema = current_schema() AND table_name = '${table}'`,
-      )) as ColumnRow[];
+      const colRows =
+        (await db.$queryRaw`SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ${table}`) as ColumnRow[];
       columns = colRows
         .map((r) => firstString(r.column_name))
         .filter((c): c is string => !!c);
-      const info = (await db.$queryRawUnsafe(
-        "SELECT current_database() AS schema_name, version() AS version",
-      )) as ServerInfoRow[];
+      const info =
+        (await db.$queryRaw`SELECT current_database() AS schema_name, version() AS version`) as ServerInfoRow[];
       serverDatabase = firstString(info[0]?.schema_name);
       serverVersion = firstString(info[0]?.version);
     }
