@@ -355,6 +355,55 @@ async function deliverAlert(
 // ------------------------------------------------------------------
 
 /**
+ * Minimum spacing between two FORCED keep-alive runs (notifyDbFailure).
+ * The alert state machine already dedupes notifications, but each run
+ * still pings Supabase + DB and writes settings - without this throttle,
+ * an external scheduler hitting /api/cron/event-reminders every 5 min
+ * during an outage would run the watchdog every 5 min too. 60s keeps
+ * detection at minutes-level granularity (vs the next daily cleanup run)
+ * at trivial cost.
+ */
+const FORCED_RUN_MIN_SPACING_MS = 60_000;
+
+let lastForcedRunMs = 0;
+
+/**
+ * Fire-and-forget watchdog trigger for cron/API routes that just hit a
+ * database failure. Runs one keep-alive cycle, which:
+ *   - re-verifies Supabase Auth + DB reachability,
+ *   - persists the failure state to `settings`,
+ *   - emails ADMINs on the ok/unknown -> fail transition (and re-alerts
+ *     at most once per RE_ALERT_HOURS) - so an outage is escalated in
+ *     minutes instead of waiting for the next daily cleanup run.
+ *
+ * NEVER THROWS. Production callers await it only when they are about to
+ * return a 503 anyway, so a worst-case run (auth ping 5s + DB probe 3s
+ * + writes) stays inside their budget. Pass { force: true } to skip the
+ * 60s spacing throttle (used by tests to exercise repeated runs).
+ */
+export async function notifyDbFailure(
+  context: string,
+  opts?: { force?: boolean },
+): Promise<void> {
+  const nowMs = Date.now();
+  if (!opts?.force && nowMs - lastForcedRunMs < FORCED_RUN_MIN_SPACING_MS) {
+    // A forced run happened very recently - its result is still fresh.
+    return;
+  }
+  lastForcedRunMs = nowMs;
+  try {
+    const summary = await runKeepAlive();
+    console.error(
+      `[keep-alive] forced check after DB failure (${context}): ` +
+        `status=${summary.status} db=${summary.dbCheck} auth=${summary.authCheck} ` +
+        `alerted=${summary.alerted}`,
+    );
+  } catch {
+    // runKeepAlive itself never throws - belt and suspenders only.
+  }
+}
+
+/**
  * Runs one keep-alive cycle: ping Supabase Auth (anti-pause activity) +
  * the app database, persist watchdog state, alert on transitions.
  * NEVER THROWS - a watchdog that crashes would be worse than useless.
