@@ -16,6 +16,7 @@
 //   fullName | full_name | name → student's full name
 //   program                   → BSIT, BSMx, BIT-CT, BIT-DT, BIT-ET, BIT-ELT
 //   section                   → e.g. "2-B"
+//   shift                     → DAY | NIGHT (optional, defaults to DAY)
 // ====================================================================
 
 import { PROGRAM_CODES } from "./programs";
@@ -26,6 +27,7 @@ export interface ParsedStudent {
   fullName: string;
   program: string;
   section: string;
+  shift: "DAY" | "NIGHT";
 }
 
 export interface ParseResult {
@@ -59,6 +61,9 @@ const HEADER_MAP: Record<string, string> = {
   section: "section",
   block: "section",
   group: "section",
+  shift: "shift",
+  classshift: "shift",
+  schedule: "shift",
 };
 
 // ---- Parse a raw 2D array of rows into ParsedStudent[] ----
@@ -85,8 +90,8 @@ function parseRows(data: unknown[][]): ParseResult {
     headers = firstRow.map((c) => HEADER_MAP[normalizeHeader(c)] || c);
     dataStart = 1;
   } else {
-    // No headers - assume order: studentId, email, fullName, program, section
-    headers = ["studentId", "email", "fullName", "program", "section"];
+    // No headers - assume order: studentId, email, fullName, program, section, shift
+    headers = ["studentId", "email", "fullName", "program", "section", "shift"];
   }
 
   // Validate required columns exist
@@ -153,7 +158,20 @@ function parseRows(data: unknown[][]): ParseResult {
     // Parse section (optional)
     const section = (obj.section || "").trim();
 
-    students.push({ studentId, email, fullName, program, section });
+    // Parse day/night shift (optional - invalid values fall back to DAY
+    // with a warning rather than failing the whole row: legacy rosters
+    // never carry the column).
+    const shiftRaw = (obj.shift || "").trim().toUpperCase();
+    let shift: "DAY" | "NIGHT" = "DAY";
+    if (shiftRaw && shiftRaw !== "DAY" && shiftRaw !== "NIGHT") {
+      errors.push(
+        `Row ${i + 1}: Invalid shift "${obj.shift}" (must be DAY or NIGHT - defaulted to DAY)`,
+      );
+    } else if (shiftRaw === "NIGHT") {
+      shift = "NIGHT";
+    }
+
+    students.push({ studentId, email, fullName, program, section, shift });
   }
 
   return { students, errors, totalRows: data.length - dataStart, skipped };

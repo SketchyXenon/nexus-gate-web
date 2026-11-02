@@ -4,19 +4,20 @@ export const maxDuration = 10;
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/api";
+import { visibleEventWhereOr } from "@/lib/event-visibility";
 
 // GET /api/profile/attendance
 // Returns the calling student's own attendance history with optional filters.
 // Only available to USER role (students).
 //
 // Query params:
-//   ?from=YYYY-MM-DD  — include scans on or after this date
-//   ?to=YYYY-MM-DD    — include scans on or before this date
-//   ?scope=academic   — filter by event scope ("academic" | "departmental")
+//   ?from=YYYY-MM-DD - include scans on or after this date
+//   ?to=YYYY-MM-DD   - include scans on or before this date
+//   ?scope=academic  - filter by event scope ("academic" | "departmental")
 //
 // Response:
 //   records: [{ id, scannedAt, timeOutAt, source, event: { id, title, scheduledAt, scope, targetProgram, targetSection } }]
-//   stats: { total, qrCount, overrideCount, withTimeout }
+//   stats: { total, qrCount, overrideCount, withTimeout, attendedCount, eligibleCount, attendanceRate }
 export async function GET(req: NextRequest) {
   const res = await requireAuth("USER", { exactRole: true });
   if ("error" in res) return res.error;
@@ -70,17 +71,38 @@ export async function GET(req: NextRequest) {
   });
 
   // Compute summary stats.
+  // Attendance rate: attended check-ins vs. eligible events that have
+  // already started (scheduledAt <= now, not cancelled) under the v8
+  // visibility rule. Null when the student has no eligible events yet.
+  const [attendedCount, eligibleCount] = await Promise.all([
+    db.eventAttendance.count({ where: { accountId: account.id } }),
+    db.event.count({
+      where: {
+        scheduledAt: { lte: new Date() },
+        status: { not: "cancelled" },
+        OR: visibleEventWhereOr(
+          account.program ?? null,
+          account.section ?? null,
+        ),
+      },
+    }),
+  ]);
+  const attendanceRate =
+    eligibleCount > 0
+      ? Math.min(100, Math.round((attendedCount / eligibleCount) * 100))
+      : null;
+
   const stats = {
     total: records.length,
     qrCount: records.filter((r) => r.source === "qr").length,
     overrideCount: records.filter((r) => r.source === "override").length,
     withTimeout: records.filter((r) => r.timeOutAt !== null).length,
+    attendedCount,
+    eligibleCount,
+    attendanceRate,
   };
 
   const response = NextResponse.json({ records, stats });
-  response.headers.set(
-    "Cache-Control",
-    "private, no-cache",
-  );
+  response.headers.set("Cache-Control", "private, no-cache");
   return response;
 }

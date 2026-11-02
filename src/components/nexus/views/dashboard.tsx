@@ -11,7 +11,6 @@ import {
   Activity,
   CheckCircle2,
   BarChart3,
-  Download,
   Info,
   Plus,
   QrCode,
@@ -155,7 +154,7 @@ export function DashboardView({ user, onNavigate }: Props) {
             <Card className="border-amber-500/40 bg-amber-500/5">
               <CardContent className="p-3 sm:p-4 flex flex-wrap items-center gap-2">
                 <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
-                <p className="font-medium text-amber-700 dark:text-amber-400 flex-1 min-w-[12rem] text-sm">
+                <p className="font-medium text-amber-700 dark:text-amber-400 flex-1 min-w-0 text-sm">
                   Complete your profile to see events for your course
                 </p>
                 <Tooltip>
@@ -802,8 +801,9 @@ function AnalyticsPanel({
               onClick={handleExport}
               disabled={!hasActivity}
               className="h-9 shrink-0"
+              aria-label="Export dashboard metrics as CSV"
             >
-              <Download className="h-4 w-4" />
+              <span className="sm:hidden">Export</span>
               <span className="hidden sm:inline">Export CSV</span>
             </Button>
           </TooltipTrigger>
@@ -824,8 +824,8 @@ function AnalyticsPanel({
           </div>
         ) : (
           <>
-            {/* 3 key metrics */}
-            <div className="grid grid-cols-3 gap-2 sm:gap-3">
+            {/* 3 key metrics - stack on narrow phones so labels never truncate */}
+            <div className="grid grid-cols-1 min-[480px]:grid-cols-3 gap-2 sm:gap-3">
               <div className="rounded-lg border bg-muted/30 p-2 sm:p-3">
                 <p className="text-[10px] sm:text-[11px] uppercase tracking-wide text-muted-foreground truncate">
                   Students

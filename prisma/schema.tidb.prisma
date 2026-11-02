@@ -14,11 +14,12 @@
 // while respecting MySQL's index length limits (utf8mb4: 3072 bytes =
 // max 768 chars per indexed column).
 //
-// This schema reads TIDB_DATABASE_URL (NOT DATABASE_URL) so you can keep
-// your local dev DATABASE_URL pointing at SQLite while pushing the TiDB
-// schema to your TiDB cluster. In production on Vercel, set DATABASE_URL
-// to the TiDB URL - scripts/postinstall.mjs auto-maps it to
-// TIDB_DATABASE_URL before running prisma generate against this schema.
+// Prisma 7: the datasource `url` moved OUT of schema files into
+// prisma.tidb.config.ts (resolved from TIDB_DATABASE_URL, or a mysql://
+// DATABASE_URL). You can keep your local dev DATABASE_URL pointing at
+// SQLite while pushing the TiDB schema to your TiDB cluster. In
+// production on Vercel, set DATABASE_URL to the TiDB URL -
+// scripts/postinstall.mjs auto-selects this schema's config there.
 //
 // Usage (local dev - push schema to TiDB):
 //   # Set TIDB_DATABASE_URL in .env to your TiDB connection string
@@ -26,13 +27,20 @@
 //   bun run db:generate:tidb
 // ====================================================================
 
+// Prisma 7 generator (prisma-client-js was removed). The generated
+// client is provider-agnostic - the connection comes from a driver
+// adapter at runtime (src/lib/db.ts: @prisma/adapter-mariadb for TiDB).
 generator client {
-  provider = "prisma-client-js"
+  provider               = "prisma-client"
+  output                 = "../src/generated/prisma"
+  runtime                = "nodejs"
+  moduleFormat           = "cjs"
+  generatedFileExtension = "ts"
+  importFileExtension    = "ts"
 }
 
 datasource db {
   provider = "mysql"
-  url      = env("TIDB_DATABASE_URL")
 }
 
 // ====================================================================
@@ -52,6 +60,9 @@ model Account {
   authProvider         String?   @map("auth_provider") @db.VarChar(64)
   providerAccountId    String?   @map("provider_account_id") @db.VarChar(128)
   year                 Int?
+  // Day/night class classification ("DAY" | "NIGHT"). Null = not yet set;
+  // the schedules view then shows both shifts for the student's section.
+  shift                String?   @map("shift") @db.VarChar(8)
   organizationName     String?   @map("organization_name") @db.VarChar(255)
   courseModifiedAt     DateTime? @map("course_modified_at")
   lastProfileUpdateAt  DateTime? @map("last_profile_update_at")
@@ -93,6 +104,7 @@ model Account {
   deviceKeys         DeviceKey[]
   termsAcceptances   TermsAcceptance[]
   mfaChallenges      MfaChallenge[]
+  schedulesOwned     Schedule[] @relation("ScheduleOwner")
 
   @@index([role, status])
   @@index([program, section])
@@ -115,8 +127,13 @@ model AuthorizedStudent {
   fullName  String               @map("full_name") @db.VarChar(255)
   program   String               @db.VarChar(64)
   section   String               @db.VarChar(32)
+  // Day/night class shift ("DAY" | "NIGHT"). Defaults to DAY for imports
+  // that do not specify one (day students are the historical majority).
+  shift     String               @default("DAY") @db.VarChar(8)
   activated Boolean              @default(false)
   overrides AttendanceOverride[]
+  // "Shift" index: filter the roster by day/night class population.
+  @@index([shift])
 
   @@index([program, section, activated])
   @@index([activated])
@@ -408,4 +425,49 @@ model MfaChallenge {
   @@index([accountId, consumedAt])
   @@index([expiresAt])
   @@map("mfa_challenges")
+}
+
+// ====================================================================
+// 15. SCHEDULES (recurring weekly class timetable, day & night shifts)
+// --------------------------------------------------------------------
+// Institutions here run DAY and NIGHT class shifts for the same
+// program/section. Each Schedule row is one recurring weekly class slot:
+//   - shift       "DAY" (06:00-17:59) or "NIGHT" (18:00-23:59)
+//   - dayOfWeek   0 = Sunday ... 6 = Saturday (matches Date#getDay())
+//   - start/endTime "HH:MM" 24h strings (zero-padded, so lexicographic
+//     ordering = chronological). Stored as strings because Prisma has no
+//     time-only scalar and the value must round-trip identically across
+//     SQLite (dev) and TiDB (prod).
+//   - program/section mirror Event.targetProgram/targetSection: both null
+//     = department-wide, section null = program-wide, both set = section
+//     class. Combined with shift, students in e.g. "BSIT 3-A" get the
+//     correct DAY or NIGHT timetable for their population.
+// ====================================================================
+
+model Schedule {
+  id         Int      @id @default(autoincrement())
+  ownerId    String   @map("owner_id") @db.VarChar(128)
+  owner      Account  @relation("ScheduleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  program    String?  @db.VarChar(64)
+  section    String?  @db.VarChar(32)
+  shift      String   @default("DAY") @db.VarChar(8)
+  dayOfWeek  Int      @map("day_of_week")
+  subject    String   @db.VarChar(255)
+  instructor String?  @db.VarChar(255)
+  room       String?  @db.VarChar(64)
+  startTime  String   @map("start_time") @db.VarChar(5)
+  endTime    String   @map("end_time") @db.VarChar(5)
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  // Exact-duplicate guard (idempotent create / double-submit): one subject
+  // per (section, shift, day, start) slot. MySQL unique indexes allow
+  // multiple NULLs, so open-scope (program=null) rows are not deduplicated
+  // at the DB level - the API layer backstops that case.
+  @@unique([program, section, shift, dayOfWeek, startTime, subject], map: "schedules_slot_key")
+  @@index([program, section, shift, dayOfWeek, isActive])
+  @@index([ownerId, createdAt])
+  @@index([shift, isActive])
+  @@map("schedules")
 }

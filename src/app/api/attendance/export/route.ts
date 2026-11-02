@@ -111,11 +111,12 @@ export async function GET(req: NextRequest) {
   });
 
   // ---- CSV helpers ----
-  // RFC 4180 quoting: wrap in quotes if the field contains comma, quote,
-  // newline, or carriage return; double any embedded quotes.
+  // RFC 4180 quoting + CWE-1236 formula-injection defense: neutralize
+  // spreadsheet formula characters (= + - @ tab) with a leading quote.
   const escapeCsv = (val: string | number | null | undefined): string => {
     if (val === null || val === undefined) return "";
-    const s = String(val);
+    let s = String(val);
+    if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
     if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
     return s;
   };

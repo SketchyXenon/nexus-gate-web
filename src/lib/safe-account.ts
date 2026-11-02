@@ -13,7 +13,8 @@
 // ====================================================================
 
 import { db } from "@/lib/db";
-import type { Prisma } from "@prisma/client";
+// Prisma 7: types come from the generated client (src/generated/prisma).
+import type { Prisma } from "@/generated/prisma/client";
 
 // Fields that existed BEFORE migration 0017.
 const LEGACY_FIELDS = {

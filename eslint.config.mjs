@@ -60,6 +60,8 @@ const eslintConfig = [
       "mini-services/**",
       "supabase/**",
       "cloudflare/**",
+      // Prisma 7 generated client (prisma-client generator output).
+      "src/generated/**",
     ],
   },
 ];

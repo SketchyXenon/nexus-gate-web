@@ -219,6 +219,9 @@ export const whitelistRowSchema = z.object({
       /^\d+-[A-Za-z]+$/,
       "Section must be in the format '<year>-<letter>' (e.g. '2-A', '3-B')",
     ),
+  // Day/night class shift. Optional so legacy imports without the column
+  // still validate; server defaults unspecified rows to DAY.
+  shift: z.enum(["DAY", "NIGHT"]).default("DAY"),
 });
 
 export const importWhitelistSchema = z.object({
@@ -625,7 +628,84 @@ export const whitelistPaginationSchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(500).default(50),
 });
 
+// ---- Schedules (recurring weekly class timetable, day & night shifts) ----
+export const SHIFTS = ["DAY", "NIGHT"] as const;
+export type Shift = (typeof SHIFTS)[number];
+
+// "HH:MM" 24h clock ("08:00", "19:30"). Zero-padded strings compare
+// lexicographically = chronologically, which keeps the end>start check a
+// plain string compare across SQLite and TiDB.
+const timeSchema = z
+  .string()
+  .trim()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use 24h HH:MM time (e.g. 08:00, 19:30)");
+
+export const updateWhitelistShiftSchema = z.object({
+  shift: z.enum(["DAY", "NIGHT"]),
+});
+
+const scheduleBaseSchema = z.object({
+  // Targeting mirrors Event targeting. Null program = department-wide
+  // (admins only); null section = program-wide.
+  program: z
+    .string()
+    .trim()
+    .min(1)
+    .max(50)
+    .refine((val) => PROGRAM_CODES.has(val), {
+      message: "Select a valid program from the list",
+    })
+    .nullable()
+    .optional(),
+  section: z
+    .string()
+    .trim()
+    .min(1)
+    .max(10)
+    .regex(
+      /^\d+-[A-Za-z]+$/,
+      "Section must be in the format '<year>-<letter>' (e.g. '2-A', '3-B')",
+    )
+    .nullable()
+    .optional(),
+  // Day (06:00-17:59) or night (18:00-23:59) class population.
+  shift: z.enum(["DAY", "NIGHT"]).default("DAY"),
+  // 0 = Sunday ... 6 = Saturday (matches Date#getDay()).
+  dayOfWeek: z.coerce.number().int().min(0).max(6),
+  subject: z.string().trim().min(1, "Enter a subject").max(255),
+  instructor: z.string().trim().min(1).max(255).optional().nullable(),
+  room: z.string().trim().min(1).max(64).optional().nullable(),
+  startTime: timeSchema,
+  endTime: timeSchema,
+  isActive: z.boolean().optional(),
+});
+
+export const createScheduleSchema = scheduleBaseSchema.refine(
+  (data) => data.endTime > data.startTime,
+  { message: "End time must be after the start time" },
+);
+
+export const updateScheduleSchema = scheduleBaseSchema.partial().refine(
+  (data) => {
+    if (data.startTime && data.endTime) {
+      return data.endTime > data.startTime;
+    }
+    return true;
+  },
+  { message: "End time must be after the start time" },
+);
+
+export const schedulePaginationSchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(100),
+  shift: z.enum(["DAY", "NIGHT", "ALL"]).default("ALL"),
+  day: z.coerce.number().int().min(0).max(6).optional(),
+  q: z.string().trim().max(120).optional(),
+});
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type ScanInput = z.infer<typeof scanSchema>;
 export type CreateEventInput = z.infer<typeof createEventSchema>;
+export type CreateScheduleInput = z.infer<typeof createScheduleSchema>;
+export type UpdateScheduleInput = z.infer<typeof updateScheduleSchema>;

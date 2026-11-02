@@ -21,6 +21,7 @@ import {
   Bug,
   UserCircle,
   CalendarRange,
+  CalendarClock,
   History,
   Search,
 } from "lucide-react";
@@ -102,10 +103,14 @@ const CalendarView = dyn(() =>
 const MyAttendanceView = dyn(() =>
   import("./views/my-attendance").then((m) => m.MyAttendanceView),
 );
+const SchedulesView = dyn(() =>
+  import("./views/schedules").then((m) => m.SchedulesView),
+);
 
 type ViewId =
   | "dashboard"
   | "whitelist"
+  | "schedules"
   | "events"
   | "project-qr"
   | "scanner"
@@ -139,6 +144,13 @@ const NAV: NavItem[] = [
     icon: Users,
     roles: ["ADMIN", "ORGANIZER"],
     description: "Approved students",
+  },
+  {
+    id: "schedules",
+    label: "Schedules",
+    icon: CalendarClock,
+    roles: ["ADMIN", "ORGANIZER", "USER"],
+    description: "Day & night class timetable",
   },
   {
     id: "events",
@@ -403,7 +415,7 @@ export function AppShell({
             <Button
               variant="ghost"
               size="icon"
-              className="h-9 w-9 lg:hidden"
+              className="hidden h-9 w-9 md:inline-flex lg:hidden"
               onClick={() => openInfoModal("faq")}
               aria-label="Help"
             >
@@ -422,6 +434,7 @@ export function AppShell({
                   <DashboardView user={user} onNavigate={setView} />
                 )}
                 {activeView === "whitelist" && <WhitelistView />}
+                {activeView === "schedules" && <SchedulesView />}
                 {activeView === "events" && <EventsView />}
                 {activeView === "calendar" && <CalendarView />}
                 {activeView === "project-qr" && <ProjectQrView />}
@@ -447,6 +460,7 @@ export function AppShell({
             onSelect={setView}
             role={user.role}
             onLogout={handleLogout}
+            onHelp={() => openInfoModal("faq")}
           />
         </div>
       </div>
@@ -464,12 +478,14 @@ function BottomTabBar({
   onSelect,
   role,
   onLogout,
+  onHelp,
 }: {
   allowedNav: NavItem[];
   activeView: ViewId;
   onSelect: (v: ViewId) => void;
   role: Account["role"];
   onLogout: () => void;
+  onHelp?: () => void;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const tabs = BOTTOM_TABS[role]
@@ -554,6 +570,18 @@ function BottomTabBar({
           {/* Sign out lives here on mobile: the sidebar button is desktop-only. */}
           <div className="p-3 pt-0">
             <Separator className="mb-2" />
+            {onHelp && (
+              <button
+                onClick={() => {
+                  onHelp();
+                  setMoreOpen(false);
+                }}
+                className="flex items-center gap-3 w-full px-4 py-3 min-h-[48px] rounded-lg text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <HelpCircle className="size-4 shrink-0" />
+                <span>Help</span>
+              </button>
+            )}
             <button
               onClick={onLogout}
               className="flex items-center gap-3 w-full px-4 py-3 min-h-[48px] rounded-lg text-sm font-medium text-destructive hover:bg-destructive/10 transition-colors"

@@ -93,11 +93,15 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (e) {
-    // Parse errors return 400 (bad request), not 500. The message is
-    // generic (no stack trace) to avoid information leakage.
-    const msg = e instanceof Error ? e.message : String(e);
+    // Parse errors return 400 (bad request), not 500. The body message is
+    // fixed (third-party parser internals are logged server-side only).
+    console.error("[whitelist/import-file] parse failed:", e);
     return NextResponse.json(
-      { error: `File processing failed: ${msg}`, code: "PARSE_ERROR" },
+      {
+        error:
+          "Could not parse this file. Verify it is a valid file and try again.",
+        code: "PARSE_ERROR",
+      },
       { status: 400 },
     );
   }

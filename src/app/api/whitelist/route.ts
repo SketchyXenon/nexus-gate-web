@@ -128,6 +128,7 @@ export async function GET(req: NextRequest) {
               fullName: true,
               program: true,
               section: true,
+              shift: true,
               status: true,
               year: true,
               createdAt: true,
@@ -153,6 +154,22 @@ export async function GET(req: NextRequest) {
   // ---- Get registered studentIds for filtering pending (page-sized set only) ----
   const registeredIds = new Set(registeredAccounts.map((a) => a.studentId));
 
+  // ---- Day/night shift resolution for the page of registered students ----
+  // The authorized_students row is the source of truth for a student's
+  // class shift (set at import time); the account column is the fallback.
+  const pageStudentIds = registeredAccounts
+    .map((a) => a.studentId)
+    .filter((v): v is number => typeof v === "number");
+  const authorizedShifts = pageStudentIds.length
+    ? await db.authorizedStudent.findMany({
+        where: { studentId: { in: pageStudentIds } },
+        select: { studentId: true, shift: true },
+      })
+    : [];
+  const shiftByStudentId = new Map(
+    authorizedShifts.map((r) => [r.studentId, r.shift]),
+  );
+
   // ---- Filter pending: only show those WITHOUT an account ----
   const trulyPending = pendingStudents.filter(
     (s) => !registeredIds.has(s.studentId),
@@ -162,6 +179,7 @@ export async function GET(req: NextRequest) {
   const merged = [
     ...registeredAccounts.map((a) => ({
       ...a,
+      shift: shiftByStudentId.get(a.studentId!) ?? a.shift ?? "DAY",
       activated: true,
       registrationStatus: "registered" as const,
       account: { id: a.id, status: a.status },
@@ -173,6 +191,7 @@ export async function GET(req: NextRequest) {
       fullName: s.fullName,
       program: s.program,
       section: s.section,
+      shift: s.shift,
       status: "PENDING" as const,
       year: null,
       createdAt: null,
@@ -195,6 +214,8 @@ export async function GET(req: NextRequest) {
       return (a.program || "").localeCompare(b.program || "");
     if (a.section !== b.section)
       return (a.section || "").localeCompare(b.section || "");
+    if (a.shift !== b.shift)
+      return (a.shift || "").localeCompare(b.shift || "");
     return a.fullName.localeCompare(b.fullName);
   });
 
@@ -290,6 +311,7 @@ export async function POST(req: NextRequest) {
       fullName: s.fullName,
       program: s.program,
       section: s.section,
+      shift: s.shift,
       activated: false,
     }));
 
@@ -326,6 +348,7 @@ export async function POST(req: NextRequest) {
             fullName: s.fullName,
             program: s.program,
             section: s.section,
+            shift: s.shift,
           },
         }),
       ),

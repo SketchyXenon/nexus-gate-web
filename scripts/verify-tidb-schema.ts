@@ -11,11 +11,18 @@
 // that queries the new columns returns 500 in production. This script
 // turns that silent failure into a 5-second pre/post-deploy check.
 //
-// HOW: `prisma migrate diff --from-schema-datasource <schema>
-// --to-schema-datamodel <schema> --exit-code` lets Prisma itself
-// compute the difference (far more reliable than hand-rolling
-// information_schema queries). Exit codes: 0 = in sync, 2 = drift,
-// 1 = error.
+// HOW: `prisma migrate diff --from-config-datasource
+// --to-schema <schema> --exit-code` lets Prisma itself compute the
+// difference (far more reliable than hand-rolling information_schema
+// queries). Exit codes: 0 = in sync, 2 = drift, 1 = error.
+//
+// PRISMA 7: the connection URL travels via the TiDB CONFIG FILE
+// (prisma.tidb.config.ts), which resolves TIDB_DATABASE_URL / a mysql://
+// DATABASE_URL. The old schema-level datasource URL - and with it the
+// --from-schema-datasource / --to-schema-datamodel diff flags - no
+// longer exist in Prisma 7. This script still passes the URL through
+// the ENVIRONMENT (never argv): the child process gets
+// TIDB_DATABASE_URL set and the config resolves it.
 //
 // IMPLEMENTATION NOTES (v2 - cross-platform hardening):
 // - The Prisma CLI is invoked through its LOCAL JS entry
@@ -27,8 +34,8 @@
 //   (process.execPath) -> npx -> npx-with-shell.
 // - The DB URL is passed through the ENVIRONMENT (TIDB_DATABASE_URL),
 //   never on the command line: no shell-quoting hazards and no
-//   password visible in the process list. `--from-schema-datasource`
-//   makes Prisma resolve env("TIDB_DATABASE_URL") itself.
+//   password visible in the process list. prisma.tidb.config.ts
+//   resolves TIDB_DATABASE_URL (or a mysql:// DATABASE_URL) itself.
 // - Spawn failures (result.error) are ALWAYS printed - the script can
 //   no longer fail with an empty "unknown error" message.
 // - Paths are derived from this file's location via fileURLToPath, so
@@ -53,6 +60,8 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const ENV_PATH = join(ROOT, ".env");
 const PRISMA_CLI = join(ROOT, "node_modules", "prisma", "build", "index.js");
 const TIDB_SCHEMA = join(ROOT, "prisma", "schema.tidb.prisma");
+// Prisma 7: connection URLs live in config files, not schema files.
+const TIDB_CONFIG = join(ROOT, "prisma.tidb.config.ts");
 
 function readEnvFile(key: string): string {
   try {
@@ -190,9 +199,10 @@ function runPrisma(prismaArgs: string[]): {
   run: PrismaRun | null;
   failures: string[];
 } {
-  // The URL travels via env, never argv: Prisma resolves it through the
-  // schema's env("TIDB_DATABASE_URL") reference. Both names are set so
-  // the schema file could be swapped without touching this script.
+  // The URL travels via env, never argv: the config file
+  // (prisma.tidb.config.ts) resolves TIDB_DATABASE_URL when the CLI
+  // loads it. Both names are set so the config's fallback chain could
+  // change without touching this script.
   const childEnv = {
     ...process.env,
     TIDB_DATABASE_URL: url,
@@ -238,13 +248,17 @@ function runPrisma(prismaArgs: string[]): {
 }
 
 const prismaArgs = [
+  // Prisma 7 flag set: the "from" side is the live database reached
+  // through the CONFIG FILE's datasource (URL from TIDB_DATABASE_URL /
+  // mysql:// DATABASE_URL); the "to" side is this checkout's schema.
   "migrate",
   "diff",
-  "--from-schema-datasource",
-  TIDB_SCHEMA,
-  "--to-schema-datamodel",
+  "--from-config-datasource",
+  "--to-schema",
   TIDB_SCHEMA,
   "--exit-code",
+  "--config",
+  TIDB_CONFIG,
 ];
 
 const { run, failures } = runPrisma(prismaArgs);

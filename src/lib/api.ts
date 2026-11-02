@@ -24,6 +24,9 @@ export interface ApiAccount {
   section: string | null;
   organizationName: string | null;
   year: number | null;
+  // Day/night class shift ("DAY" | "NIGHT"). Null = not yet classified;
+  // schedule views then show both shifts for the student's section.
+  shift?: string | null;
   lastLoginAt: string | null;
   // MFA (TOTP). When true, the session layer (supabase-session.ts and
   // session.ts) requires a valid ng_mfa_verified cookie bound to this
@@ -261,18 +264,18 @@ export async function requireAuth(
 }
 
 // ---- Get the real client IP (anti-spoofing) ----
-// In production behind Vercel/Cloudflare, x-forwarded-for is set by the
-// proxy and contains: "client-ip, proxy1-ip, proxy2-ip, ..."
-// We take the FIRST (leftmost) IP, which is the original client.
-// A client CANNOT inject a fake x-forwarded-for because the proxy
-// overwrites it. In development (no proxy), we fall back to the
-// connection info.
+// Trusted proxies (Vercel, Caddy) APPEND the real client IP to
+// x-forwarded-for, so a client CAN prepend fake entries. We take the
+// LAST (rightmost) IP, which is the value our trusted proxy appended.
+// In development (no proxy) there is a single entry, so this is still
+// the actual client.
 export function getClientIp(req: NextRequest): string {
   const forwarded = req.headers.get("x-forwarded-for");
   if (forwarded) {
-    // Take the first IP in the chain (the original client)
-    const firstIp = forwarded.split(",")[0]?.trim();
-    if (firstIp) return firstIp;
+    // Take the last IP in the chain (appended by the trusted proxy)
+    const parts = forwarded.split(",");
+    const lastIp = parts[parts.length - 1]?.trim();
+    if (lastIp) return lastIp;
   }
   // Fall back to x-real-ip (set by some proxies)
   const realIp = req.headers.get("x-real-ip");

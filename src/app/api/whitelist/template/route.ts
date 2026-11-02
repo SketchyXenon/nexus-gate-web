@@ -23,6 +23,7 @@ export async function GET(_req: NextRequest) {
     { header: "fullName", key: "fullName", width: 22 },
     { header: "program", key: "program", width: 10 },
     { header: "section", key: "section", width: 10 },
+    { header: "shift", key: "shift", width: 10 },
   ];
 
   // Add sample rows.
@@ -33,6 +34,7 @@ export async function GET(_req: NextRequest) {
       fullName: "Jane Dela Cruz",
       program: "BSIT",
       section: "2-B",
+      shift: "DAY",
     },
     {
       studentId: 3240002,
@@ -40,6 +42,7 @@ export async function GET(_req: NextRequest) {
       fullName: "John Smith",
       program: "BSMx",
       section: "1-A",
+      shift: "NIGHT",
     },
     {
       studentId: 3240003,
@@ -47,6 +50,7 @@ export async function GET(_req: NextRequest) {
       fullName: "Maria Garcia",
       program: "BIT-CT",
       section: "3-C",
+      shift: "DAY",
     },
   ]);
 

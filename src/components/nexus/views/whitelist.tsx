@@ -9,9 +9,7 @@ import {
   Search,
   Trash2,
   FileSpreadsheet,
-  CheckCircle2,
   Loader2,
-  ClipboardPaste,
   ChevronLeft,
   ChevronRight,
   AlertCircle,
@@ -58,9 +56,11 @@ import {
   useWhitelist,
   useImportWhitelist,
   useDeleteWhitelist,
+  useUpdateWhitelistShift,
   useMe,
   type AuthorizedStudent,
   type WhitelistSort,
+  type ClassShift,
 } from "@/lib/api-client";
 import { PROGRAMS, getProgramLabel } from "@/lib/programs";
 import { toast } from "@/hooks/use-toast";
@@ -72,17 +72,18 @@ interface ParsedRow {
   fullName: string;
   program: string;
   section: string;
+  shift?: "DAY" | "NIGHT";
 }
 
 const SAMPLE_CSV =
-  "studentId,email,fullName,program,section\n3240001,jane@ctu.edu.ph,Jane Doe,BSIT,2-B";
+  "studentId,email,fullName,program,section,shift\n3240001,jane@ctu.edu.ph,Jane Doe,BSIT,2-B,DAY";
 
 // ---- Upload configuration ----
 const ALLOWED_EXTENSIONS = [".docx", ".xls", ".xlsx", ".pdf", ".csv"] as const;
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const PAGE_SIZE = 50;
 
-// Section options are NOT predefined — they are derived dynamically from
+// Section options are NOT predefined - they are derived dynamically from
 // the loaded student data (see `availableSections` below). This handles
 // CTU's varying section values that differ from the standard A-D pattern.
 
@@ -90,7 +91,9 @@ const PAGE_SIZE = 50;
 function validateClientFile(file: File): string | null {
   const dotIdx = file.name.lastIndexOf(".");
   const ext = dotIdx >= 0 ? file.name.slice(dotIdx).toLowerCase() : "";
-  if (!ALLOWED_EXTENSIONS.includes(ext as (typeof ALLOWED_EXTENSIONS)[number])) {
+  if (
+    !ALLOWED_EXTENSIONS.includes(ext as (typeof ALLOWED_EXTENSIONS)[number])
+  ) {
     return `Unsupported file type "${ext || "(none)"}". Allowed: ${ALLOWED_EXTENSIONS.join(", ")}`;
   }
   if (file.size > MAX_FILE_SIZE) {
@@ -117,6 +120,7 @@ function uploadFileWithProgress(
       fullName: string;
       program: string;
       section: string;
+      shift?: "DAY" | "NIGHT";
     }>;
     errors?: string[];
     skipped?: number;
@@ -143,25 +147,23 @@ function uploadFileWithProgress(
         /* ignore */
       }
       const ok = xhr.status >= 200 && xhr.status < 300;
-      const data = parsed as
-        | {
-            students?: Array<{
-              studentId: number;
-              email: string;
-              fullName: string;
-              program: string;
-              section: string;
-            }>;
-            errors?: string[];
-            skipped?: number;
-            totalRows?: number;
-            error?: string;
-          }
-        | null;
+      const data = parsed as {
+        students?: Array<{
+          studentId: number;
+          email: string;
+          fullName: string;
+          program: string;
+          section: string;
+        }>;
+        errors?: string[];
+        skipped?: number;
+        totalRows?: number;
+        error?: string;
+      } | null;
       resolve({
         ok,
         status: xhr.status,
-        data: ok ? data ?? undefined : undefined,
+        data: ok ? (data ?? undefined) : undefined,
         error: ok ? undefined : data?.error || "Could not parse the file.",
       });
     };
@@ -170,14 +172,15 @@ function uploadFileWithProgress(
       resolve({
         ok: false,
         status: 0,
-        error: "Network error — please check your connection and try again.",
+        error: "Network error - please check your connection and try again.",
       });
 
     xhr.ontimeout = () =>
       resolve({
         ok: false,
         status: 0,
-        error: "Upload timed out. Please try a smaller file or check your connection.",
+        error:
+          "Upload timed out. Please try a smaller file or check your connection.",
       });
 
     const formData = new FormData();
@@ -227,12 +230,33 @@ export function WhitelistView() {
   });
   const importMut = useImportWhitelist();
   const deleteMut = useDeleteWhitelist();
+  const shiftMut = useUpdateWhitelistShift();
+
+  // Toggle a student between the day and night class shifts.
+  const toggleShift = (s: AuthorizedStudent) => {
+    const next: ClassShift = s.shift === "NIGHT" ? "DAY" : "NIGHT";
+    shiftMut.mutate(
+      { studentId: s.studentId, shift: next },
+      {
+        onSuccess: () =>
+          toast({
+            title: `${s.fullName} moved to ${next === "NIGHT" ? "Night" : "Day"} class`,
+          }),
+        onError: (e) =>
+          toast({
+            title: "Could not update shift",
+            description: e.message,
+            variant: "destructive",
+          }),
+      },
+    );
+  };
 
   const students = data?.students ?? [];
   const pagination = data?.pagination;
 
   // ---- Derive available sections from the loaded student data ----
-  // Sections are NOT predefined — they come from whatever sections
+  // Sections are NOT predefined - they come from whatever sections
   // students actually have in the database. This handles CTU's varying
   // section values (e.g. "1-A", "2-B", "3-IT", "4-CT", etc.).
   const availableSections = useMemo(() => {
@@ -247,7 +271,7 @@ export function WhitelistView() {
 
   // ---- Handle file upload via server-side parsing with progress ----
   async function handleFileUpload(file: File) {
-    // 1. Strict client-side validation — reject before any network call.
+    // 1. Strict client-side validation - reject before any network call.
     const err = validateClientFile(file);
     if (err) {
       toast({
@@ -410,15 +434,15 @@ export function WhitelistView() {
             Add approved students
           </CardTitle>
           <CardDescription className="flex items-center gap-1.5">
-            Upload a file or paste rows — headers are auto-detected.
+            Upload a file or paste rows - headers are auto-detected.
             <Tooltip>
               <TooltipTrigger asChild>
                 <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
               </TooltipTrigger>
               <TooltipContent className="max-w-xs">
-                Columns: studentId, email, fullName, program, section.
-                Student ID must be 7 digits (e.g. 3240001).
-                Program must be one of: BSIT, BSMx, BIT-CT, BIT-DT, BIT-ET, BIT-ELT.
+                Columns: studentId, email, fullName, program, section. Student
+                ID must be 7 digits (e.g. 3240001). Program must be one of:
+                BSIT, BSMx, BIT-CT, BIT-DT, BIT-ET, BIT-ELT.
               </TooltipContent>
             </Tooltip>
           </CardDescription>
@@ -431,7 +455,9 @@ export function WhitelistView() {
                 <Label htmlFor="csv-file">Upload file</Label>
                 <button
                   type="button"
-                  onClick={() => window.open("/api/whitelist/template", "_blank")}
+                  onClick={() =>
+                    window.open("/api/whitelist/template", "_blank")
+                  }
                   className="text-xs text-primary hover:underline flex items-center gap-1 min-h-[1.5rem]"
                 >
                   <Download className="h-3 w-3" />
@@ -440,8 +466,18 @@ export function WhitelistView() {
                 </button>
               </div>
               <div
+                role="button"
+                tabIndex={0}
+                aria-label="Choose a file to upload"
                 onClick={() => !fileParsing && fileRef.current?.click()}
-                className="border-2 border-dashed border-border rounded-lg p-4 sm:p-6 text-center cursor-pointer hover:border-primary/50 hover:bg-accent/30 transition-colors"
+                onKeyDown={(e) => {
+                  if (fileParsing) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    fileRef.current?.click();
+                  }
+                }}
+                className="border-2 border-dashed border-border rounded-lg p-4 sm:p-6 text-center cursor-pointer hover:border-primary/50 hover:bg-accent/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <Upload className="h-6 w-6 mx-auto text-muted-foreground mb-2" />
                 <p className="text-sm font-medium">
@@ -492,12 +528,13 @@ export function WhitelistView() {
                 </div>
               )}
 
-              {/* Allowed file types summary — always visible */}
+              {/* Allowed file types summary - always visible */}
               {!fileParsing && (
                 <div className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
                   <FileText className="h-3 w-3 mt-0.5 shrink-0" />
                   <span>
-                    Accepted: Excel (.xlsx, .xls), Word (.docx), PDF (.pdf), CSV (.csv). Max 10 MB.
+                    Accepted: Excel (.xlsx, .xls), Word (.docx), PDF (.pdf), CSV
+                    (.csv). Max 10 MB.
                   </span>
                 </div>
               )}
@@ -520,7 +557,6 @@ export function WhitelistView() {
                 disabled={!pasted.trim()}
                 className="h-9"
               >
-                <ClipboardPaste className="h-4 w-4" />
                 Read pasted text
               </Button>
             </div>
@@ -528,12 +564,13 @@ export function WhitelistView() {
 
           {/* ---- Parse errors ---- */}
           {parseErrors.length > 0 && (
-            <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1.5">
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 space-y-1.5">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs font-medium text-destructive flex items-center gap-1.5">
                   <AlertCircle className="h-4 w-4 shrink-0" />
                   <span>
-                    {parseErrors.length} problem{parseErrors.length === 1 ? "" : "s"} found
+                    {parseErrors.length} problem
+                    {parseErrors.length === 1 ? "" : "s"} found
                   </span>
                 </p>
                 <button
@@ -547,7 +584,9 @@ export function WhitelistView() {
               </div>
               <ul className="text-xs text-destructive space-y-0.5 max-h-24 overflow-y-auto ng-scroll">
                 {parseErrors.map((err, i) => (
-                  <li key={i} className="break-words">{err}</li>
+                  <li key={i} className="break-words">
+                    {err}
+                  </li>
                 ))}
               </ul>
             </div>
@@ -565,10 +604,16 @@ export function WhitelistView() {
                 <Separator />
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <Badge variant="secondary">
-                    {parsed.length} student{parsed.length === 1 ? "" : "s"} ready to add
+                    {parsed.length} student{parsed.length === 1 ? "" : "s"}{" "}
+                    ready to add
                   </Badge>
                   <div className="flex gap-2">
-                    <Button variant="ghost" size="sm" onClick={clearParsed} className="h-9">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearParsed}
+                      className="h-9"
+                    >
                       Clear all
                     </Button>
                     <Button
@@ -579,9 +624,7 @@ export function WhitelistView() {
                     >
                       {importMut.isPending ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <CheckCircle2 className="h-4 w-4" />
-                      )}
+                      ) : null}
                       Add to approved list
                     </Button>
                   </div>
@@ -597,6 +640,7 @@ export function WhitelistView() {
                           <TableHead>Email</TableHead>
                           <TableHead>Program</TableHead>
                           <TableHead>Section</TableHead>
+                          <TableHead>Shift</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -620,14 +664,19 @@ export function WhitelistView() {
                             <TableCell className="font-mono text-xs">
                               {r.studentId}
                             </TableCell>
-                            <TableCell className="font-medium">{r.fullName}</TableCell>
+                            <TableCell className="font-medium">
+                              {r.fullName}
+                            </TableCell>
                             <TableCell className="text-xs text-muted-foreground">
                               {r.email}
                             </TableCell>
                             <TableCell>
                               <Tooltip>
                                 <TooltipTrigger asChild>
-                                  <Badge variant="outline" className="cursor-help">
+                                  <Badge
+                                    variant="outline"
+                                    className="cursor-help"
+                                  >
                                     {r.program}
                                   </Badge>
                                 </TooltipTrigger>
@@ -638,6 +687,18 @@ export function WhitelistView() {
                             </TableCell>
                             <TableCell>
                               <Badge variant="outline">{r.section}</Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant="outline"
+                                className={
+                                  r.shift === "NIGHT"
+                                    ? "border-slate-500/40 text-slate-600 dark:text-slate-300"
+                                    : "border-amber-500/40 text-amber-600"
+                                }
+                              >
+                                {r.shift === "NIGHT" ? "Night" : "Day"}
+                              </Badge>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -664,21 +725,25 @@ export function WhitelistView() {
                   Approved students
                 </CardTitle>
                 <CardDescription>
-                  {pagination?.total ?? 0} student{(pagination?.total ?? 0) === 1 ? "" : "s"} on the list
+                  {pagination?.total ?? 0} student
+                  {(pagination?.total ?? 0) === 1 ? "" : "s"} on the list
                   {isFetching && !isLoading && (
-                    <span className="ml-1.5 text-muted-foreground/70">(updating…)</span>
+                    <span className="ml-1.5 text-muted-foreground/70">
+                      (updating…)
+                    </span>
                   )}
                 </CardDescription>
               </div>
             </div>
 
-            {/* Filter row — search on its own row, dropdowns below */}
+            {/* Filter row - search on its own row, dropdowns below */}
             <div className="space-y-2">
-              {/* Search row — full width on all devices */}
+              {/* Search row - full width on all devices */}
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                 <Input
                   placeholder="Search name, email, or ID…"
+                  aria-label="Search approved students by name, email, or student ID"
                   value={qInput}
                   onChange={(e) => {
                     setQInput(e.target.value);
@@ -702,7 +767,7 @@ export function WhitelistView() {
                 )}
               </div>
 
-              {/* Dropdown row — 3 equal columns on sm+, 2 columns on mobile */}
+              {/* Dropdown row - 3 equal columns on sm+, 2 columns on mobile */}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <Select
                   value={program || "__all__"}
@@ -715,10 +780,10 @@ export function WhitelistView() {
                     <SelectValue placeholder="All programs" />
                   </SelectTrigger>
                   <SelectContent className="max-w-[calc(100vw-1.5rem)]">
-                    <SelectItem value="__all__">— All programs —</SelectItem>
+                    <SelectItem value="__all__"> - All programs - </SelectItem>
                     {PROGRAMS.map((p) => (
                       <SelectItem key={p.code} value={p.code}>
-                        {p.code} — {p.label}
+                        {p.code} - {p.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -735,7 +800,7 @@ export function WhitelistView() {
                     <SelectValue placeholder="All sections" />
                   </SelectTrigger>
                   <SelectContent className="max-w-[calc(100vw-1.5rem)]">
-                    <SelectItem value="__all__">— All sections —</SelectItem>
+                    <SelectItem value="__all__"> - All sections - </SelectItem>
                     {/* Dynamic sections derived from the loaded student data */}
                     {availableSections.map((s) => (
                       <SelectItem key={s} value={s}>
@@ -757,7 +822,7 @@ export function WhitelistView() {
                   </SelectTrigger>
                   <SelectContent className="max-w-[calc(100vw-1.5rem)]">
                     <SelectItem value="program">Sort: Program</SelectItem>
-                    <SelectItem value="name">Sort: Name (A–Z)</SelectItem>
+                    <SelectItem value="name">Sort: Name (A-Z)</SelectItem>
                     <SelectItem value="studentId">Sort: Student ID</SelectItem>
                   </SelectContent>
                 </Select>
@@ -766,7 +831,8 @@ export function WhitelistView() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <div className="max-h-[28rem] overflow-y-auto ng-scroll">
+          {/* Desktop / tablet: sticky-header table with horizontal scroll */}
+          <div className="hidden sm:block max-h-[28rem] overflow-y-auto ng-scroll">
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader className="sticky top-0 bg-card">
@@ -776,6 +842,7 @@ export function WhitelistView() {
                     <TableHead>Email</TableHead>
                     <TableHead>Program</TableHead>
                     <TableHead>Section</TableHead>
+                    <TableHead>Shift</TableHead>
                     <TableHead>Account</TableHead>
                     <TableHead className="w-12"></TableHead>
                   </TableRow>
@@ -784,7 +851,7 @@ export function WhitelistView() {
                   {isLoading && (
                     <TableRow>
                       <TableCell
-                        colSpan={7}
+                        colSpan={8}
                         className="text-center text-sm text-muted-foreground py-8"
                       >
                         Loading…
@@ -794,7 +861,7 @@ export function WhitelistView() {
                   {!isLoading && students.length === 0 && (
                     <TableRow>
                       <TableCell
-                        colSpan={7}
+                        colSpan={8}
                         className="text-center text-sm text-muted-foreground py-8"
                       >
                         No students match your search.
@@ -815,12 +882,12 @@ export function WhitelistView() {
                           {s.studentId}
                         </TableCell>
                         <TableCell className="font-medium">
-                          <span className="block max-w-[12rem] sm:max-w-none truncate">
+                          <span className="block max-w-[40vw] sm:max-w-none truncate">
                             {s.fullName}
                           </span>
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">
-                          <span className="block max-w-[10rem] sm:max-w-none truncate">
+                          <span className="block max-w-[40vw] sm:max-w-none truncate">
                             {s.email}
                           </span>
                         </TableCell>
@@ -838,6 +905,26 @@ export function WhitelistView() {
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline">{s.section}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                disabled={shiftMut.isPending}
+                                onClick={() => toggleShift(s)}
+                                aria-label={`${s.fullName} is in ${s.shift === "NIGHT" ? "night" : "day"} class. Select to switch to ${s.shift === "NIGHT" ? "day" : "night"} class.`}
+                              >
+                                {s.shift === "NIGHT" ? "Night" : "Day"}
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              Switch to {s.shift === "NIGHT" ? "day" : "night"}{" "}
+                              class
+                            </TooltipContent>
+                          </Tooltip>
                         </TableCell>
                         <TableCell>
                           {s.account ? (
@@ -859,7 +946,10 @@ export function WhitelistView() {
                                   : "Pending"}
                             </Badge>
                           ) : (
-                            <Badge variant="outline" className="border-muted text-muted-foreground text-[10px]">
+                            <Badge
+                              variant="outline"
+                              className="border-muted text-muted-foreground text-[10px]"
+                            >
                               <Clock className="h-2.5 w-2.5 mr-1" />
                               Pending registration
                             </Badge>
@@ -885,7 +975,7 @@ export function WhitelistView() {
                             </Tooltip>
                           ) : (
                             <span className="text-[11px] text-muted-foreground/50">
-                              —
+                              -
                             </span>
                           )}
                         </TableCell>
@@ -897,14 +987,130 @@ export function WhitelistView() {
             </div>
           </div>
 
+          {/* Mobile: card list (same data, no horizontal scroll) */}
+          <div className="sm:hidden max-h-[28rem] overflow-y-auto ng-scroll divide-y">
+            {isLoading && (
+              <p
+                className="text-center text-sm text-muted-foreground py-8"
+                role="status"
+              >
+                Loading…
+              </p>
+            )}
+            {!isLoading && students.length === 0 && (
+              <p className="text-center text-sm text-muted-foreground py-8">
+                No students match your search.
+              </p>
+            )}
+            <AnimatePresence>
+              {students.map((s, i) => (
+                <motion.div
+                  key={s.studentId}
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.2, delay: i * 0.02 }}
+                  className="p-3 space-y-1.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium truncate min-w-0">
+                      {s.fullName}
+                    </p>
+                    <span className="font-mono text-xs text-muted-foreground shrink-0">
+                      {s.studentId}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {s.email}
+                  </p>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Badge variant="outline" className="cursor-help">
+                          {s.program}
+                        </Badge>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {getProgramLabel(s.program) ?? s.program}
+                      </TooltipContent>
+                    </Tooltip>
+                    <Badge variant="outline">{s.section}</Badge>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          disabled={shiftMut.isPending}
+                          onClick={() => toggleShift(s)}
+                          aria-label={`${s.fullName} is in ${s.shift === "NIGHT" ? "night" : "day"} class. Select to switch to ${s.shift === "NIGHT" ? "day" : "night"} class.`}
+                        >
+                          {s.shift === "NIGHT" ? "Night" : "Day"}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Switch to {s.shift === "NIGHT" ? "day" : "night"} class
+                      </TooltipContent>
+                    </Tooltip>
+                    {s.account ? (
+                      <Badge
+                        variant="secondary"
+                        className={
+                          "text-[10px] " +
+                          (s.account.status === "ACTIVE"
+                            ? "border-emerald-500/40 text-emerald-600"
+                            : s.account.status === "SUSPENDED"
+                              ? "border-red-500/40 text-red-600"
+                              : "border-amber-500/40 text-amber-600")
+                        }
+                      >
+                        {s.account.status === "ACTIVE"
+                          ? "Active"
+                          : s.account.status === "SUSPENDED"
+                            ? "Suspended"
+                            : "Pending"}
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className="border-muted text-muted-foreground text-[10px]"
+                      >
+                        <Clock className="h-2.5 w-2.5 mr-1" />
+                        Pending registration
+                      </Badge>
+                    )}
+                    {isAdmin && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 ml-auto text-muted-foreground hover:text-destructive"
+                        onClick={() => setDeleteTarget(s)}
+                        aria-label={`Remove ${s.fullName}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+
           {/* ---- Pagination footer ---- */}
           {pagination && pagination.totalPages > 1 && (
             <div className="flex items-center justify-between gap-2 px-4 py-3 border-t flex-wrap">
               <p className="text-xs text-muted-foreground">
-                Page <span className="font-medium text-foreground">{pagination.page}</span> of{" "}
-                <span className="font-medium text-foreground">{pagination.totalPages}</span>
+                Page{" "}
+                <span className="font-medium text-foreground">
+                  {pagination.page}
+                </span>{" "}
+                of{" "}
+                <span className="font-medium text-foreground">
+                  {pagination.totalPages}
+                </span>
                 <span className="hidden sm:inline">
-                  {" "}· {pagination.total} total
+                  {" "}
+                  · {pagination.total} total
                 </span>
               </p>
               <div className="flex gap-1 items-center">
@@ -963,9 +1169,10 @@ export function WhitelistView() {
  * The student ID column accepts the headers: studentId, student_id, id, studentid.
  * It must be a 7-digit number (e.g. 3240001) and is parsed as a number.
  */
-function normalizeRows(
-  rows: Record<string, string>[],
-): { valid: ParsedRow[]; errors: string[] } {
+function normalizeRows(rows: Record<string, string>[]): {
+  valid: ParsedRow[];
+  errors: string[];
+} {
   const valid: ParsedRow[] = [];
   const errors: string[] = [];
 
@@ -984,10 +1191,7 @@ function normalizeRows(
     const email = get(["email", "mail"]);
     const fullName =
       get(["fullName", "full_name", "name", "student_name"]) ||
-      [
-        get(["first_name", "firstName"]),
-        get(["last_name", "lastName"]),
-      ]
+      [get(["first_name", "firstName"]), get(["last_name", "lastName"])]
         .filter(Boolean)
         .join(" ");
     const program = get(["program", "department", "dept"]);

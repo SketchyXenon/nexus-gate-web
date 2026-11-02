@@ -5,7 +5,9 @@
 // on PrismaClientKnownRequestError (e.g. "P2002" for unique-constraint
 // violations). Matching on the code is locale- and version-stable.
 
-import { Prisma } from "@prisma/client";
+// Prisma 7: the generated client lives in src/generated/prisma (new
+// `prisma-client` generator), not in the @prisma/client package.
+import { Prisma } from "@/generated/prisma/client";
 
 /**
  * Returns true when the thrown value is a Prisma unique-constraint

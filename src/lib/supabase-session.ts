@@ -214,6 +214,7 @@ async function resolveAccountFromDb(
     section: string | null;
     organizationName: string | null;
     year: number | null;
+    shift?: string | null;
     lastLoginAt: Date | null;
     isDeactivated?: boolean;
     mfaEnabled?: boolean;
@@ -234,6 +235,7 @@ async function resolveAccountFromDb(
         section: true,
         organizationName: true,
         year: true,
+        shift: true,
         lastLoginAt: true,
         isDeactivated: true,
         mfaEnabled: true,
@@ -263,6 +265,7 @@ async function resolveAccountFromDb(
           section: true,
           organizationName: true,
           year: true,
+          shift: true,
           lastLoginAt: true,
         },
       });

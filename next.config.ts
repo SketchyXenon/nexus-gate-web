@@ -16,6 +16,20 @@ const nextConfig: NextConfig = {
   // Allow the sandbox preview host to access Next.js dev-only resources
   // (HMR, stack frames) so the preview panel works in development.
   allowedDevOrigins: ["*.space-z.ai"],
+  // Prisma 7 driver adapters must stay OUTSIDE the server bundle:
+  //  - better-sqlite3 is a NAPI native module (cannot be bundled).
+  //  - prisma-adapter-bun-sqlite imports "bun:sqlite", which only exists
+  //    in the Bun runtime - bundling it would fail the Node build. It is
+  //    loaded at runtime only when the code executes under Bun (see
+  //    src/lib/db-adapter.ts; the app itself always runs under Node).
+  serverExternalPackages: [
+    "prisma-adapter-bun-sqlite",
+    "@prisma/adapter-better-sqlite3",
+    "@prisma/adapter-mariadb",
+    "@prisma/adapter-pg",
+    "better-sqlite3",
+    "mariadb",
+  ],
   compiler: {
     removeConsole:
       process.env.NODE_ENV === "production"

@@ -9,7 +9,6 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Plus,
   Trash2,
   UserPlus,
   Loader2,
@@ -439,7 +438,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
             </div>
             <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
               <Button size="sm" onClick={() => setCreateOpen(true)}>
-                <Plus className="h-4 w-4" /> New account
+                New account
               </Button>
               <Select
                 value={roleFilter}
@@ -492,6 +491,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search…"
+                  aria-label="Search accounts by name or email"
                   value={q}
                   onChange={(e) => {
                     setQ(e.target.value);
@@ -527,7 +527,6 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                   disabled={batchMut.isPending}
                   onClick={() => setBatchConfirm({ action: "activate" })}
                 >
-                  <CheckCircle2 className="h-3.5 w-3.5" />
                   Activate
                 </Button>
                 <Button
@@ -537,7 +536,6 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                   disabled={batchMut.isPending}
                   onClick={() => setBatchConfirm({ action: "suspend" })}
                 >
-                  <Ban className="h-3.5 w-3.5" />
                   Suspend
                 </Button>
                 <Button
@@ -596,6 +594,9 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                   <TableHead className="hidden sm:table-cell">Email</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="hidden md:table-cell">
+                    Attendance
+                  </TableHead>
                   <TableHead className="hidden lg:table-cell">
                     Program
                   </TableHead>
@@ -612,17 +613,17 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                 {isLoading && (
                   <TableRow>
                     <TableCell
-                      colSpan={9}
+                      colSpan={10}
                       className="text-center text-sm text-muted-foreground py-8"
                     >
-                      Loading…
+                      <span role="status">Loading…</span>
                     </TableCell>
                   </TableRow>
                 )}
                 {!isLoading && accounts.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={9}
+                      colSpan={10}
                       className="text-center text-sm text-muted-foreground py-8"
                     >
                       No accounts found.
@@ -705,6 +706,22 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                       >
                         {STATUS_LABELS[a.status]}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      {a.attendance && a.attendance.rate !== null ? (
+                        <span
+                          className="text-xs font-medium tabular-nums"
+                          title={`${a.attendance.attended} of ${a.attendance.eligible} eligible events`}
+                        >
+                          {a.attendance.rate}%
+                          <span className="text-muted-foreground font-normal">
+                            {" "}
+                            ({a.attendance.attended}/{a.attendance.eligible})
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
                       {a.program ? (
@@ -880,7 +897,10 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
               </label>
             )}
             {isLoading && (
-              <p className="text-center text-sm text-muted-foreground py-8">
+              <p
+                className="text-center text-sm text-muted-foreground py-8"
+                role="status"
+              >
                 Loading…
               </p>
             )}
@@ -958,6 +978,15 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                     >
                       {ROLE_LABELS[a.role]}
                     </Badge>
+                    {a.attendance && a.attendance.rate !== null && (
+                      <Badge
+                        variant="outline"
+                        className="border-muted text-muted-foreground tabular-nums"
+                      >
+                        Attendance {a.attendance.rate}% ({a.attendance.attended}
+                        /{a.attendance.eligible})
+                      </Badge>
+                    )}
                   </div>
                   {/* Same handlers/disabled/loading states as the table Actions cell */}
                   <div className="flex flex-wrap items-center gap-1.5 pt-1">
@@ -967,7 +996,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                       className="h-9"
                       onClick={() => openEdit(a)}
                     >
-                      <Pencil className="h-3.5 w-3.5" /> Edit
+                      Edit
                     </Button>
                     {a.isDeactivated ? (
                       <Button
@@ -994,9 +1023,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                         {restoreMut.isPending &&
                         restoreMut.variables === a.id ? (
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <RotateCcw className="h-3.5 w-3.5" />
-                        )}
+                        ) : null}
                         Restore
                       </Button>
                     ) : a.status === "ACTIVE" ? (
@@ -1011,7 +1038,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                           })
                         }
                       >
-                        <Ban className="h-3.5 w-3.5" /> Suspend
+                        Suspend
                       </Button>
                     ) : (
                       <Button
@@ -1025,19 +1052,19 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                           })
                         }
                       >
-                        <CheckCircle2 className="h-3.5 w-3.5" /> Reactivate
+                        Reactivate
                       </Button>
                     )}
                     {currentUser?.role === "ADMIN" && (
                       <Button
                         variant="outline"
                         size="sm"
-                        className="h-9 text-muted-foreground hover:text-destructive"
+                        className="h-9 text-destructive hover:text-destructive"
                         onClick={() =>
                           setDeleteTarget({ account: a, hard: true })
                         }
                       >
-                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                        Delete
                       </Button>
                     )}
                   </div>
@@ -1107,7 +1134,6 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
               disabled={batchMut.isPending}
               onClick={() => setBatchConfirm({ action: "activate" })}
             >
-              <CheckCircle2 className="h-4 w-4" />
               Activate
             </Button>
             <Button
@@ -1116,7 +1142,6 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
               disabled={batchMut.isPending}
               onClick={() => setBatchConfirm({ action: "suspend" })}
             >
-              <Ban className="h-4 w-4" />
               Suspend
             </Button>
             <Button
@@ -1233,7 +1258,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
             </div>
             {newRole === "ORGANIZER" && (
               <>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label htmlFor="newProgram">Program (optional)</Label>
                     <Select
@@ -1298,9 +1323,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
             >
               {createMut.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Plus className="h-4 w-4" />
-              )}
+              ) : null}
               Create account
             </Button>
           </form>
@@ -1425,7 +1448,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                   }
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label>Role</Label>
                   <Select
@@ -1498,7 +1521,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="editSection">Section</Label>
                   <Input
@@ -1556,9 +1579,7 @@ export function AccountsView({ currentUser }: { currentUser?: Account }) {
                 <Button onClick={saveEdit} disabled={updateMut.isPending}>
                   {updateMut.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="h-4 w-4" />
-                  )}
+                  ) : null}
                   Save changes
                 </Button>
               </div>

@@ -86,7 +86,10 @@ export function encryptSecret(plaintext: string): string {
   const key = getEncryptionKey();
   const iv = randomBytes(12); // 96-bit IV is the GCM standard.
   const cipher = createCipheriv("aes-256-gcm", key, iv);
-  const enc = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const enc = Buffer.concat([
+    cipher.update(plaintext, "utf8"),
+    cipher.final(),
+  ]);
   const tag = cipher.getAuthTag();
   return Buffer.concat([iv, enc, tag]).toString("base64");
 }
@@ -135,7 +138,10 @@ export function buildOtpAuthUrl(opts: {
 // Uses otplib v13's verifySync with a ±30s tolerance (one step before/
 // after the current 30s period - matches RFC 6238 §5.2 transmission
 // delay). Constant-time comparison is performed inside otplib.
-export function verifyTotp(opts: { token: string; secret: string }): boolean {
+export function verifyTotp(opts: {
+  token: string;
+  secret: string;
+}): boolean {
   const cleaned = opts.token.replace(/\s/g, "");
   if (!/^\d{6,8}$/.test(cleaned)) return false;
   try {
@@ -231,8 +237,15 @@ function getJwtSecretKey(): Uint8Array {
   return new TextEncoder().encode(secret);
 }
 
-const CHALLENGE_JWT_TYPE = "ng:mfa-challenge";
-const VERIFIED_JWT_TYPE = "ng:mfa-verified";
+// Audience claims distinguish the two token purposes so a challenge JWT
+// can never be replayed as an MFA-verified marker (token-confusion defense).
+const MFA_CHALLENGE_AUD = "ng:mfa-challenge";
+const MFA_VERIFIED_AUD = "ng:mfa-verified";
+
+// Server-side cap for "browser session" markers (expSeconds = 0): the
+// cookie still dies with the browser, but a stolen token value cannot be
+// replayed beyond this window (ADMIN sessions self-expire in 30 min idle).
+const MFA_VERIFIED_MAX_SESSION_S = 60 * 60 * 24; // 24h
 
 export async function signChallenge(
   challengeId: string,
@@ -243,6 +256,7 @@ export async function signChallenge(
     .setIssuedAt()
     .setExpirationTime(`${CHALLENGE_JWT_TTL_S}s`)
     .setIssuer("nexus-gate")
+    .setAudience(MFA_CHALLENGE_AUD)
     .setSubject(accountId)
     .sign(getJwtSecretKey());
 }
@@ -254,6 +268,7 @@ export async function verifyChallenge(
     const { payload } = await jwtVerify(jwt, getJwtSecretKey(), {
       algorithms: ["HS256"],
       issuer: "nexus-gate",
+      audience: MFA_CHALLENGE_AUD,
     });
     const challengeId = payload.challengeId;
     const accountId = payload.accountId;
@@ -273,8 +288,8 @@ export async function verifyChallenge(
 // same accountId; otherwise the request is treated as unauthenticated
 // (fail closed).
 //
-// expSeconds = 0 means "browser session" (no `exp` claim, no maxAge on
-// the cookie). Used for ADMIN accounts and for non-remembered sessions.
+// expSeconds = 0 means "browser session" (no cookie maxAge; token is
+// server-capped at 24h). Used for ADMIN accounts and non-remembered sessions.
 export async function signMfaVerified(
   accountId: string,
   expSeconds: number,
@@ -283,14 +298,16 @@ export async function signMfaVerified(
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setIssuedAt()
     .setIssuer("nexus-gate")
+    .setAudience(MFA_VERIFIED_AUD)
     .setSubject(accountId);
-  // expSeconds = 0 means "browser session" (no `exp` claim, no maxAge on
-  // the cookie). Any OTHER non-zero value - including a negative one -
-  // sets an explicit expiry so a bad call can never mint a token that
-  // lives forever (fail closed per 06-security-architecture.md section 1).
-  if (expSeconds !== 0) {
-    builder.setExpirationTime(`${expSeconds}s`);
-  }
+  // expSeconds = 0 means "browser session" (no maxAge on the cookie) - the
+  // token still gets the bounded MFA_VERIFIED_MAX_SESSION_S expiry above.
+  // Any OTHER non-zero value - including a negative one - sets that exact
+  // expiry so a bad call can never mint a token that lives forever
+  // (fail closed per 06-security-architecture.md section 1).
+  builder.setExpirationTime(
+    `${expSeconds !== 0 ? expSeconds : MFA_VERIFIED_MAX_SESSION_S}s`,
+  );
   return builder.sign(getJwtSecretKey());
 }
 
@@ -302,6 +319,7 @@ export async function verifyMfaVerified(
     const { payload } = await jwtVerify(jwt, getJwtSecretKey(), {
       algorithms: ["HS256"],
       issuer: "nexus-gate",
+      audience: MFA_VERIFIED_AUD,
     });
     if (payload.sub !== accountId) return false;
     return true;

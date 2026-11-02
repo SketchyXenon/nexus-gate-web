@@ -2,7 +2,8 @@
 export const maxDuration = 10;
 
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+// Prisma 7: the generated client lives in src/generated/prisma.
+import { Prisma } from "@/generated/prisma/client";
 import { dbRead } from "@/lib/db";
 import { requireAuth } from "@/lib/api";
 import { hasMinimumRole } from "@/lib/rbac";

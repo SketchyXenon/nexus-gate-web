@@ -34,6 +34,8 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const ENV_PATH = join(ROOT, ".env");
 const PRISMA_CLI = join(ROOT, "node_modules", "prisma", "build", "index.js");
 const TIDB_SCHEMA = join(ROOT, "prisma", "schema.tidb.prisma");
+// Prisma 7: connection URLs live in config files, not schema files.
+const TIDB_CONFIG = join(ROOT, "prisma.tidb.config.ts");
 
 function readEnvFile(key: string): string {
   try {
@@ -54,8 +56,14 @@ interface CandidateUrl {
 // found via env AND .env keeps both labels).
 function collectUrls(): { mysql: CandidateUrl[]; skipped: CandidateUrl[] } {
   const raw: Array<{ source: string; value: string }> = [
-    { source: "env TIDB_DATABASE_URL", value: process.env.TIDB_DATABASE_URL ?? "" },
-    { source: ".env TIDB_DATABASE_URL", value: readEnvFile("TIDB_DATABASE_URL") },
+    {
+      source: "env TIDB_DATABASE_URL",
+      value: process.env.TIDB_DATABASE_URL ?? "",
+    },
+    {
+      source: ".env TIDB_DATABASE_URL",
+      value: readEnvFile("TIDB_DATABASE_URL"),
+    },
     { source: "env DATABASE_URL", value: process.env.DATABASE_URL ?? "" },
     { source: ".env DATABASE_URL", value: readEnvFile("DATABASE_URL") },
   ].filter((e) => e.value.trim().length > 0);
@@ -139,10 +147,18 @@ function buildCandidates(prismaArgs: string[]): Candidate[] {
   return candidates;
 }
 
-function runPrisma(prismaArgs: string[], url: string): { run: PrismaRun | null; failures: string[] } {
-  // The url travels via env only: prisma resolves it through the
-  // schema's env("TIDB_DATABASE_URL") reference.
-  const childEnv = { ...process.env, TIDB_DATABASE_URL: url, DATABASE_URL: url };
+function runPrisma(
+  prismaArgs: string[],
+  url: string,
+): { run: PrismaRun | null; failures: string[] } {
+  // The url travels via env only: prisma.tidb.config.ts resolves
+  // TIDB_DATABASE_URL (preferred) or a mysql:// DATABASE_URL when the
+  // CLI loads the config.
+  const childEnv = {
+    ...process.env,
+    TIDB_DATABASE_URL: url,
+    DATABASE_URL: url,
+  };
   const failures: string[] = [];
 
   for (const c of buildCandidates(prismaArgs)) {
@@ -164,7 +180,11 @@ function runPrisma(prismaArgs: string[], url: string): { run: PrismaRun | null; 
     const result = { ...r, stdout, stderr };
 
     const commandNotFound = r.status === 127 || r.status === 9009;
-    if (!r.error && !commandNotFound && (r.status === 0 || r.status === 2 || stdout || stderr)) {
+    if (
+      !r.error &&
+      !commandNotFound &&
+      (r.status === 0 || r.status === 2 || stdout || stderr)
+    ) {
       return { run: result, failures };
     }
     if (r.error) {
@@ -173,7 +193,9 @@ function runPrisma(prismaArgs: string[], url: string): { run: PrismaRun | null; 
     } else if (commandNotFound) {
       failures.push(`${c.label}: not found (exit ${r.status})`);
     } else {
-      const how = r.signal ? `killed by signal ${r.signal}` : `exit ${r.status} with no output`;
+      const how = r.signal
+        ? `killed by signal ${r.signal}`
+        : `exit ${r.status} with no output`;
       failures.push(`${c.label}: ${how}`);
     }
   }
@@ -187,15 +209,21 @@ function runPrisma(prismaArgs: string[], url: string): { run: PrismaRun | null; 
 
 const { mysql: urls, skipped } = collectUrls();
 
-console.log("[diagnose-tidb] Checking every configured MySQL url against prisma/schema.tidb.prisma ...\n");
+console.log(
+  "[diagnose-tidb] Checking every configured MySQL url against prisma/schema.tidb.prisma ...\n",
+);
 
 if (!existsSync(TIDB_SCHEMA)) {
-  console.error(`[diagnose-tidb] ${TIDB_SCHEMA} not found - run from an up-to-date checkout.`);
+  console.error(
+    `[diagnose-tidb] ${TIDB_SCHEMA} not found - run from an up-to-date checkout.`,
+  );
   process.exit(1);
 }
 
 for (const s of skipped) {
-  console.log(`  (skipped, not MySQL) ${s.sources.join(", ")} -> ${maskUrl(s.url)}`);
+  console.log(
+    `  (skipped, not MySQL) ${s.sources.join(", ")} -> ${maskUrl(s.url)}`,
+  );
 }
 if (skipped.length > 0) console.log("");
 
@@ -211,19 +239,28 @@ if (urls.length === 0) {
 }
 
 const prismaArgs = [
+  // Prisma 7 flag set (see scripts/verify-tidb-schema.ts for details):
+  // the "from" side is each live database reached through the CONFIG
+  // FILE's datasource - the per-url child env (TIDB_DATABASE_URL) makes
+  // the same config resolve a different database on every iteration.
   "migrate",
   "diff",
-  "--from-schema-datasource",
-  TIDB_SCHEMA,
-  "--to-schema-datamodel",
+  "--from-config-datasource",
+  "--to-schema",
   TIDB_SCHEMA,
   "--exit-code",
+  "--config",
+  TIDB_CONFIG,
 ];
 
 let anyDrift = false;
 let anyError = false;
 let allCheckedInSync = true;
-const results: Array<{ url: CandidateUrl; verdict: "IN_SYNC" | "DRIFT" | "ERROR"; detail: string }> = [];
+const results: Array<{
+  url: CandidateUrl;
+  verdict: "IN_SYNC" | "DRIFT" | "ERROR";
+  detail: string;
+}> = [];
 
 for (const entry of urls) {
   const { run, failures } = runPrisma(prismaArgs, entry.url);
@@ -238,7 +275,9 @@ for (const entry of urls) {
       verdict: "ERROR",
       detail: failures.join("; "),
     });
-    console.log(`  [ERROR]    ${identity}\n            from: ${from}\n            ${failures.join("; ")}\n`);
+    console.log(
+      `  [ERROR]    ${identity}\n            from: ${from}\n            ${failures.join("; ")}\n`,
+    );
     continue;
   }
 
@@ -248,7 +287,11 @@ for (const entry of urls) {
   } else if (run.status === 2) {
     anyDrift = true;
     allCheckedInSync = false;
-    results.push({ url: entry, verdict: "DRIFT", detail: run.stdout || "(no sql printed)" });
+    results.push({
+      url: entry,
+      verdict: "DRIFT",
+      detail: run.stdout || "(no sql printed)",
+    });
     console.log(`  [DRIFT]    ${identity}\n            from: ${from}`);
     console.log(
       (run.stdout || "(no sql printed)")
@@ -262,7 +305,9 @@ for (const entry of urls) {
     allCheckedInSync = false;
     const detail = run.stderr || run.stdout || "(no output)";
     results.push({ url: entry, verdict: "ERROR", detail });
-    console.log(`  [ERROR]    ${identity}\n            from: ${from}\n            ${detail.split("\n").join("\n            ")}\n`);
+    console.log(
+      `  [ERROR]    ${identity}\n            from: ${from}\n            ${detail.split("\n").join("\n            ")}\n`,
+    );
   }
 }
 

@@ -2,6 +2,81 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { paginationSchema } from "@/lib/validation";
 import { requireAuth, badRequest } from "@/lib/api";
+import { visibleEventWhereOr } from "@/lib/event-visibility";
+
+// Per-account attendance stats (USER accounts only): attended check-ins
+// vs. eligible events that have already started (scheduledAt <= now,
+// not cancelled) under the v8 visibility rule. rate is null when the
+// student has no eligible events yet (no denominator) - UI shows a dash.
+interface AccountAttendanceStats {
+  attended: number;
+  eligible: number;
+  rate: number | null;
+}
+
+async function attachAttendanceStats<
+  T extends {
+    id: string;
+    role: string;
+    program: string | null;
+    section: string | null;
+  },
+>(
+  accounts: T[],
+): Promise<(T & { attendance: AccountAttendanceStats | null })[]> {
+  const students = accounts.filter((a) => a.role === "USER");
+  if (students.length === 0) {
+    return accounts.map((a) => ({ ...a, attendance: null }));
+  }
+
+  const attendedByAccount = new Map<string, number>();
+  const grouped = await db.eventAttendance.groupBy({
+    by: ["accountId"],
+    _count: { _all: true },
+    where: { accountId: { in: students.map((a) => a.id) } },
+  });
+  for (const g of grouped) attendedByAccount.set(g.accountId, g._count._all);
+
+  // One eligible-event count per unique (program, section) combo.
+  const combos = new Map<
+    string,
+    { program: string | null; section: string | null }
+  >();
+  for (const a of students) {
+    const key = `${a.program ?? ""}|${a.section ?? ""}`;
+    if (!combos.has(key)) {
+      combos.set(key, {
+        program: a.program ?? null,
+        section: a.section ?? null,
+      });
+    }
+  }
+  const eligibleByCombo = new Map<string, number>();
+  await Promise.all(
+    [...combos.entries()].map(async ([key, c]) => {
+      const count = await db.event.count({
+        where: {
+          scheduledAt: { lte: new Date() },
+          status: { not: "cancelled" },
+          OR: visibleEventWhereOr(c.program, c.section),
+        },
+      });
+      eligibleByCombo.set(key, count);
+    }),
+  );
+
+  return accounts.map((a) => {
+    if (a.role !== "USER") return { ...a, attendance: null };
+    const attended = attendedByAccount.get(a.id) ?? 0;
+    const eligible =
+      eligibleByCombo.get(`${a.program ?? ""}|${a.section ?? ""}`) ?? 0;
+    const rate =
+      eligible > 0
+        ? Math.min(100, Math.round((attended / eligible) * 100))
+        : null;
+    return { ...a, attendance: { attended, eligible, rate } };
+  });
+}
 
 // GET /api/accounts (ADMIN)
 // Lists accounts. Deactivated (soft-deleted) accounts are hidden by default.
@@ -69,9 +144,10 @@ export async function GET(req: NextRequest) {
       }),
       db.account.count({ where }),
     ]);
+    const enriched = await attachAttendanceStats(accounts);
     return NextResponse.json(
       {
-        accounts,
+        accounts: enriched,
         pagination: {
           page,
           pageSize,
@@ -102,9 +178,10 @@ export async function GET(req: NextRequest) {
         }),
         db.account.count({ where: legacyWhere }),
       ]);
+      const enriched = await attachAttendanceStats(accounts);
       return NextResponse.json(
         {
-          accounts,
+          accounts: enriched,
           pagination: {
             page,
             pageSize,

@@ -15,6 +15,10 @@ export interface Account {
   studentId: number | null;
   program: string | null;
   section: string | null;
+  // Day/night class classification ("DAY" | "NIGHT"). Null = not yet
+  // classified; the schedules view then shows both shifts for the
+  // student's section (mirrors the backend AuthAccount payload).
+  shift?: string | null;
   year?: number | null;
   organizationName?: string | null;
   courseModifiedAt?: string | null;
@@ -28,6 +32,12 @@ export interface Account {
   // to account.id before granting access - fail closed.
   mfaEnabled?: boolean;
   mfaEnabledAt?: string | null;
+  // Attendance stats (USER accounts only, from GET /api/accounts).
+  attendance?: {
+    attended: number;
+    eligible: number;
+    rate: number | null;
+  } | null;
 }
 
 export interface Profile extends Account {
@@ -44,8 +54,29 @@ export interface AuthorizedStudent {
   fullName: string;
   program: string;
   section: string;
+  // Day/night class shift ("DAY" | "NIGHT"). Always present on new API
+  // responses (server defaults to DAY); optional for stale cached pages.
+  shift?: "DAY" | "NIGHT";
   activated: boolean;
   account?: { id: string; status: string; role: string } | null;
+}
+
+export type ClassShift = "DAY" | "NIGHT";
+
+// One recurring weekly class slot (day & night shift timetables).
+export interface ScheduleItem {
+  id: number;
+  ownerId: string;
+  program: string | null;
+  section: string | null;
+  shift: ClassShift;
+  dayOfWeek: number; // 0 = Sunday ... 6 = Saturday
+  subject: string;
+  instructor: string | null;
+  room: string | null;
+  startTime: string; // "HH:MM" 24h
+  endTime: string; // "HH:MM" 24h
+  isActive: boolean;
 }
 
 export interface EventItem {
@@ -435,6 +466,7 @@ export const useImportWhitelist = () => {
         fullName: string;
         program: string;
         section: string;
+        shift?: ClassShift;
       }>,
     ) =>
       api<{ inserted: number; skipped: number; total: number }>(
@@ -451,6 +483,104 @@ export const useDeleteWhitelist = () => {
     mutationFn: (studentId: number) =>
       api<{ ok: boolean }>(`/api/whitelist/${studentId}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["whitelist"] }),
+  });
+};
+
+// Toggle a student's day/night class shift (PATCH /api/whitelist/[id]).
+export const useUpdateWhitelistShift = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { studentId: number; shift: ClassShift }) =>
+      api<{ ok: boolean; shift: ClassShift }>(
+        `/api/whitelist/${vars.studentId}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ shift: vars.shift }),
+        },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["whitelist"] }),
+  });
+};
+
+// ---------------- Schedules (day & night class timetable) ----------------
+export type ScheduleShiftFilter = ClassShift | "ALL";
+
+export interface ScheduleListParams {
+  shift?: ScheduleShiftFilter;
+  day?: number;
+  q?: string;
+  page?: number;
+  pageSize?: number;
+  enabled?: boolean;
+}
+
+export const useSchedules = (params?: ScheduleListParams) => {
+  const sp = new URLSearchParams();
+  if (params?.shift && params.shift !== "ALL") sp.set("shift", params.shift);
+  if (params?.day !== undefined) sp.set("day", String(params.day));
+  if (params?.q) sp.set("q", params.q);
+  if (params?.page) sp.set("page", String(params.page));
+  if (params?.pageSize) sp.set("pageSize", String(params.pageSize));
+  return useQuery({
+    queryKey: ["schedules", params],
+    queryFn: () =>
+      api<{
+        schedules: ScheduleItem[];
+        pagination: {
+          page: number;
+          pageSize: number;
+          total: number;
+          totalPages: number;
+        };
+      }>(`/api/schedules?${sp}`),
+    enabled: params?.enabled !== false,
+    placeholderData: (prev) => prev,
+  });
+};
+
+export interface ScheduleInput {
+  program?: string | null;
+  section?: string | null;
+  shift: ClassShift;
+  dayOfWeek: number;
+  subject: string;
+  instructor?: string | null;
+  room?: string | null;
+  startTime: string;
+  endTime: string;
+  isActive?: boolean;
+}
+
+export const useCreateSchedule = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ScheduleInput) =>
+      api<{ id: number }>("/api/schedules", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
+  });
+};
+
+export const useUpdateSchedule = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: number; data: Partial<ScheduleInput> }) =>
+      api<{ ok: boolean }>(`/api/schedules/${vars.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(vars.data),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
+  });
+};
+
+export const useDeleteSchedule = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      api<{ ok: boolean }>(`/api/schedules/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
   });
 };
 
@@ -1016,6 +1146,9 @@ export interface MyAttendanceResponse {
     qrCount: number;
     overrideCount: number;
     withTimeout: number;
+    attendedCount: number;
+    eligibleCount: number;
+    attendanceRate: number | null;
   };
 }
 

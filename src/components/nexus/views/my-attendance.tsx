@@ -10,7 +10,6 @@ import {
   Filter,
   GraduationCap,
   Building2,
-  Download,
   TrendingUp,
 } from "lucide-react";
 import {
@@ -152,7 +151,16 @@ export function MyAttendanceView() {
           icon={TrendingUp}
           label="Attendance rate"
           value={
-            stats && stats.total > 0 ? `${stats.qrCount}/${stats.total}` : " - "
+            stats
+              ? stats.attendanceRate !== null
+                ? `${stats.attendanceRate}%`
+                : "\u2014"
+              : "\u2014"
+          }
+          hint={
+            stats && stats.eligibleCount > 0
+              ? `${stats.attendedCount} of ${stats.eligibleCount} events`
+              : undefined
           }
         />
       </div>
@@ -173,8 +181,14 @@ export function MyAttendanceView() {
         </CardHeader>
         <CardContent className="grid gap-3 grid-cols-1 sm:grid-cols-3">
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">From</Label>
+            <Label
+              htmlFor="my-att-from"
+              className="text-xs text-muted-foreground"
+            >
+              From
+            </Label>
             <Input
+              id="my-att-from"
               type="date"
               value={fromDate}
               onChange={(e) => setFromDate(e.target.value)}
@@ -182,8 +196,14 @@ export function MyAttendanceView() {
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">To</Label>
+            <Label
+              htmlFor="my-att-to"
+              className="text-xs text-muted-foreground"
+            >
+              To
+            </Label>
             <Input
+              id="my-att-to"
               type="date"
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}
@@ -191,9 +211,14 @@ export function MyAttendanceView() {
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Event type</Label>
+            <Label
+              htmlFor="my-att-scope"
+              className="text-xs text-muted-foreground"
+            >
+              Event type
+            </Label>
             <Select value={scopeFilter} onValueChange={setScopeFilter}>
-              <SelectTrigger className="h-9">
+              <SelectTrigger id="my-att-scope" className="h-9">
                 <SelectValue placeholder="All types" />
               </SelectTrigger>
               <SelectContent>
@@ -222,10 +247,9 @@ export function MyAttendanceView() {
             <Button
               variant="outline"
               size="sm"
-              className="h-8"
               onClick={exportCsv}
+              aria-label="Export your attendance history as CSV"
             >
-              <Download className="h-3.5 w-3.5" />
               Export CSV
             </Button>
           </div>
@@ -323,10 +347,12 @@ function StatCard({
   icon: Icon,
   label,
   value,
+  hint,
 }: {
   icon: typeof CheckCircle2;
   label: string;
   value: string | number;
+  hint?: string;
 }) {
   return (
     <Card className="overflow-hidden">
@@ -340,6 +366,11 @@ function StatCard({
               {label}
             </p>
             <p className="text-lg sm:text-xl font-bold truncate">{value}</p>
+            {hint ? (
+              <p className="text-[10px] text-muted-foreground truncate">
+                {hint}
+              </p>
+            ) : null}
           </div>
         </div>
       </CardContent>

@@ -6,12 +6,21 @@
 // PREREQUISITES (run in order):
 //   1. Set TIDB_DATABASE_URL to the TiDB connection string (mysql://...).
 //   2. Set SOURCE_DATABASE_URL to the Supabase Postgres connection string.
-//   3. bun run db:generate:tidb   (builds the MySQL Prisma client into @prisma/client)
+//   3. bun run db:generate:tidb   (builds the Prisma client into
+//      src/generated/prisma - Prisma 7 clients are provider-agnostic)
 //   4. bun run db:push:tidb       (creates the schema on TiDB)
 //   5. bun run migrate:tidb       (this script - copies the data)
 //
-// This script generates a SEPARATE Postgres client into ./generated/source
-// (so the same @prisma/client slot can be the MySQL/TiDB client for writes).
+// PRISMA 7 NOTES:
+// - The generated client (src/generated/prisma) is PROVIDER-AGNOSTIC:
+//   connections come from driver adapters, so the old "generated client
+//   must be the MySQL build" check is obsolete. The destination client is
+//   wired to TiDB with @prisma/adapter-mariadb (via src/lib/db-adapter),
+//   the source client to Postgres with @prisma/adapter-pg.
+// - The Postgres source client is generated into ./generated/source via a
+//   TEMPORARY SCHEMA (output path swapped) - `prisma generate --schema=`
+//   still works in Prisma 7 and does not touch the app's generated client.
+//
 // Tables are copied in foreign-key dependency order and the copy is
 // idempotent (skipDuplicates), so re-running resumes safely.
 //
@@ -20,57 +29,63 @@
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@/generated/prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { createAdapterFromUrl } from "@/lib/db-adapter";
 
-// Read the activeProvider from the generated @prisma/client. This is the
-// REAL check (not DATABASE_URL): the generated client's provider is
-// determined by which schema was last used with `prisma generate`.
-//   - `bun run dev` or `db:generate` -> "sqlite" or "postgresql"
-//   - `bun run db:generate:tidb`     -> "mysql"
-// The migrate script needs the MySQL build to write to TiDB.
-function getGeneratedClientProvider(): string {
-  try {
-    const idxPath = resolve("node_modules/.prisma/client/index.js");
-    const content = readFileSync(idxPath, "utf8");
-    const m = content.match(/"activeProvider"\s*:\s*"(\w+)"/);
-    return m ? m[1] : "unknown";
-  } catch {
-    return "unknown";
+// Prisma 7: the generated client is provider-agnostic, so there is no
+// "MySQL build" to verify. The real prerequisite is that the generated
+// output EXISTS - if it doesn't, every model delegate is undefined.
+function ensureGeneratedClient(): void {
+  const clientPath = resolve("src/generated/prisma/client.ts");
+  if (!existsSync(clientPath)) {
+    console.error(
+      "The Prisma client has not been generated yet (src/generated/prisma/client.ts missing).\n\n" +
+        "Run this first, then re-run the migration:\n" +
+        "  bun run db:generate:tidb\n\n" +
+        "(Any db:generate variant works - Prisma 7 clients are provider-agnostic;\n" +
+        "DATABASE_URL can stay as SQLite for local dev.)",
+    );
+    process.exit(1);
   }
 }
 
 // Generate the Postgres source client into ./generated/source so it does
-// not overwrite the MySQL/TiDB client the app uses for writes.
-// Prisma 6 doesn't support --output as a CLI flag, so we create a temporary
-// schema file with the output path in the generator block, generate from it,
-// then clean up.
+// not overwrite the app's generated client (src/generated/prisma).
+// Prisma 7: we swap the generator's `output` line into a temporary schema
+// file and run `prisma generate --schema=` (still supported; it overrides
+// the config's schema without touching the app client), then clean up.
 function ensureSourceClient() {
   console.log("Generating Postgres source client into ./generated/source ...");
   const sourceSchemaPath = resolve("prisma/schema.prisma");
   const tempSchemaPath = resolve("prisma/.source.tmp.prisma");
   const sourceSchema = readFileSync(sourceSchemaPath, "utf8");
 
-  // Inject output = "../generated/source" into the generator block.
-  // The generator block looks like:
-  //   generator client {
-  //     provider = "prisma-client-js"
-  //   }
-  // We add the output line after the provider line.
+  // Swap the existing `output = "../src/generated/prisma"` line to the
+  // isolated ./generated/source directory.
   const tempSchema = sourceSchema.replace(
-    /(generator\s+client\s*\{[^}]*provider\s*=\s*"[^"]*")/,
-    `$1\n  output   = "../generated/source"`,
+    /output\s*=\s*"[^"]*"/,
+    `output                 = "../generated/source"`,
   );
 
   if (tempSchema === sourceSchema) {
     // Fallback: if the regex didn't match (unexpected schema format),
-    // insert the output line right after the generator block opening.
-    throw new Error(
-      "Could not inject output path into prisma/schema.prisma generator block. " +
-        "Check the generator block syntax.",
+    // insert the output line right after the provider line.
+    const withInsert = sourceSchema.replace(
+      /(generator\s+client\s*\{[^}]*provider\s*=\s*"[^"]*")/,
+      `$1\n  output                 = "../generated/source"`,
     );
+    if (withInsert === sourceSchema) {
+      throw new Error(
+        "Could not inject output path into prisma/schema.prisma generator block. " +
+          "Check the generator block syntax.",
+      );
+    }
+    writeFileSync(tempSchemaPath, withInsert);
+  } else {
+    writeFileSync(tempSchemaPath, tempSchema);
   }
 
-  writeFileSync(tempSchemaPath, tempSchema);
   try {
     execSync(
       `npx --no-install prisma generate --schema=prisma/.source.tmp.prisma`,
@@ -85,6 +100,8 @@ function ensureSourceClient() {
 }
 
 // Tables in foreign-key dependency order (parents before children).
+// NOTE: the Schedule model was added AFTER this one-time migration ran -
+// schedule rows start fresh on TiDB and are intentionally NOT copied.
 const TABLES = [
   "account",
   "authorizedStudent",
@@ -139,11 +156,11 @@ function sourceDriftFix(): string {
     "(runbook Phase 1 - docs/tidb-migration-runbook.md):\n" +
     "  PowerShell:\n" +
     '    $env:DATABASE_URL="<Supabase Postgres URL (session mode, port 5432, preferred)>"\n' +
-    "    npx --no-install prisma db push --schema=prisma/schema.prisma\n" +
+    "    npx --no-install prisma db push --config=prisma.postgres.config.ts\n" +
     "    Remove-Item Env:DATABASE_URL\n" +
     "  bash:\n" +
     '    DATABASE_URL="<Supabase Postgres URL>" \\\n' +
-    "      npx --no-install prisma db push --schema=prisma/schema.prisma"
+    "      npx --no-install prisma db push --config=prisma.postgres.config.ts"
   );
 }
 
@@ -213,9 +230,10 @@ export async function copyTable(
     console.log(`  ${name}: 0 rows (skipped)`);
     return;
   }
-  // createMany with skipDuplicates makes the copy idempotent. Prisma's MySQL
-  // adapter supports this; the composite @id/@unique constraints resolve
-  // conflicts. BigInt/Decimal/DateTime values are serialized by Prisma.
+  // createMany with skipDuplicates makes the copy idempotent. The mariadb
+  // driver adapter supports this; the composite @id/@unique constraints
+  // resolve conflicts. BigInt/Decimal/DateTime values are serialized by
+  // Prisma.
   try {
     await dest[name].createMany({ data: rows as never, skipDuplicates: true });
   } catch (e) {
@@ -253,45 +271,36 @@ async function main() {
     process.exit(1);
   }
 
-  // 3. Verify the generated @prisma/client is the MySQL build.
-  // This is the REAL check - not DATABASE_URL (which may be SQLite/Postgres
-  // for local dev). The generated client must be MySQL to write to TiDB.
-  const activeProvider = getGeneratedClientProvider();
-  if (activeProvider !== "mysql") {
-    console.error(
-      `The generated @prisma/client is the "${activeProvider}" build, but ` +
-        "the migrate script needs the MySQL build to write to TiDB.\n\n" +
-        "Run this first, then re-run the migration:\n" +
-        "  bun run db:generate:tidb\n\n" +
-        "(DATABASE_URL can stay as SQLite/Postgres for local dev - the " +
-        "script uses TIDB_DATABASE_URL for the destination connection.)",
-    );
-    process.exit(1);
-  }
+  // 3. Verify the generated client exists (Prisma 7: provider-agnostic,
+  // so there is no "MySQL build" check - just make sure db:generate ran).
+  ensureGeneratedClient();
 
   console.log("Pre-flight checks passed:");
-  console.log(`  - Generated @prisma/client: MySQL build (OK)`);
+  console.log(`  - Generated Prisma client: src/generated/prisma (OK)`);
   console.log(`  - TIDB_DATABASE_URL: set (mysql://)`);
   console.log(`  - SOURCE_DATABASE_URL: set`);
   console.log("");
 
   ensureSourceClient();
 
-  // Dynamic import of the generated source client. Path is relative to this
-  // script file (scripts/), so ../generated/source. Variable path so
-  // TypeScript does not statically resolve it.
-  const sourcePath = "../generated/source/index.js";
+  // Dynamic import of the generated source client (Prisma 7 emits TS
+  // sources - bun executes them natively). Path is relative to this
+  // script file (scripts/), so ../generated/source/client.ts. Variable
+  // path so TypeScript does not statically resolve it.
+  const sourcePath = "../generated/source/client.ts";
   const sourceModule: any = await import(sourcePath);
   const SourcePrismaClient = sourceModule.PrismaClient;
   const source = new SourcePrismaClient({
-    datasources: { db: { url: process.env.SOURCE_DATABASE_URL } },
+    adapter: new PrismaPg({
+      connectionString: process.env.SOURCE_DATABASE_URL,
+    }),
   });
 
-  // Dest client: the MySQL PrismaClient (generated by db:generate:tidb),
-  // connected to TiDB via TIDB_DATABASE_URL (NOT DATABASE_URL, which may
-  // point to SQLite/Postgres for local dev).
+  // Dest client: the app's generated PrismaClient wired to TiDB through
+  // the mariadb driver adapter (TIDB_DATABASE_URL - NOT DATABASE_URL,
+  // which may point to SQLite for local dev).
   const dest = new PrismaClient({
-    datasources: { db: { url: tidbUrl } },
+    adapter: createAdapterFromUrl(tidbUrl),
   });
 
   console.log(

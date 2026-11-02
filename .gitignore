@@ -70,3 +70,4 @@ ARCHITECTURE-ANALYSIS-REPORT.md
 .vitest-empty.js
 db
 generated
+package-lock.json

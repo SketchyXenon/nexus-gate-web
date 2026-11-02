@@ -16,13 +16,21 @@
 // camelCase field names to those snake_case database identifiers.
 // ====================================================================
 
+// Prisma 7 generator (prisma-client-js was removed). The generated
+// client is provider-agnostic - the connection comes from a driver
+// adapter at runtime. The Postgres connection URL lives in
+// prisma.postgres.config.ts (legacy Supabase path; production is TiDB).
 generator client {
-  provider = "prisma-client-js"
+  provider               = "prisma-client"
+  output                 = "../src/generated/prisma"
+  runtime                = "nodejs"
+  moduleFormat           = "cjs"
+  generatedFileExtension = "ts"
+  importFileExtension    = "ts"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // ====================================================================
@@ -42,6 +50,8 @@ model Account {
   authProvider         String?   @map("auth_provider")
   providerAccountId    String?   @map("provider_account_id")
   year                 Int?
+  // Day/night class classification ("DAY" | "NIGHT"). Null = not yet set.
+  shift                String?   @map("shift")
   organizationName     String?   @map("organization_name")
   courseModifiedAt     DateTime? @map("course_modified_at")
   lastProfileUpdateAt  DateTime? @map("last_profile_update_at")
@@ -74,6 +84,7 @@ model Account {
   refreshTokens      RefreshToken[]
   deviceKeys         DeviceKey[]
   termsAcceptances   TermsAcceptance[]
+  schedulesOwned     Schedule[] @relation("ScheduleOwner")
 
   // ---- High-quality indexes ----
   // Role + status: admin dashboard lists accounts by role/status frequently
@@ -105,6 +116,9 @@ model AuthorizedStudent {
   fullName  String               @map("full_name")
   program   String
   section   String
+  // Day/night class shift ("DAY" | "NIGHT"). Defaults to DAY for imports
+  // that do not specify one.
+  shift     String               @default("DAY")
   activated Boolean              @default(false)
   overrides AttendanceOverride[]
 
@@ -112,6 +126,8 @@ model AuthorizedStudent {
   @@index([program, section, activated])
   // Activation sweep (admin dashboard "pending activation" view)
   @@index([activated])
+  // Day/night roster filter
+  @@index([shift])
   @@map("authorized_students")
 }
 
@@ -452,4 +468,49 @@ model Visit {
   @@index([dayBucket])
   @@index([route])
   @@map("visits")
+}
+
+// ====================================================================
+// 15. SCHEDULES (recurring weekly class timetable, day & night shifts)
+// --------------------------------------------------------------------
+// Institutions here run DAY and NIGHT class shifts for the same
+// program/section. Each Schedule row is one recurring weekly class slot:
+//   - shift       "DAY" (06:00-17:59) or "NIGHT" (18:00-23:59)
+//   - dayOfWeek   0 = Sunday ... 6 = Saturday (matches Date#getDay())
+//   - start/endTime "HH:MM" 24h strings (zero-padded, so lexicographic
+//     ordering = chronological). Stored as strings because Prisma has no
+//     time-only scalar and the value must round-trip identically across
+//     SQLite (dev) and TiDB (prod).
+//   - program/section mirror Event.targetProgram/targetSection: both null
+//     = department-wide, section null = program-wide, both set = section
+//     class. Combined with shift, students in e.g. "BSIT 3-A" get the
+//     correct DAY or NIGHT timetable for their population.
+// ====================================================================
+
+model Schedule {
+  id         Int      @id @default(autoincrement())
+  ownerId    String   @map("owner_id")
+  owner      Account  @relation("ScheduleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  program    String?
+  section    String?
+  shift      String   @default("DAY")
+  dayOfWeek  Int      @map("day_of_week")
+  subject    String
+  instructor String?
+  room       String?
+  startTime  String   @map("start_time")
+  endTime    String   @map("end_time")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  // Exact-duplicate guard (idempotent create / double-submit): one subject
+  // per (section, shift, day, start) slot. Postgres unique indexes allow
+  // multiple NULLs, so open-scope (program=null) rows are not deduplicated
+  // at the DB level - the API layer backstops that case.
+  @@unique([program, section, shift, dayOfWeek, startTime, subject], map: "schedules_slot_key")
+  @@index([program, section, shift, dayOfWeek, isActive])
+  @@index([ownerId, createdAt])
+  @@index([shift, isActive])
+  @@map("schedules")
 }

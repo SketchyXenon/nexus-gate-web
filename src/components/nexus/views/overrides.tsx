@@ -12,7 +12,6 @@ import {
   CheckCircle2,
   XCircle,
   Search,
-  X,
   CalendarRange,
   ChevronLeft,
   ChevronRight,
@@ -20,10 +19,8 @@ import {
   ShieldAlert,
   CloudOff,
   Fingerprint,
-  RotateCcw,
   Trash2,
   Clock,
-  CheckCheck,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -592,7 +589,7 @@ export function OverridesView({ currentUser }: { currentUser: Account }) {
         {queue.length > 0 && (
           <Card className="overflow-hidden">
             <CardHeader className="pb-3">
-              <CardTitle className="flex items-center justify-between gap-2 text-base">
+              <CardTitle className="flex items-center justify-between gap-2 text-base flex-wrap">
                 <span className="flex items-center gap-2">
                   <Fingerprint className="h-4 w-4 text-primary" />
                   Sync queue
@@ -600,11 +597,11 @@ export function OverridesView({ currentUser }: { currentUser: Account }) {
                 <span className="flex items-center gap-2">
                   <Badge
                     variant="outline"
-                    className={
+                    className={`shrink-0 ${
                       online
                         ? "border-emerald-500/40 text-emerald-600 text-[10px]"
                         : "border-amber-500/40 text-amber-600 text-[10px]"
-                    }
+                    }`}
                   >
                     {online ? "Online" : "Offline"}
                   </Badge>
@@ -612,11 +609,11 @@ export function OverridesView({ currentUser }: { currentUser: Account }) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 text-xs"
+                      className="h-9 text-xs shrink-0"
                       onClick={clearSynced}
                     >
-                      <CheckCheck className="h-3 w-3" />
-                      Clear synced
+                      <span className="sm:hidden">Clear synced</span>
+                      <span className="hidden sm:inline">Clear synced</span>
                     </Button>
                   )}
                 </span>
@@ -687,12 +684,12 @@ export function OverridesView({ currentUser }: { currentUser: Account }) {
                         )}
                         <Button
                           variant="ghost"
-                          size="sm"
-                          className="h-6 w-6 p-0"
+                          size="icon"
+                          className="h-9 w-9"
                           onClick={() => removeItem(item.id)}
                           aria-label="Remove from queue"
                         >
-                          <Trash2 className="h-3 w-3" />
+                          <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
                     </div>
@@ -711,10 +708,9 @@ export function OverridesView({ currentUser }: { currentUser: Account }) {
                         <Button
                           variant="outline"
                           size="sm"
-                          className="h-6 text-[10px] shrink-0 gap-1"
+                          className="h-9 text-xs shrink-0"
                           onClick={() => retryItem(item.id)}
                         >
-                          <RotateCcw className="h-3 w-3" />
                           Retry
                         </Button>
                       </div>
@@ -764,9 +760,8 @@ export function OverridesView({ currentUser }: { currentUser: Account }) {
                 variant="ghost"
                 size="sm"
                 onClick={clearListFilters}
-                className="h-7 text-xs shrink-0"
+                className="h-9 text-xs shrink-0"
               >
-                <X className="h-3 w-3" />
                 Clear
               </Button>
             )}
@@ -864,7 +859,7 @@ export function OverridesView({ currentUser }: { currentUser: Account }) {
             overrides.length > 0 && (
               <>
                 {/* Desktop / tablet: horizontal-scroll table */}
-                <div className="overflow-x-auto ng-scroll">
+                <div className="hidden md:block overflow-x-auto ng-scroll">
                   <Table>
                     <TableHeader className="bg-card">
                       <TableRow>
@@ -968,6 +963,83 @@ export function OverridesView({ currentUser }: { currentUser: Account }) {
                       </AnimatePresence>
                     </TableBody>
                   </Table>
+                </div>
+
+                {/* Mobile: card list (same data, no horizontal scroll) */}
+                <div className="md:hidden divide-y">
+                  <AnimatePresence initial={false}>
+                    {overrides.map((o) => (
+                      <motion.div
+                        key={o.id}
+                        layout
+                        initial={{ opacity: 0, y: -8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        className="p-4 space-y-2"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">
+                              {o.student.fullName}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              ID #{o.student.studentId} · {o.student.program}{" "}
+                              {o.student.section}
+                            </p>
+                          </div>
+                          <Badge
+                            variant="outline"
+                            className="border-amber-500/40 text-amber-600 text-[10px] gap-1 shrink-0"
+                          >
+                            <AlertTriangle className="h-2.5 w-2.5" />
+                            Manual
+                          </Badge>
+                        </div>
+                        <p className="text-sm truncate" title={o.event.title}>
+                          {o.event.title}
+                          <span className="text-muted-foreground">
+                            {" "}
+                            ·{" "}
+                            {format(
+                              parseISO(o.event.scheduledAt),
+                              "MMM d, yyyy",
+                            )}
+                          </span>
+                        </p>
+                        <p className="text-sm text-muted-foreground line-clamp-2 italic">
+                          &ldquo;{o.reason}&rdquo;
+                        </p>
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-xs text-muted-foreground tabular-nums">
+                            {format(
+                              parseISO(o.clientCreatedAt ?? o.createdAt),
+                              "MMM d, HH:mm",
+                            )}
+                            {o.clientCreatedAt &&
+                              o.clientCreatedAt !== o.createdAt &&
+                              ` · synced ${format(parseISO(o.createdAt), "HH:mm")}`}
+                            {o.creator?.fullName
+                              ? ` · by ${o.creator.fullName}`
+                              : ""}
+                          </span>
+                          {o.offline && (
+                            <Badge
+                              variant="outline"
+                              className="border-muted-foreground/30 text-muted-foreground text-[10px] gap-1"
+                              title={
+                                o.syncDelayMs != null
+                                  ? `Synced ${Math.round(o.syncDelayMs / 60000)} min after it was created`
+                                  : "Synced after being created offline"
+                              }
+                            >
+                              <CloudOff className="h-2.5 w-2.5" />
+                              Offline sync
+                            </Badge>
+                          )}
+                        </div>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
                 </div>
 
                 {/* Pagination */}
